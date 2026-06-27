@@ -10,18 +10,25 @@ coleta sem reescrever todo o sistema.
 ## Fluxo de dados
 
 ```
-[ ESTAÇÃO METEOROLÓGICA ]                 [ WORKSTATION CENTRAL (Docker Compose) ]
-  sensores → pastas locais                  ┌───────────────┐
-        │                                    │  FTP/FTPS     │  data/landing/<station_id>/
-        │  collector (Python/Shell)          │  (pure-ftpd)  │        │
-        │  agendado por cron, a cada N min    └───────────────┘        ▼
-        └──────── upload FTPS ──────────────▶                    ┌──────────────┐
-        (envia só o novo; estado evita        ┌──────────────┐   │  ingestion   │ poll a cada N s
-         reenvio; retry+backoff)              │ TimescaleDB  │◀──│  (Python)    │ parse → load
-                                              │ (PostgreSQL) │   └──────────────┘
-                                              └──────────────┘   processados → data/archive/
-                                                                 com erro     → data/quarantine/
+[ ESTAÇÃO METEOROLÓGICA ]                 [ WORKSTATION CENTRAL — wrkst02 / 10.1.90.246 ]
+
+  sensores → pastas locais                  ┌─────────────────────┐
+        │                                    │  FTP/FTPS  (vsftpd) │  /srv/carbonara/collect/<estação>/
+        │  collector (Python/Shell)          │  upload: só grava   │            │
+        │  agendado por cron, a cada N min    │  master: gere tudo  │            │
+        └──────── upload (FTPS opcional) ────▶└─────────────────────┘            ▼
+        (envia só o novo; estado evita                                     ┌──────────────┐
+         reenvio; retry + backoff)            ┌──────────────┐            │  ingestion   │ poll a cada N s
+                                              │ TimescaleDB  │◀───────────│  (Python)    │ parse → load
+                                              │ (PostgreSQL) │            └──────────────┘
+                                              └──────────────┘            processados → archive/
+                                                                          com erro     → quarantine/
+
+       db + ingestion: Docker Compose   ·   FTP: serviço nativo (vsftpd)
 ```
+
+> O diretório de coleta (`/srv/carbonara/collect/`) é a **fronteira física** entre o transporte
+> e a ingestão: o FTP só escreve nele, a ingestão só lê dele. Nenhum dos lados conhece o outro.
 
 ## As três fronteiras de desacoplamento
 
@@ -31,12 +38,12 @@ que garante a flexibilidade pedida no projeto.
 | # | Camada | Responsabilidade | Como trocar |
 |---|--------|------------------|-------------|
 | 1 | **Transporte** | Como o arquivo viaja da estação ao servidor | Nova classe em `common/python/transports/` (repo `carbonara-stations`) + `transport.type` no config. FTPS → SFTP/rsync sem tocar no resto. |
-| 2 | **Ingestão / parsing** | Como o arquivo vira linha no banco | Novo parser em `ingestion/parsers/` (este repo) + entrada no `config.yaml`. Só lê `landing/`; ignora como o arquivo chegou. |
+| 2 | **Ingestão / parsing** | Como o arquivo vira linha no banco | Novo parser em `ingestion/parsers/` (este repo) + entrada no `config.yaml`. Só lê o diretório de coleta; ignora como o arquivo chegou. |
 | 3 | **Armazenamento** | Persistir as séries temporais | TimescaleDB. Trocar o banco afeta só a ingestão; coletores não mudam. |
 
-**Consequência prática:** a ingestão e o banco dependem apenas do **diretório de pouso**
-(`data/landing/`). Trocar o servidor FTP por SFTP ou rsync muda só a camada de transporte
-(no servidor e no agente) — o resto continua idêntico.
+**Consequência prática:** a ingestão e o banco dependem apenas do **diretório de coleta**
+(`/srv/carbonara/collect/`). Trocar o servidor FTP por SFTP ou rsync muda só a camada de
+transporte (no servidor e no agente) — o resto continua idêntico.
 
 ## Componentes
 
@@ -46,13 +53,37 @@ que garante a flexibilidade pedida no projeto.
 - Mantém **estado** dos arquivos já enviados (assinatura tamanho+mtime) → idempotente,
   envia só o novo, marca como enviado **somente após sucesso**.
 - **Retry com backoff** para conexão de campo instável (Amazônia).
-- Camada de transporte plugável (`transports/`); hoje FTPS via `ftplib` (lib padrão).
+- Camada de transporte plugável (`transports/`); hoje FTP/FTPS via `ftplib` (lib padrão).
 
-### Servidor central (este repo, `carbonara-datahub`) — workstation, via Docker Compose
-- **`ftp`**: pure-ftpd com TLS (FTPS); um usuário por estação → `landing/<station_id>/`.
-- **`db`**: PostgreSQL + TimescaleDB; schema inicializado por `database/init/*.sql`.
-- **`ingestion`**: serviço Python que varre `landing/`, faz parse e carrega no banco;
-  move arquivos processados para `archive/` e os com erro para `quarantine/`.
+### Servidor central (este repo, `carbonara-datahub`) — workstation `wrkst02`
+Deploy **híbrido**: o FTP roda **nativo** no host (controle fino de permissão e menos
+manutenção); o banco e a ingestão sobem por **Docker Compose**.
+
+- **`ftp` (nativo, vsftpd)** — ponto único onde as estações concentram arquivos, em
+  `/srv/carbonara/collect/<estação>/`. **FTPS opcional** (TLS oferecido, não obrigatório,
+  para acomodar estações sem suporte a TLS). Modelo de dois papéis (ver abaixo).
+  Instalação registrada passo a passo em [`ftp-native-install.md`](ftp-native-install.md).
+- **`db` (compose)** — PostgreSQL + TimescaleDB; schema inicializado por `database/init/*.sql`.
+- **`ingestion` (compose)** — serviço Python que varre o diretório de coleta, faz parse e
+  carrega no banco; move arquivos processados para `archive/` e os com erro para `quarantine/`.
+
+> O `docker-compose.yml` ainda traz um serviço `ftp` (pure-ftpd) como alternativa containerizada;
+> a instalação **vigente** é a nativa em vsftpd. Os dois caminhos escrevem no mesmo diretório de
+> coleta, então a ingestão é indiferente a qual está em uso.
+
+### Modelo de permissão do FTP (dois papéis)
+
+Protege os dados coletados contra exclusão acidental ou maliciosa por uma estação:
+
+| Papel | Usuário | Pode | Não pode |
+|-------|---------|------|----------|
+| **Upload** (estações) | `ftpupload` | enviar arquivos (`STOR`), criar pastas (`MKD`) | apagar, renomear, baixar (`DELE`/`RMD`/`RNFR`/`RETR`) |
+| **Master** (gestão) | `ftpmaster` | ler, escrever e **apagar** tudo | — |
+
+O "escreve mas não apaga" é imposto **nativamente** pelo vsftpd (`cmds_denied` por usuário) —
+um motivo decisivo para o vsftpd no lugar do pure-ftpd, que não tem ACL por comando. A ingestão,
+ao mover os arquivos de `collect/` para `archive/`, os tira do alcance da estação, fechando também
+a possibilidade de uma sobrescrita por `STOR` em arquivo ainda não ingerido.
 
 ## Modelo de dados (TimescaleDB)
 
@@ -69,8 +100,11 @@ Modelo **long/EAV**, que aceita novas variáveis sem `ALTER TABLE`:
 | Decisão | Escolha | Motivo |
 |---------|---------|--------|
 | Banco | PostgreSQL + TimescaleDB | Séries temporais com SQL padrão, compressão e agregados. |
-| Deploy central | Docker Compose | Portabilidade; trocar infra com baixo acoplamento. |
+| Deploy central | Docker Compose (db + ingestão) + FTP nativo | Compose dá portabilidade ao stack de dados; FTP nativo dá controle fino de permissão e menos manutenção. |
+| Servidor FTP | **vsftpd nativo** (apt) | "Escreve mas não apaga" por usuário (`cmds_denied`) de forma nativa; pure-ftpd não tem ACL por comando. |
+| Criptografia FTP | FTPS **opcional** | Estações sem suporte a TLS precisam conectar; TLS oferecido a quem puder. Em LAN fechada o trade-off é aceitável. |
+| Modelo de acesso | `ftpmaster` (r/w/delete) + `ftpupload` (só escrita) | Proteger os dados coletados contra exclusão por uma estação. |
 | Coleta | Scripts + cron (sem Docker) | Estações nem sempre suportam Docker. |
 | Linguagem do coletor | Python padrão + Shell | Cobre estações com e sem Python. |
-| Transporte | FTPS, com camada plugável | Requisito de FTP simples + flexibilidade futura. |
+| Transporte | FTP/FTPS, com camada plugável | Requisito de FTP simples + flexibilidade futura (SFTP/rsync). |
 | Repositório | Multi-repo: `carbonara-datahub` + `carbonara-stations` | Separar server e coletores: papéis, ciclos de vida e deploys distintos. |

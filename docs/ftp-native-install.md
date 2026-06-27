@@ -469,4 +469,22 @@ backup do original em `/etc/vsftpd.conf.orig`.
 
 ---
 
+## Verificação remota (cliente na rede) — ✅ 2026-06-27
+
+Script `../ftp/test-ftp-connection.sh` rodado de **outra máquina na mesma rede**, apontando para o
+servidor `10.1.90.246`. Valida ponta a ponta a partir do cliente (incl. alcance da faixa passiva).
+
+```bash
+bash test-ftp-connection.sh 10.1.90.246
+# (pede as senhas de ftpmaster e ftpupload; ou via FTP_MASTER_PASS / FTP_UPLOAD_PASS)
+```
+
+**Resultado:** `OK: 9   Falhas: 0   Avisos: 1` — "Tudo certo". Confirmado de uma máquina cliente:
+1. porta 21 acessível · 2. FTPS/TLS ok · 3. master envia e apaga · 4. upload envia e cria pasta ·
+5. **upload impedido de apagar (550)** · 6. FTP puro funciona (estação sem TLS) ·
+7. anônimo recusado · 8. limpeza ok. O único aviso é o esperado: FTP puro trafega em texto puro
+(aceitável em LAN). A faixa passiva `30000–30009` está acessível pela rede.
+
+---
+
 <!-- Os passos 6 a 8 serão detalhados aqui conforme cada anterior for confirmado. -->
