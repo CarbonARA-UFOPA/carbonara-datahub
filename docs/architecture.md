@@ -10,21 +10,16 @@ coleta sem reescrever todo o sistema.
 ## Fluxo de dados
 
 ```
-[ ESTAÇÃO METEOROLÓGICA ]                 [ WORKSTATION CENTRAL — wrkst02 / 10.1.90.246 ]
+ESTAÇÃO                WORKSTATION CENTRAL — wrkst02 (10.1.90.246)
+                       FTP: nativo (vsftpd)   ·   db + ingestion: Docker Compose
 
-  sensores → pastas locais                  ┌─────────────────────┐
-        │                                    │  FTP/FTPS  (vsftpd) │  /srv/carbonara/collect/<estação>/
-        │  collector (Python/Shell)          │  upload: só grava   │            │
-        │  agendado por cron, a cada N min    │  master: gere tudo  │            │
-        └──────── upload (FTPS opcional) ────▶└─────────────────────┘            ▼
-        (envia só o novo; estado evita                                     ┌──────────────┐
-         reenvio; retry + backoff)            ┌──────────────┐            │  ingestion   │ poll a cada N s
-                                              │ TimescaleDB  │◀───────────│  (Python)    │ parse → load
-                                              │ (PostgreSQL) │            └──────────────┘
-                                              └──────────────┘            processados → archive/
-                                                                          com erro     → quarantine/
-
-       db + ingestion: Docker Compose   ·   FTP: serviço nativo (vsftpd)
+┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+│  collector  │      │     FTP     │      │  ingestion  │      │ TimescaleDB │
+│ Python/Shell│─FTPS▶│   vsftpd    │─────▶│   Python    │─────▶│  PostgreSQL │
+│   + cron    │ upld │  collect/   │ poll │ parse→load  │ load │ +TimescaleDB│
+└─────────────┘      └─────────────┘      └─────────────┘      └─────────────┘
+  só o novo;          /srv/carbonara/      ok  → archive/        séries
+  retry+backoff       collect/<estação>/   erro→ quarantine/     temporais
 ```
 
 > O diretório de coleta (`/srv/carbonara/collect/`) é a **fronteira física** entre o transporte
