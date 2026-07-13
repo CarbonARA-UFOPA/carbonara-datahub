@@ -1,30 +1,106 @@
 # Instalação do servidor central
 
-Guia para subir a workstation central (FTP/FTPS + TimescaleDB + ingestão) com Docker Compose.
+Guia para subir a workstation central do CARBONARA. São **duas partes independentes**:
+
+- **A. Coleta** — `rsync-over-SSH`, **nativa no host**, toda pelo script [`rsync-hub`](../rsync-hub).
+- **B. Dados** — TimescaleDB + ingestão + FTP de distribuição, em **Docker Compose**.
+
+A fronteira entre elas é o diretório `incoming/`: o `rsync-hub` só escreve nele, a ingestão só
+lê dele. Dá para instalar/testar cada parte separadamente.
 
 ## Pré-requisitos
 
-- Docker Engine 24+ e Docker Compose v2 (`docker compose version`).
-- Portas livres: `21` (FTP), faixa passiva `30000-30009`, `5432` (PostgreSQL).
-- ~Espaço em disco proporcional ao volume de dados das estações (landing + archive + banco).
+- **Host (coleta):** `openssh-server` e `rsync` (o `rrsync` acompanha o pacote `rsync`).
+- **Stack de dados:** Docker Engine 24+ e Docker Compose v2 (`docker compose version`).
+- **Portas livres:**
+  - `22` — SSH, usada pela coleta (rsync das estações).
+  - `21` + faixa passiva `30000-30009` — FTP de **distribuição** (saída dos dados processados).
+  - `5432` — PostgreSQL.
+- Espaço em disco proporcional ao volume das estações (`incoming` + `archive` + banco).
 
-## Passos
+Defina uma **raiz de dados** e use a mesma nas duas partes. Em produção:
+`CARBONARA_ROOT=/srv/carbonara` (é o default do `rsync-hub`).
 
-### 1. Clonar o repositório
+### 0. Clonar o repositório
 
 ```bash
 git clone https://github.com/CarbonARA-UFOPA/carbonara-datahub.git
 cd carbonara-datahub
 ```
 
-### 2. Configurar o ambiente
+---
+
+## Parte A — Coleta com `rsync-hub` (nativo no host)
+
+### A1. Instalar dependências e preparar o host
 
 ```bash
-cp .env.example .env
-# Edite .env: defina DB_PASSWORD, FTP_USER_PASS e FTP_PUBLIC_HOST (IP/hostname da workstation).
+sudo apt-get update && sudo apt-get install -y openssh-server rsync
+sudo ./rsync-hub install          # cria a conta de serviço, as pastas e o authorized_keys
 ```
 
-### 3. Gerar o certificado TLS do FTP (FTPS)
+`install` cria: a conta `carbonara` (senha travada, só chave), a raiz `/srv/carbonara` com
+`incoming/`, `log/` e `.ssh/authorized_keys`. Se o `rrsync` não estiver em `/usr/bin/rrsync`,
+o comando avisa — ajuste a variável `RRSYNC` (ver o cabeçalho do script).
+
+Opcional, para chamar de qualquer lugar:
+
+```bash
+sudo install -m 755 rsync-hub /usr/local/bin/rsync-hub
+```
+
+### A2. Autorizar cada estação
+
+Cada estação gera seu par de chaves SSH (no agente, repo `carbonara-stations`) e te envia a
+**chave pública**. No servidor, autorize-a:
+
+```bash
+sudo rsync-hub add flona01 flona01.pub    # cria incoming/flona01 + registra a chave
+sudo rsync-hub add flona02 flona02.pub
+rsync-hub list                            # confere as estações autorizadas
+```
+
+Cada chave fica amarrada ao seu `serve <id>`: a estação só escreve na **própria** pasta, em
+modo write-only (não baixa nem alcança as outras). Para revogar: `sudo rsync-hub remove flona01`
+(o acesso some; os dados permanecem).
+
+### A3. Acompanhar as conexões
+
+```bash
+rsync-hub monitor      # tabela ao vivo (pendentes/última atividade) + últimas conexões; Ctrl-C sai
+rsync-hub status       # uma leitura só
+rsync-hub              # menu interativo com todas as opções acima
+```
+
+---
+
+## Parte B — Dados (Docker Compose)
+
+### B1. Configurar o ambiente (`.env`)
+
+Crie o `.env` (use `.env.example` como base, se presente) com, no mínimo:
+
+```bash
+CARBONARA_ROOT=/srv/carbonara     # MESMA raiz usada pelo rsync-hub
+DB_USER=carbonara
+DB_PASSWORD=troque-esta-senha
+DB_NAME=carbonara
+FTP_USER_NAME=carbonara           # usuário de leitura da distribuição FTP
+FTP_USER_PASS=troque-esta-senha
+FTP_PUBLIC_HOST=10.1.90.246       # IP/hostname da workstation (para o modo passivo do FTP)
+```
+
+`CARBONARA_ROOT` é o que faz os containers montarem `incoming/`, `archive/` e `quarantine/` da
+mesma raiz que a coleta usa. Sem defini-lo, o Compose cai no default de desenvolvimento (`./data`).
+
+### B2. Configurar a ingestão
+
+```bash
+cp ingestion/config.example.yaml ingestion/config.yaml
+# Ajuste o mapa coluna->variável (bloco `columns:`) conforme os dataloggers reais.
+```
+
+### B3. Gerar o certificado TLS do FTP (FTPS)
 
 ```bash
 mkdir -p ftp/tls
@@ -34,25 +110,18 @@ chmod 600 ftp/tls/pure-ftpd.pem
 ```
 > Detalhes e variante com CA real em [`../ftp/README.md`](../ftp/README.md).
 
-### 4. Configurar a ingestão
-
-```bash
-cp ingestion/config.example.yaml ingestion/config.yaml
-# Ajuste o mapeamento coluna->variável conforme o formato real dos seus dataloggers.
-```
-
-### 5. Subir os serviços
+### B4. Subir os serviços
 
 ```bash
 docker compose up -d
-docker compose ps          # todos devem ficar "healthy"/"running"
+docker compose ps          # db, ingestion e ftp devem ficar "healthy"/"running"
 docker compose logs -f ingestion
 ```
 
-No **primeiro** start, o container do banco executa `database/init/01_*.sql`,
-`02_*.sql` e `03_*.sql` automaticamente (extensões, schema e hypertable).
+No **primeiro** start, o container do banco executa `database/init/01_*.sql`, `02_*.sql` e
+`03_*.sql` automaticamente (extensões, schema e hypertable).
 
-### 6. Verificar o banco
+### B5. Verificar o banco
 
 ```bash
 docker exec -it carbonara-db psql -U carbonara -d carbonara -c "\dt"
@@ -60,23 +129,22 @@ docker exec -it carbonara-db psql -U carbonara -d carbonara \
   -c "SELECT * FROM timescaledb_information.hypertables;"
 ```
 
-### 7. Criar um usuário FTP por estação
+### B6. Distribuição pelo FTP
 
-```bash
-docker exec -it carbonara-ftp \
-  pure-pw useradd estacao_flona01 -f /etc/pure-ftpd/passwd/pureftpd.passwd \
-  -m -u ftpuser -d /home/ftpusers/carbonara/flona01
-docker exec -it carbonara-ftp pure-pw mkdb
-```
+O serviço `ftp` **não recebe** dados — serve `archive/` como **somente leitura**. Consumidores
+baixam com o usuário `FTP_USER_NAME`/`FTP_USER_PASS` (via FTPS). Nada de upload por aqui.
+
+---
 
 ## Teste ponta a ponta
 
-Valida estação → FTP → ingestão → banco, usando o CSV de exemplo.
+Valida `incoming/ → ingestão → banco → archive/`, sem depender de uma estação real. Simula a
+chegada de um arquivo (como se o `rsync-hub` o tivesse recebido) e acompanha o resto:
 
 ```bash
-# 1. Simula a chegada de um arquivo no landing (como se o agente tivesse enviado).
-mkdir -p data/landing/flona01
-cp ../examples/sample-station-data/flona01_20260627.csv data/landing/flona01/
+# 1. Simula a chegada no incoming/ (use a MESMA raiz do .env / rsync-hub).
+sudo install -d -o carbonara -g carbonara /srv/carbonara/incoming/flona01
+sudo cp examples/sample-station-data/flona01_20260627.csv /srv/carbonara/incoming/flona01/
 
 # 2. Aguarde um ciclo de ingestão (INGEST_POLL_SECONDS) e veja os logs.
 docker compose logs -f ingestion     # deve registrar "medições lidas / inseridas"
@@ -87,16 +155,25 @@ docker exec -it carbonara-db psql -U carbonara -d carbonara \
 docker exec -it carbonara-db psql -U carbonara -d carbonara \
   -c "SELECT * FROM measurements ORDER BY time LIMIT 5;"
 
-# 4. Confirme que o arquivo foi para archive/ (e não restou no landing/).
-ls -R data/archive/flona01
+# 4. Confirme que o arquivo foi para archive/ (e não restou no incoming/).
+sudo ls -R /srv/carbonara/archive/flona01
 ```
 
-Para testar o **agente real** enviando via FTP (em vez de copiar para o landing), veja
-[`station-setup.md`](station-setup.md).
+> Em desenvolvimento, sem `CARBONARA_ROOT`, troque `/srv/carbonara` por `./data` (e dispense o
+> `sudo`): `mkdir -p data/incoming/flona01 && cp examples/... data/incoming/flona01/`.
+
+Para testar uma estação **real** enviando por rsync-over-SSH (em vez de copiar o arquivo à mão),
+veja o agente no repo
+[`carbonara-stations`](https://github.com/CarbonARA-UFOPA/carbonara-stations).
+
+---
 
 ## Parar / atualizar
 
 ```bash
-docker compose down            # para (mantém os volumes/dados)
+docker compose down            # para o stack de dados (mantém os volumes/dados)
 docker compose pull && docker compose up -d --build   # atualizar imagens/serviço
+
+# A coleta não precisa ser "parada": o rsync-hub só roda sob demanda (gerência/monitor) e
+# como comando forçado a cada conexão. Para suspender uma estação: sudo rsync-hub remove <id>.
 ```

@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# rsync-hub — coleta CARBONARA por rsync-over-SSH, tudo em UM script.
+#
+# Faz três papéis com o mesmo arquivo:
+#   1) Gerência   — autoriza/remove/lista estações e prepara as pastas (menu ou comando).
+#   2) Monitor    — modo que fica rodando mostrando quem conectou e o que chegou.
+#   3) Comando forçado — cada estação, ao conectar por SSH, cai em `rsync-hub serve <id>`,
+#      que confina o rsync à pasta daquela estação (write-only).
+#
+# Isolamento (simples, mas real): cada estação tem uma CHAVE que só executa este script
+# com o SEU id; o `restrict` no authorized_keys corta shell/túnel/PTY; e o `rrsync -wo`
+# tranca o rsync na pasta da estação, em modo só-escrita (envia, não baixa nem lê as
+# outras). Uma conta de serviço única dona das pastas — sem criar usuário por estação.
+#
+# Uso:
+#   sudo ./rsync-hub install           # prepara o host (conta + pastas + chave) — 1x
+#   sudo ./rsync-hub add  <id> <pub>   # autoriza uma estação (arquivo de chave pública)
+#   sudo ./rsync-hub remove <id>       # revoga o acesso da estação
+#        ./rsync-hub list              # lista estações autorizadas
+#        ./rsync-hub monitor           # fica rodando, mostrando as conexões (Ctrl-C sai)
+#        ./rsync-hub status            # mostra o status uma vez
+#        ./rsync-hub                    # abre o menu interativo
+set -eu
+
+# --- Configuração (ajuste por variável de ambiente se quiser) -------------------
+BASE="${CARBONARA_ROOT:-/srv/carbonara}"     # raiz dos dados no host
+HUB_USER="${HUB_USER:-carbonara}"            # conta de serviço única que recebe os envios
+INCOMING="$BASE/incoming"                    # uma subpasta por estação
+LOG="$BASE/log/connections.log"              # registro de conexões (texto simples)
+AUTHKEYS="$BASE/.ssh/authorized_keys"        # chaves das estações (fora do alcance delas)
+RRSYNC="${RRSYNC:-/usr/bin/rrsync}"          # wrapper restrito que acompanha o rsync
+REFRESH="${RSYNC_HUB_REFRESH:-3}"            # segundos entre atualizações do monitor
+STALE_AFTER="${RSYNC_HUB_STALE:-3600}"       # sem atividade > isto (s) => estação "MUDA"
+
+die()      { echo "erro: $*" >&2; exit 1; }
+need_root(){ [ "$(id -u)" = 0 ] || die "execute como root (sudo)"; }
+valid_id() { echo "$1" | grep -Eq '^[a-z0-9][a-z0-9_]{1,30}$' \
+                || die "id inválido: '$1' (use minúsculas, dígitos e '_')"; }
+self_path(){ readlink -f "$0" 2>/dev/null || echo "$0"; }
+
+# --- Papel 3: comando forçado (o sshd chama isto; não é para uso manual) ---------
+serve() {
+    station="${1:-}"; [ -n "$station" ] || exit 1
+    ts="$(date -u +%FT%TZ)"; ip="${SSH_CLIENT%% *}"
+    # Só aceita rsync em modo servidor; qualquer outra coisa é barrada e registrada.
+    case "${SSH_ORIGINAL_COMMAND:-}" in
+        "rsync --server "*) : ;;
+        *) echo "$ts REJECT $station $ip ${SSH_ORIGINAL_COMMAND:-}" >>"$LOG" 2>/dev/null || true
+           echo "rsync-hub: somente rsync (envio) é permitido." >&2; exit 128 ;;
+    esac
+    echo "$ts CONNECT $station $ip" >>"$LOG" 2>/dev/null || true
+    "$RRSYNC" -wo "$INCOMING/$station"; rc=$?   # -wo = write-only, confinado à pasta
+    echo "$(date -u +%FT%TZ) DISCONNECT $station $ip" >>"$LOG" 2>/dev/null || true
+    exit "$rc"
+}
+
+# --- Papel 1: gerência -----------------------------------------------------------
+install_host() {
+    need_root
+    command -v "$RRSYNC" >/dev/null 2>&1 || echo "aviso: '$RRSYNC' não encontrado — instale o pacote 'rsync'."
+    id "$HUB_USER" >/dev/null 2>&1 || \
+        useradd --system --home-dir "$BASE" --create-home --shell /bin/sh "$HUB_USER"
+    passwd -l "$HUB_USER" >/dev/null 2>&1 || true      # tranca a senha: só chave
+    install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$BASE" "$INCOMING" "$BASE/log"
+    install -d -m 700 -o "$HUB_USER" -g "$HUB_USER" "$BASE/.ssh"
+    touch "$LOG"; chown "$HUB_USER:$HUB_USER" "$LOG"; chmod 644 "$LOG"
+    touch "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
+    echo "host preparado: conta '$HUB_USER', pastas em $BASE."
+    echo "instale o script no PATH, ex.: sudo install -m 755 $(self_path) /usr/local/bin/rsync-hub"
+}
+
+add_station() {
+    need_root
+    id="${1:-}"; pub="${2:-}"
+    [ -n "$id" ] && [ -n "$pub" ] || die "uso: rsync-hub add <id> <arquivo_chave_publica>"
+    valid_id "$id"
+    [ -f "$pub" ] || die "chave pública não encontrada: $pub"
+    ssh-keygen -l -f "$pub" >/dev/null 2>&1 || die "não parece uma chave pública SSH: $pub"
+    [ -f "$AUTHKEYS" ] || die "host não preparado — rode antes: sudo rsync-hub install"
+
+    install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$INCOMING/$id"
+    # Remove entrada antiga da mesma estação (se houver) e adiciona a nova.
+    grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" 2>/dev/null || true
+    printf 'command="%s serve %s",restrict %s\n' "$(self_path)" "$id" "$(cat "$pub")" >> "$AUTHKEYS.tmp"
+    mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
+    echo "estação '$id' autorizada (pasta $INCOMING/$id, envio por rsync -e ssh $HUB_USER@HOST)."
+}
+
+remove_station() {
+    need_root
+    id="${1:-}"; [ -n "$id" ] || die "uso: rsync-hub remove <id>"
+    valid_id "$id"
+    if [ -f "$AUTHKEYS" ] && grep -qF "serve $id\"" "$AUTHKEYS"; then
+        grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" || true
+        mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
+        echo "estação '$id': acesso revogado. Dados preservados em $INCOMING/$id."
+    else
+        echo "estação '$id' não estava autorizada."
+    fi
+}
+
+list_stations() {
+    if [ -f "$AUTHKEYS" ] && grep -q 'serve ' "$AUTHKEYS"; then
+        echo "estações autorizadas:"
+        sed -n 's/.*serve \([^"]*\)".*/  - \1/p' "$AUTHKEYS" | sort
+    else
+        echo "(nenhuma estação autorizada — use 'rsync-hub add')"
+    fi
+}
+
+# --- Papel 2: status / monitor ---------------------------------------------------
+print_status() {
+    now="$(date +%s)"
+    printf '%-16s %-22s %9s  %s\n' "ESTAÇÃO" "ÚLTIMA ATIVIDADE(UTC)" "PENDENTES" "ESTADO"
+    if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
+    found=0
+    for d in "$INCOMING"/*/; do
+        [ -d "$d" ] || continue
+        found=1
+        id="$(basename "$d")"
+        pend="$(find "$d" -type f ! -name '.*' 2>/dev/null | wc -l | tr -d ' ')"
+        lastfile="$(find "$d" -type f ! -name '.*' -printf '%T@\n' 2>/dev/null | sort -nr | head -1)"
+        lastfile="${lastfile%.*}"
+        lastconn="$(grep " CONNECT $id " "$LOG" 2>/dev/null | tail -1 | awk '{print $1}')"
+        lastconn_epoch=""
+        [ -n "$lastconn" ] && lastconn_epoch="$(date -u -d "$lastconn" +%s 2>/dev/null || echo '')"
+        act="0"
+        [ -n "$lastfile" ] && [ "$lastfile" -gt "$act" ] 2>/dev/null && act="$lastfile"
+        [ -n "$lastconn_epoch" ] && [ "$lastconn_epoch" -gt "$act" ] 2>/dev/null && act="$lastconn_epoch"
+        if [ "$act" = 0 ]; then
+            when="-"; state="MUDA"
+        else
+            when="$(date -u -d "@$act" +%FT%TZ 2>/dev/null || echo "$act")"
+            [ "$((now - act))" -gt "$STALE_AFTER" ] && state="MUDA" || state="ok"
+        fi
+        printf '%-16s %-22s %9s  %s\n' "$id" "$when" "$pend" "$state"
+    done
+    [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
+}
+
+monitor() {
+    trap 'echo; exit 0' INT
+    while true; do
+        clear 2>/dev/null || printf '\033[2J\033[H'
+        echo "rsync-hub — monitor (atualiza a cada ${REFRESH}s · Ctrl-C sai)   $(date '+%F %T')"
+        echo
+        print_status
+        echo
+        echo "últimas conexões:"
+        tail -n 6 "$LOG" 2>/dev/null | sed 's/^/  /' || echo "  (sem registros)"
+        sleep "$REFRESH"
+    done
+}
+
+# --- Menu interativo -------------------------------------------------------------
+menu() {
+    while true; do
+        echo
+        echo "===== rsync-hub ====="
+        echo " 1) Listar estações"
+        echo " 2) Adicionar estação"
+        echo " 3) Remover estação"
+        echo " 4) Monitorar conexões (ao vivo)"
+        echo " 5) Status agora"
+        echo " 0) Sair"
+        printf "opção> "
+        read -r op || exit 0
+        case "$op" in
+            1) list_stations ;;
+            2) printf "id da estação> "; read -r id
+               printf "arquivo da chave pública> "; read -r pub
+               add_station "$id" "$pub" ;;
+            3) printf "id da estação> "; read -r id; remove_station "$id" ;;
+            4) monitor ;;
+            5) print_status ;;
+            0|q|"") exit 0 ;;
+            *) echo "opção inválida" ;;
+        esac
+    done
+}
+
+usage() { sed -n '2,22p' "$(self_path)" | sed 's/^# \{0,1\}//'; }
+
+# --- Despacho --------------------------------------------------------------------
+case "${1:-}" in
+    serve)   shift; serve "$@" ;;
+    install) install_host ;;
+    add)     shift; add_station "$@" ;;
+    remove)  shift; remove_station "$@" ;;
+    list)    list_stations ;;
+    monitor) monitor ;;
+    status)  print_status ;;
+    ""|menu) menu ;;
+    -h|--help|help) usage ;;
+    *) usage; exit 1 ;;
+esac

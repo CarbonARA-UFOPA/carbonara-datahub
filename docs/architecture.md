@@ -11,19 +11,22 @@ coleta sem reescrever todo o sistema.
 
 ```
 ESTAÇÃO                WORKSTATION CENTRAL — wrkst02 (10.1.90.246)
-                       FTP: nativo (vsftpd)   ·   db + ingestion: Docker Compose
+                       coleta: sshd nativo (rsync)   ·   db + ingestion + monitor: Docker Compose
 
 ┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-│  collector  │      │     FTP     │      │  ingestion  │      │ TimescaleDB │
-│ Python/Shell│─FTPS▶│   vsftpd    │─────▶│   Python    │─────▶│  PostgreSQL │
-│   + cron    │ upld │  collect/   │ poll │ parse→load  │ load │ +TimescaleDB│
-└─────────────┘      └─────────────┘      └─────────────┘      └─────────────┘
-  só o novo;          /srv/carbonara/      ok  → archive/        séries
-  retry+backoff       collect/<estação>/   erro→ quarantine/     temporais
+│  collector  │rsync │  rsync-hub  │      │  ingestion  │      │ TimescaleDB │
+│ Python/Shell│──────▶│ sshd + forced│────▶│   Python    │─────▶│  PostgreSQL │
+│   + cron    │ ssh  │  rrsync -wo  │ poll │ parse→load  │ load │ +TimescaleDB│
+└─────────────┘ push └─────────────┘      └─────────────┘      └─────────────┘
+  só o novo;          /srv/carbonara/      ok  → archive/ ──▶ FTP (distribuição, r/o)
+  retry+backoff       incoming/<estação>/  erro→ quarantine/     séries temporais
+                            │
+                            └── rsync-hub grava connections.log · `rsync-hub monitor` (ao vivo)
 ```
 
-> O diretório de coleta (`/srv/carbonara/collect/`) é a **fronteira física** entre o transporte
-> e a ingestão: o FTP só escreve nele, a ingestão só lê dele. Nenhum dos lados conhece o outro.
+> O diretório de coleta (`/srv/carbonara/incoming/`) é a **fronteira física** entre o transporte
+> e a ingestão: o rsync só escreve nele (confinado por estação), a ingestão só lê dele. Nenhum
+> dos lados conhece o outro. O FTP deixou de ser entrada e agora só **distribui** `archive/`.
 
 ## As três fronteiras de desacoplamento
 
@@ -32,13 +35,14 @@ que garante a flexibilidade pedida no projeto.
 
 | # | Camada | Responsabilidade | Como trocar |
 |---|--------|------------------|-------------|
-| 1 | **Transporte** | Como o arquivo viaja da estação ao servidor | Nova classe em `common/python/transports/` (repo `carbonara-stations`) + `transport.type` no config. FTPS → SFTP/rsync sem tocar no resto. |
+| 1 | **Transporte** | Como o arquivo viaja da estação ao servidor | Nova classe em `common/python/transports/` (repo `carbonara-stations`) + `transport.type` no config. Hoje **rsync-over-SSH** (era FTPS); trocar por SFTP/outro não toca no resto. |
 | 2 | **Ingestão / parsing** | Como o arquivo vira linha no banco | Novo parser em `ingestion/parsers/` (este repo) + entrada no `config.yaml`. Só lê o diretório de coleta; ignora como o arquivo chegou. |
 | 3 | **Armazenamento** | Persistir as séries temporais | TimescaleDB. Trocar o banco afeta só a ingestão; coletores não mudam. |
 
 **Consequência prática:** a ingestão e o banco dependem apenas do **diretório de coleta**
-(`/srv/carbonara/collect/`). Trocar o servidor FTP por SFTP ou rsync muda só a camada de
-transporte (no servidor e no agente) — o resto continua idêntico.
+(`/srv/carbonara/incoming/`). A migração do FTP para rsync-over-SSH mudou só a camada de
+transporte (no servidor e no agente) — a ingestão, o schema e o banco continuam idênticos.
+Foi exatamente a flexibilidade que este desenho previa.
 
 ## Componentes
 
@@ -48,37 +52,44 @@ transporte (no servidor e no agente) — o resto continua idêntico.
 - Mantém **estado** dos arquivos já enviados (assinatura tamanho+mtime) → idempotente,
   envia só o novo, marca como enviado **somente após sucesso**.
 - **Retry com backoff** para conexão de campo instável (Amazônia).
-- Camada de transporte plugável (`transports/`); hoje FTP/FTPS via `ftplib` (lib padrão).
+- Camada de transporte plugável (`transports/`); hoje **rsync-over-SSH** (era FTP/FTPS).
+  O próprio rsync cuida do incremental (só o novo) e do resumo de transferência (`--partial`),
+  simplificando o estado que o agente mantinha à mão.
 
 ### Servidor central (este repo, `carbonara-datahub`) — workstation `wrkst02`
-Deploy **híbrido**: o FTP roda **nativo** no host (controle fino de permissão e menos
-manutenção); o banco e a ingestão sobem por **Docker Compose**.
+Deploy **híbrido**: a coleta (**sshd + rsync**, orquestrada pelo script `rsync-hub`) roda
+**nativa** no host (controle fino de permissão e menos manutenção); banco e ingestão sobem por
+**Docker Compose**.
 
-- **`ftp` (nativo, vsftpd)** — ponto único onde as estações concentram arquivos, em
-  `/srv/carbonara/collect/<estação>/`. **FTPS opcional** (TLS oferecido, não obrigatório,
-  para acomodar estações sem suporte a TLS). Modelo de dois papéis (ver abaixo).
-  Instalação registrada passo a passo em [`ftp-native-install.md`](ftp-native-install.md).
+- **`rsync-hub` (nativo, um script)** — faz toda a coleta: autoriza/remove/lista estações,
+  **monitora** as conexões (modo ao vivo) e é o **comando forçado** do SSH que confina cada
+  estação a `/srv/carbonara/incoming/<estação>/`, **write-only** e sem acesso às demais.
 - **`db` (compose)** — PostgreSQL + TimescaleDB; schema inicializado por `database/init/*.sql`.
-- **`ingestion` (compose)** — serviço Python que varre o diretório de coleta, faz parse e
-  carrega no banco; move arquivos processados para `archive/` e os com erro para `quarantine/`.
+- **`ingestion` (compose)** — serviço Python que varre `incoming/`, faz parse e carrega no
+  banco; move processados para `archive/` e os com erro para `quarantine/`.
+- **`ftp` (distribuição)** — **repropósito**: não recebe mais dados; serve `archive/` como
+  **read-only** para consumidores. FTPS mantido para o download.
 
-> O `docker-compose.yml` ainda traz um serviço `ftp` (pure-ftpd) como alternativa containerizada;
-> a instalação **vigente** é a nativa em vsftpd. Os dois caminhos escrevem no mesmo diretório de
-> coleta, então a ingestão é indiferente a qual está em uso.
+> Histórico: a coleta era FTP (pure-ftpd no compose; depois vsftpd nativo). Migramos para
+> rsync-over-SSH — transporte mais eficiente (incremental nativo) e com isolamento por chave.
+> O FTP permaneceu apenas como camada de **saída**.
 
-### Modelo de permissão do FTP (dois papéis)
+### Modelo de isolamento da coleta (rsync-over-SSH)
 
-Protege os dados coletados contra exclusão acidental ou maliciosa por uma estação:
+Protege os dados de uma estação contra acesso por outra, e os dados centrais contra exclusão
+por qualquer estação. Defesa em camadas — simples, mas real (detalhe no cabeçalho do `rsync-hub`):
 
-| Papel | Usuário | Pode | Não pode |
-|-------|---------|------|----------|
-| **Upload** (estações) | `ftpupload` | enviar arquivos (`STOR`), criar pastas (`MKD`) | apagar, renomear, baixar (`DELE`/`RMD`/`RNFR`/`RETR`) |
-| **Master** (gestão) | `ftpmaster` | ler, escrever e **apagar** tudo | — |
+| Camada | Mecanismo | Garante |
+|--------|-----------|---------|
+| Conta | uma conta de serviço (`carbonara`) recebe os envios, senha travada | só chave, sem login interativo |
+| Chave | uma chave SSH por estação, cada uma amarrada ao seu `serve <id>` | a estação só age como ela mesma |
+| SSH | `command="rsync-hub serve <id>",restrict` no `authorized_keys` | sem shell/PTY/túnel; só executa o script |
+| rsync | `rrsync -wo <incoming/id>` | confina ao diretório da estação e é **write-only** (envia, não baixa) |
 
-O "escreve mas não apaga" é imposto **nativamente** pelo vsftpd (`cmds_denied` por usuário) —
-um motivo decisivo para o vsftpd no lugar do pure-ftpd, que não tem ACL por comando. A ingestão,
-ao mover os arquivos de `collect/` para `archive/`, os tira do alcance da estação, fechando também
-a possibilidade de uma sobrescrita por `STOR` em arquivo ainda não ingerido.
+O "escreve mas não apaga" que motivou o vsftpd se mantém: cada chave só escreve na própria
+pasta e a ingestão **move** cada arquivo para `archive/` logo após processar, tirando-o do
+alcance da estação. Um `--delete` da estação afetaria, no máximo, os próprios arquivos ainda
+não ingeridos — nunca os dados centrais.
 
 ## Modelo de dados (TimescaleDB)
 
@@ -95,11 +106,12 @@ Modelo **long/EAV**, que aceita novas variáveis sem `ALTER TABLE`:
 | Decisão | Escolha | Motivo |
 |---------|---------|--------|
 | Banco | PostgreSQL + TimescaleDB | Séries temporais com SQL padrão, compressão e agregados. |
-| Deploy central | Docker Compose (db + ingestão) + FTP nativo | Compose dá portabilidade ao stack de dados; FTP nativo dá controle fino de permissão e menos manutenção. |
-| Servidor FTP | **vsftpd nativo** (apt) | "Escreve mas não apaga" por usuário (`cmds_denied`) de forma nativa; pure-ftpd não tem ACL por comando. |
-| Criptografia FTP | FTPS **opcional** | Estações sem suporte a TLS precisam conectar; TLS oferecido a quem puder. Em LAN fechada o trade-off é aceitável. |
-| Modelo de acesso | `ftpmaster` (r/w/delete) + `ftpupload` (só escrita) | Proteger os dados coletados contra exclusão por uma estação. |
+| Deploy central | Docker Compose (db + ingestão) + coleta nativa | Compose dá portabilidade ao stack de dados; sshd nativo dá controle fino de permissão e menos manutenção. |
+| Transporte | **rsync-over-SSH**, com camada plugável | Incremental nativo (só o novo) + `--partial` (resume em link instável) + isolamento por chave via SSH. Substituiu o FTP na coleta. |
+| Coleta (gerência + monitor + comando forçado) | **um script `rsync-hub`** | Simplicidade: um só arquivo shell, menu interativo, sem daemon Python nem container extra. |
+| Endpoint de coleta | **sshd nativo + `rrsync -wo`** por chave | Confinamento por diretório e write-only, herdados do SSH; conta de serviço única (sem usuário por estação). |
+| Papel do FTP | **distribuição read-only** de `archive/` | Deixou de receber (isso é rsync agora); serve os dados processados para consumidores. |
+| Monitoramento | `connections.log` + `rsync-hub monitor`/`status` | Saber quem conectou e qual estação ficou muda, direto no script, sem raspar log do sshd. |
 | Coleta | Scripts + cron (sem Docker) | Estações nem sempre suportam Docker. |
 | Linguagem do coletor | Python padrão + Shell | Cobre estações com e sem Python. |
-| Transporte | FTP/FTPS, com camada plugável | Requisito de FTP simples + flexibilidade futura (SFTP/rsync). |
 | Repositório | Multi-repo: `carbonara-datahub` + `carbonara-stations` | Separar server e coletores: papéis, ciclos de vida e deploys distintos. |
