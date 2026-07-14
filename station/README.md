@@ -7,7 +7,15 @@ arquivos de dados para o servidor central (o *host*, preparado com o
 | Script | Sistema | Requisitos |
 |--------|---------|------------|
 | `carbonara-station.sh` | Linux | `rsync` e `openssh-client` (padrão na maioria das distros) |
-| `carbonara-station.ps1` | Windows 10/11 | `rsync` via **WSL** ou **cwRsync** (o `setup` orienta a instalação) e OpenSSH (nativo) |
+| `carbonara-station.ps1` + `carbonara-station.cmd` | Windows 10/11 | `rsync` via **WSL** ou **cwRsync** (o `setup` orienta a instalação) e OpenSSH (nativo) |
+
+> **Windows:** copie os **dois** arquivos (`.ps1` e `.cmd`) para a mesma pasta e execute o
+> **`carbonara-station.cmd`** (duplo clique abre o menu). Ele existe porque o Windows, por
+> padrão, bloqueia scripts `.ps1` ("running scripts is disabled on this system") — o `.cmd`
+> executa o `.ps1` contornando essa política, sem precisar de `Set-ExecutionPolicy`. Se
+> preferir chamar o `.ps1` direto, libere uma vez com
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` e, se o arquivo veio por
+> download/pendrive, `Unblock-File .\carbonara-station.ps1`.
 
 > Estes são os clientes simples e guiados do projeto. Agentes mais completos (estado por
 > arquivo, retry com backoff, transporte plugável) vivem no repo
@@ -20,7 +28,7 @@ arquivos de dados para o servidor central (o *host*, preparado com o
    ./carbonara-station.sh setup        # Linux
    ```
    ```powershell
-   .\carbonara-station.ps1 setup       # Windows (PowerShell)
+   .\carbonara-station.cmd setup       # Windows (Prompt ou PowerShell)
    ```
    Ele pergunta o **id da estação**, o **endereço do servidor** e a **pasta local de
    dados**, gera o par de chaves SSH e mostra a **chave pública**.
@@ -37,7 +45,7 @@ arquivos de dados para o servidor central (o *host*, preparado com o
    ./carbonara-station.sh schedule   # agenda o envio periódico (cron / Agendador de Tarefas)
    ./carbonara-station.sh status     # configuração, pendências e últimos envios
    ```
-   (No Windows, os mesmos subcomandos com `.\carbonara-station.ps1`.)
+   (No Windows, os mesmos subcomandos com `.\carbonara-station.cmd`.)
 
 Sem argumentos, os dois scripts abrem um **menu interativo** com todas as opções.
 

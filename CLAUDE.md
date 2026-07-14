@@ -102,7 +102,10 @@ keep rrsync as a child so the line runs after it exits.
 
 Guided client scripts, one per OS: `station/carbonara-station.sh` (Linux, bash + cron) and
 `station/carbonara-station.ps1` (Windows PowerShell 5.1+; rsync via WSL or cwRsync — `setup`
-detects/instructs; scheduling via Task Scheduler). Both expose the same subcommands:
+detects/instructs; scheduling via Task Scheduler). On Windows, users launch via
+`station/carbonara-station.cmd` (same dir), which runs the `.ps1` with
+`-ExecutionPolicy Bypass` — default Windows policy blocks `.ps1` files outright, so keep
+the `.cmd` shipped alongside it. Both expose the same subcommands:
 `setup` (wizard: generates the SSH key, prints the pubkey to authorize on the hub), `test`
 (rsync dry-run), `send`, `schedule`/`unschedule`, `status`, and an interactive menu when
 run without args. Send semantics (keep in sync across both): only files older than the

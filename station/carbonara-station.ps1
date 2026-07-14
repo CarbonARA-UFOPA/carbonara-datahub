@@ -24,7 +24,13 @@ Uso (PowerShell):
   .\carbonara-station.ps1 unschedule    # remove o agendamento
   .\carbonara-station.ps1 status        # configuração, pendências e últimos envios
 
-Se o Windows bloquear o script: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+Se o Windows bloquear o script ("running scripts is disabled on this system"), use o
+atalho carbonara-station.cmd (mesma pasta) — ele executa este .ps1 contornando a
+política de execução. Alternativas: liberar uma vez com
+  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   (+ Unblock-File .\carbonara-station.ps1
+  se o arquivo veio por download/pendrive), ou rodar pontualmente com
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\carbonara-station.ps1
+
 Configuração gravada em %LOCALAPPDATA%\carbonara-station\config.json.
 #>
 param(

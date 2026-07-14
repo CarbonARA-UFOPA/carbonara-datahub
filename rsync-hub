@@ -154,17 +154,34 @@ install_host() {
     done
     derive_paths
     HUB_USER="$(ask "Conta de serviço (será criada se não existir)" "$HUB_USER")"
+    rrsync_txt="$RRSYNC"
     if ! find_rrsync; then
-        echo "  aviso: 'rrsync' não foi encontrado — ele acompanha o pacote 'rsync'."
+        rrsync_txt="NÃO ENCONTRADO"
+        echo "  aviso: 'rrsync' não foi encontrado — ele acompanha o pacote 'rsync' e é"
+        echo "         obrigatório para RECEBER os envios (as pastas podem ser criadas já)."
         echo "         instale com: sudo apt-get install rsync   (ou o equivalente da distro)"
-        ask_yn "  Continuar mesmo assim?" n || { echo "instalação cancelada."; return 1; }
+        if ! ask_yn "  Continuar mesmo assim (só cria conta e pastas)?" n; then
+            echo
+            echo "*** INSTALAÇÃO CANCELADA — NADA FOI CRIADO. ***"
+            echo "instale o rsync e rode de novo: sudo rsync-hub install"
+            return 1
+        fi
+    else
+        rrsync_txt="$RRSYNC"
     fi
     echo
-    echo "Resumo: raiz=$BASE · conta=$HUB_USER · rrsync=$RRSYNC"
-    ask_yn "Confirmar e criar?" s || { echo "instalação cancelada."; return 1; }
+    echo "Resumo: raiz=$BASE · conta=$HUB_USER · rrsync=$rrsync_txt"
+    if ! ask_yn "Confirmar e criar?" s; then
+        echo
+        echo "*** INSTALAÇÃO CANCELADA — NADA FOI CRIADO. ***"
+        return 1
+    fi
     create_host
     save_conf
-    echo "ok: host preparado (conta '$HUB_USER', pastas em $BASE)."
+    echo "ok: host preparado (conta '$HUB_USER'). Pastas criadas:"
+    echo "    $INCOMING    ← os dados chegam aqui (uma subpasta por estação)"
+    echo "    $BASE/log    ← registro de conexões"
+    echo "    $BASE/.ssh   ← chaves das estações (authorized_keys)"
     echo
 
     # Passo 2/3 — script no PATH (o authorized_keys aponta para este caminho)
@@ -287,12 +304,14 @@ guiado para cada sistema, na pasta station/ deste repositório:
            ./carbonara-station.sh schedule   # agenda o envio (cron)
 
   Windows ────────────────────────────────────────────────────────────
-    1. copie station\\carbonara-station.ps1 para a estação
-    2. no PowerShell:   .\\carbonara-station.ps1 setup
+    1. copie station\\carbonara-station.ps1 E station\\carbonara-station.cmd
+       para a MESMA pasta na estação (o .cmd executa o .ps1 contornando o
+       bloqueio padrão do Windows a scripts PowerShell)
+    2. na estação:   .\\carbonara-station.cmd setup
        (o assistente localiza o rsync — ou orienta a instalar via WSL/cwRsync —
         gera a chave e mostra a CHAVE PÚBLICA)
     3. autorize aqui:   sudo rsync-hub add <id> <chave.pub>
-    4. na estação:      .\\carbonara-station.ps1 test | send | schedule
+    4. na estação:      .\\carbonara-station.cmd test | send | schedule
 
   Envio manual (alternativa sem o script do cliente) ─────────────────
     rsync -avz -e "ssh -i ~/.ssh/carbonara_<id>" /pasta/dos/dados/ $HUB_USER@$addr:/
