@@ -49,21 +49,22 @@ avisa (ele acompanha o pacote `rsync`).
 
 ### A2. Autorizar cada estação
 
-Cada estação gera seu par de chaves SSH com o **assistente do cliente**
-([`station/carbonara-station.sh`](../station/carbonara-station.sh) no Linux,
-[`station/carbonara-station.ps1`](../station/carbonara-station.ps1) no Windows — ver
-[`station/README.md`](../station/README.md)) e te apresenta a **chave pública**. No
-servidor, autorize-a:
+O jeito mais simples é **gerar a chave da estação no próprio servidor**:
 
 ```bash
-sudo rsync-hub add flona01 flona01.pub    # cria incoming/flona01 + registra a chave
-sudo rsync-hub add flona02 flona02.pub
-rsync-hub list                            # confere as estações autorizadas
+sudo rsync-hub add flona01     # sem arquivo: gera o par + registra + cria incoming/flona01
+rsync-hub list                 # confere as estações autorizadas
 ```
 
-No menu interativo (`sudo rsync-hub` → "Adicionar estação") dá para **colar a linha** da
-chave pública direto, sem salvar arquivo. Instruções prontas para passar ao operador da
-estação: `rsync-hub cliente`.
+Isso cria `/srv/carbonara/stations/flona01/` com a **chave privada** (`flona01_key` —
+leve-a para a estação), a pública (permanece lá, já autorizada) e um **`INSTRUCOES.txt`**
+com o passo a passo de ativação para o operador (ver
+[`station/README.md`](../station/README.md)).
+
+Alternativa: a estação gera a própria chave no `setup` do cliente e te apresenta a
+**chave pública** — autorize com `sudo rsync-hub add flona01 flona01.pub` (ou colando a
+linha no menu interativo → "Adicionar estação"). Instruções prontas para passar ao
+operador: `rsync-hub cliente`.
 
 Cada chave fica amarrada ao seu `serve <id>`: a estação só escreve na **própria** pasta, em
 modo write-only (não baixa nem alcança as outras). Para revogar: `sudo rsync-hub remove flona01`

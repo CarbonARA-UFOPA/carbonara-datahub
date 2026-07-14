@@ -23,26 +23,35 @@ arquivos de dados para o servidor central (o *host*, preparado com o
 
 ## Fluxo (igual nos dois sistemas)
 
-1. **Na estação** — rode o assistente de configuração:
+1. **No servidor** — o administrador autoriza a estação **gerando a chave lá**:
+   ```bash
+   sudo rsync-hub add <id>     # sem arquivo de chave: gera o par no host
+   ```
+   Isso cria `<raiz>/stations/<id>/` com a **chave privada** (`<id>_key`), a pública
+   (que permanece lá, já autorizada) e um **`INSTRUCOES.txt`** de ativação. Leve a
+   chave privada para a máquina da estação, junto com o cliente desta pasta.
+
+2. **Na estação** — rode o assistente de configuração:
    ```bash
    ./carbonara-station.sh setup        # Linux
    ```
    ```powershell
    .\carbonara-station.cmd setup       # Windows (Prompt ou PowerShell)
    ```
-   Ele pergunta o **id da estação**, o **endereço do servidor** e a **pasta local de
-   dados**, gera o par de chaves SSH e mostra a **chave pública**.
+   Ele pergunta, nesta ordem: **id da estação** → **IP do host** (porta opcional,
+   padrão 22) → **caminho local da chave** recebida → faz um **teste simples de
+   conexão** → **pasta local a enviar** (rsync) → **tempo de reciclagem** (minutos),
+   já oferecendo ativar o envio automático.
 
-2. **No servidor** — o administrador autoriza a estação:
-   ```bash
-   sudo rsync-hub add <id> <chave.pub>   # ou cole a linha no menu do rsync-hub
-   ```
+   > A estação também pode gerar a própria chave: se o caminho informado não existir,
+   > o assistente oferece criar um novo par e mostra a **chave pública** para o
+   > administrador autorizar no servidor (`sudo rsync-hub add <id> <chave.pub>`).
 
-3. **De volta à estação** — valide e coloque para rodar:
+3. **Operação** — a qualquer momento, na estação:
    ```bash
    ./carbonara-station.sh test       # testa a conexão (dry-run, nada é enviado)
    ./carbonara-station.sh send       # envia agora os arquivos pendentes
-   ./carbonara-station.sh schedule   # agenda o envio periódico (cron / Agendador de Tarefas)
+   ./carbonara-station.sh schedule   # (re)agenda o envio periódico (cron / Agendador de Tarefas)
    ./carbonara-station.sh status     # configuração, pendências e últimos envios
    ```
    (No Windows, os mesmos subcomandos com `.\carbonara-station.cmd`.)

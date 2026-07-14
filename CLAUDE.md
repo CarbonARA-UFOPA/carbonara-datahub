@@ -76,9 +76,13 @@ All collection is **one bash script** at repo root, `rsync-hub`, running nativel
 
 - **Management** — `rsync-hub install` is a **guided wizard** on a TTY (root dir → service
   account → add stations; persists choices to `/etc/rsync-hub.conf`, env vars still win);
-  `install --defaults` (or no TTY) skips the questions. Also `add <id> <pubkey>`,
-  `remove <id>`, `list`, and `cliente` (prints client-setup instructions). Run without args
-  it opens an interactive menu (the guided "add" there accepts a pasted pubkey line too).
+  `install --defaults` (or no TTY) skips the questions. `add <id>` **without** a pubkey
+  generates the station's keypair on the hub under `$BASE/stations/<id>/` (private key +
+  pubkey stay there, plus a personalized `INSTRUCOES.txt` the operator carries to the
+  station) — `stations/` is deliberately outside `incoming/` (stations can write there and
+  ingestion sweeps it). `add <id> <pubkey>` authorizes an existing key. Also `remove <id>`,
+  `list`, and `cliente` (prints client-setup instructions). Run without args it opens an
+  interactive menu (the guided "add" accepts ENTER = generate, a path, or a pasted line).
 - **Monitor** — `rsync-hub monitor` (stays running, live table + recent connections),
   `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`.
 - **Forced command** — `rsync-hub serve <id>` is what each station's `authorized_keys` line
@@ -105,7 +109,12 @@ Guided client scripts, one per OS: `station/carbonara-station.sh` (Linux, bash +
 detects/instructs; scheduling via Task Scheduler). On Windows, users launch via
 `station/carbonara-station.cmd` (same dir), which runs the `.ps1` with
 `-ExecutionPolicy Bypass` — default Windows policy blocks `.ps1` files outright, so keep
-the `.cmd` shipped alongside it. Both expose the same subcommands:
+the `.cmd` shipped alongside it. Setup wizard order (keep both clients in sync): station
+id → hub IP/port (default 22) → local path of the key received from the hub (falls back
+to generating one locally and printing the pubkey if the path doesn't exist; on WSL mode
+the key is copied into the WSL home because /mnt/c permissions make ssh reject it) →
+connection probe (dry-run from an empty temp dir) → data folder → recycle interval
+(`SEND_EVERY`/`SendEveryMin`), offering to install the schedule immediately. Both expose the same subcommands:
 `setup` (wizard: generates the SSH key, prints the pubkey to authorize on the hub), `test`
 (rsync dry-run), `send`, `schedule`/`unschedule`, `status`, and an interactive menu when
 run without args. Send semantics (keep in sync across both): only files older than the

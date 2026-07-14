@@ -7,12 +7,14 @@ Roda na máquina da ESTAÇÃO e envia os arquivos de dados para o servidor centr
 
 Papéis:
   1) Assistente guiado — `setup` localiza o rsync (ou orienta a instalação: WSL ou
-     cwRsync), pergunta id/servidor/pasta, gera a chave SSH e mostra a CHAVE PÚBLICA
-     que o administrador autoriza no servidor (sudo rsync-hub add <id> <pub>).
-  2) Envio — `send` manda os arquivos prontos (idade mínima configurável, para não
-     pegar arquivo ainda sendo escrito) e, após o sucesso, move-os para .enviados\
-     (ou apaga, conforme escolhido) — nada é reenviado, e o rsync --partial retoma
-     a transferência em link instável.
+     cwRsync) e pergunta, nesta ordem: id da estação → IP do host (porta opcional,
+     padrão 22) → caminho local da CHAVE recebida do servidor (gerada lá pelo
+     `rsync-hub add <id>`; se não existir, oferece gerar uma nova aqui) → TESTE
+     simples de conexão → pasta local a enviar (rsync) → tempo de reciclagem
+     (minutos) + ativação do envio automático.
+  2) Envio — `send` manda os arquivos prontos (idade mínima configurável) e, após o
+     sucesso, move-os para .enviados\ (ou apaga, conforme escolhido) — nada é
+     reenviado, e o rsync --partial retoma transferências em link instável.
   3) Agendamento — `schedule` cria a tarefa no Agendador de Tarefas do Windows.
 
 Uso (PowerShell):
@@ -134,7 +136,9 @@ function ConvertTo-UnixPath([string]$WinPath, $Cfg) {
 }
 
 # Monta a linha de comando do rsync (executável + argumentos) conforme o modo.
-function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin) {
+# $SourceDir permite trocar a origem (ex.: pasta vazia no teste de conexão).
+function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [string]$SourceDir = '') {
+    if (-not $SourceDir) { $SourceDir = $Cfg.DataDir }
     $dest = '{0}@{1}:/' -f $Cfg.HubUser, $Cfg.HubHost
     $sshOpts = "-p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
     if ($Cfg.Mode -eq 'wsl') {
@@ -142,7 +146,7 @@ function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin) {
         $ssh  = "ssh -i $($Cfg.KeyPath) $sshOpts"
         $argv = @('-e', 'rsync') + $ExtraArgs
         if ($FilesFromWin) { $argv += "--files-from=$(ConvertTo-UnixPath $FilesFromWin $Cfg)" }
-        $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $Cfg.DataDir $Cfg)/", $dest)
+        $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir $Cfg)/", $dest)
         return @{ Exe = 'wsl.exe'; Args = $argv }
     }
     # Modo nativo: prefere o ssh que acompanha o rsync (mesma família cygwin);
@@ -157,8 +161,28 @@ function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin) {
     $ssh  = "ssh -i $keyArg $sshOpts"
     $argv = @() + $ExtraArgs
     if ($FilesFromWin) { $argv += "--files-from=$(ConvertTo-UnixPath $FilesFromWin $Cfg)" }
-    $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $Cfg.DataDir $Cfg)/", $dest)
+    $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir $Cfg)/", $dest)
     return @{ Exe = $Cfg.Rsync; Args = $argv }
+}
+
+# Teste de conexão que NÃO depende da pasta de dados: dry-run a partir de uma pasta
+# vazia — valida rede, porta, chave e o confinamento no servidor, sem enviar nada.
+function Invoke-Probe($Cfg) {
+    $tmp = Join-Path $env:TEMP ("carbonara-probe-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    try {
+        $plan = Get-RsyncPlan $Cfg @('-an', '--timeout=20') '' $tmp
+        $r = Invoke-Native $plan.Exe $plan.Args
+        if ($r.Code -eq 0) {
+            Write-Host 'ok: o servidor respondeu e aceitou a chave.'
+            return $true
+        }
+        Write-Host 'falhou:'
+        $r.Out | ForEach-Object { Write-Host "  $_" }
+        return $false
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -Recurse -ErrorAction SilentlyContinue
+    }
 }
 
 # Arquivos elegíveis para envio: fora de pastas ocultas (inclui .enviados) e mais
@@ -177,8 +201,9 @@ function Get-PendingFiles($Cfg, [switch]$IgnoreAge) {
 function Invoke-Setup {
     Write-Host ''
     Write-Host '===== Configuração guiada da estação (Windows) ====='
-    Write-Host 'Você vai precisar de: o ENDEREÇO do servidor central e o ID desta estação'
-    Write-Host '(combinados com o administrador do servidor).'
+    Write-Host 'Você vai precisar de: o ENDEREÇO (IP) do servidor central, o ID desta estação'
+    Write-Host "e o arquivo de CHAVE recebido do servidor (gerado lá por 'rsync-hub add <id>',"
+    Write-Host 'que também cria um INSTRUCOES.txt com esses dados).'
     Write-Host ''
     $rs = Find-Rsync
     if (-not $rs) { Show-RsyncInstallHelp; return }
@@ -186,20 +211,95 @@ function Invoke-Setup {
     Write-Host ''
 
     $old = Get-Config -Optional
+
+    # 1. Identificação
     do {
         $id = Ask 'Id desta estação (minúsculas/dígitos/_ , ex.: flona01)' $(if ($old) { $old.StationId })
         $okId = $id -cmatch '^[a-z0-9][a-z0-9_]{1,30}$'
         if (-not $okId) { Write-Host "  id inválido — use minúsculas, dígitos e '_' (2 a 31 caracteres)." }
     } until ($okId)
+
+    # 2. Servidor (IP + porta, padrão 22)
     do {
-        $hubHost = Ask 'Endereço do servidor central (IP ou hostname)' $(if ($old) { $old.HubHost })
+        $hubHost = Ask 'IP (ou hostname) do servidor central' $(if ($old) { $old.HubHost })
         if (-not $hubHost) { Write-Host '  informe um endereço.' }
     } until ($hubHost)
     $hubPort = Ask 'Porta SSH do servidor' $(if ($old -and $old.HubPort) { $old.HubPort } else { '22' })
     $hubUser = Ask 'Conta de serviço no servidor' $(if ($old -and $old.HubUser) { $old.HubUser } else { 'carbonara' })
+
+    # 3. Chave de conexão (recebida do servidor; se não existir, oferece gerar aqui)
+    $newKey = $false
+    $keyPath = $null
+    while (-not $keyPath) {
+        $keyWin = Ask ("Caminho local da CHAVE desta estação (arquivo {0}_key recebido do servidor)" -f $id)
+        if (-not $keyWin) { Write-Host '  informe um caminho.'; continue }
+        if (Test-Path -LiteralPath $keyWin) {
+            if ($rs.Mode -eq 'wsl') {
+                # Copia a chave para DENTRO do WSL: em /mnt/c as permissões ficam
+                # abertas e o ssh recusa a chave privada.
+                $dst = "~/.ssh/carbonara_$id"
+                $src = ConvertTo-UnixPath (Get-Item -LiteralPath $keyWin).FullName ([pscustomobject]@{ Mode = 'wsl' })
+                $r = Invoke-Native 'wsl.exe' @('-e', 'sh', '-c',
+                    "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cp '$src' $dst && chmod 600 $dst")
+                if ($r.Code -ne 0) { Write-Host "  falha ao importar a chave no WSL: $($r.Out -join ' ')"; continue }
+                $keyPath = $dst
+                Write-Host "  chave importada para dentro do WSL ($dst)."
+            } else {
+                $keyPath = (Get-Item -LiteralPath $keyWin).FullName
+                # Restringe a chave ao usuário atual (o ssh recusa chave com permissão aberta).
+                Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
+            }
+        } else {
+            Write-Host "  não encontrei a chave em: $keyWin"
+            if (Ask-YesNo '  Gerar um NOVO par de chaves aqui (a pública precisará ser autorizada no servidor)?' $false) {
+                if ($rs.Mode -eq 'wsl') {
+                    $keyPath = "~/.ssh/carbonara_$id"
+                    $r = Invoke-Native 'wsl.exe' @('-e', 'sh', '-c',
+                        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && { [ -f $keyPath ] || ssh-keygen -q -t ed25519 -N '' -C carbonara-$id -f $keyPath; }")
+                    if ($r.Code -ne 0) { throw "falha ao gerar a chave no WSL: $($r.Out -join ' ')" }
+                    $script:pubKey = ((Invoke-Native 'wsl.exe' @('-e', 'sh', '-c', "cat $keyPath.pub")).Out -join "`n").Trim()
+                } else {
+                    if (-not (Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue)) {
+                        throw "ssh-keygen não encontrado — instale o 'Cliente OpenSSH' (Configurações > Aplicativos > Recursos Opcionais)."
+                    }
+                    $sshDir = Join-Path $env:USERPROFILE '.ssh'
+                    New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+                    $keyPath = Join-Path $sshDir "carbonara_$id"
+                    if (-not (Test-Path -LiteralPath $keyPath)) {
+                        $r = Invoke-Native 'ssh-keygen.exe' @('-q', '-t', 'ed25519', '-N', '', '-C', "carbonara-$id", '-f', $keyPath)
+                        if ($r.Code -ne 0) { throw "falha ao gerar a chave SSH: $($r.Out -join ' ')" }
+                    }
+                    Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
+                    $script:pubKey = (Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim()
+                }
+                $newKey = $true
+            }
+        }
+    }
+
+    # 4. Teste simples de conexão (o host responde? a chave é aceita?)
+    Write-Host ''
+    $probeCfg = [pscustomobject]@{
+        Mode = $rs.Mode; Rsync = $rs.Rsync; KeyPath = $keyPath
+        HubUser = $hubUser; HubHost = $hubHost; HubPort = $hubPort; DataDir = $env:TEMP
+    }
+    if ($newKey) {
+        Write-Host '(chave nova, ainda não autorizada no servidor — o teste fica para depois.)'
+    } elseif (Ask-YesNo 'Testar a conexão com o servidor agora?' $true) {
+        if (-not (Invoke-Probe $probeCfg)) {
+            Write-Host '  dicas: a estação foi autorizada no servidor? IP/porta corretos? há rede?'
+            if (-not (Ask-YesNo '  Continuar a configuração mesmo assim?' $true)) {
+                Write-Host 'configuração interrompida.'
+                return
+            }
+        }
+    }
+    Write-Host ''
+
+    # 5. Pasta local que será enviada (rsync)
     do {
         $default = if ($old) { $old.DataDir } else { Join-Path $env:USERPROFILE 'carbonara-dados' }
-        $dataDir = Ask 'Pasta LOCAL onde ficam os dados a enviar' $default
+        $dataDir = Ask 'Pasta LOCAL que deseja enviar por rsync' $default
         if (-not (Test-Path -LiteralPath $dataDir)) {
             if (Ask-YesNo "  a pasta não existe — criar $dataDir?") {
                 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
@@ -211,56 +311,38 @@ function Invoke-Setup {
     } until ($minAge -match '^\d+$')
     $keep = Ask-YesNo 'Manter cópia local após o envio (move para .enviados)?' $true
 
-    # Par de chaves SSH da estação
-    if ($rs.Mode -eq 'wsl') {
-        $keyPath = "~/.ssh/carbonara_$id"    # dentro do WSL
-        Write-Host ''
-        Write-Host "Gerando o par de chaves SSH desta estação (no WSL: $keyPath)…"
-        $r = Invoke-Native 'wsl.exe' @('-e', 'sh', '-c',
-            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && { [ -f $keyPath ] || ssh-keygen -q -t ed25519 -N '' -C carbonara-$id -f $keyPath; }")
-        if ($r.Code -ne 0) { throw "falha ao gerar a chave no WSL: $($r.Out -join ' ')" }
-        $r = Invoke-Native 'wsl.exe' @('-e', 'sh', '-c', "cat $keyPath.pub")
-        if ($r.Code -ne 0) { throw 'falha ao ler a chave pública no WSL' }
-        $pub = ($r.Out -join "`n").Trim()
-    } else {
-        if (-not (Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue)) {
-            throw "ssh-keygen não encontrado — instale o 'Cliente OpenSSH' (Configurações > Aplicativos > Recursos Opcionais)."
-        }
-        $sshDir = Join-Path $env:USERPROFILE '.ssh'
-        New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
-        $keyPath = Join-Path $sshDir "carbonara_$id"
-        if (-not (Test-Path -LiteralPath $keyPath)) {
-            Write-Host ''
-            Write-Host "Gerando o par de chaves SSH desta estação ($keyPath)…"
-            $r = Invoke-Native 'ssh-keygen.exe' @('-q', '-t', 'ed25519', '-N', '', '-C', "carbonara-$id", '-f', $keyPath)
-            if ($r.Code -ne 0) { throw "falha ao gerar a chave SSH: $($r.Out -join ' ')" }
-        }
-        # Restringe a chave ao usuário atual (o ssh recusa chave com permissão aberta).
-        Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
-        $pub = (Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim()
-    }
+    # 6. Tempo de reciclagem (intervalo do envio automático)
+    do {
+        $every = Ask 'Tempo de reciclagem do envio — a cada quantos minutos? (1-1439)' $(if ($old -and $old.SendEveryMin) { $old.SendEveryMin } else { '10' })
+    } until ($every -match '^\d+$' -and [int]$every -ge 1 -and [int]$every -le 1439)
 
     Save-Config ([pscustomobject]@{
         StationId = $id;      HubHost = $hubHost; HubPort = $hubPort; HubUser = $hubUser
-        DataDir   = $dataDir; MinAgeMin = $minAge; KeepCopy = $keep
+        DataDir   = $dataDir; MinAgeMin = $minAge; KeepCopy = $keep;  SendEveryMin = $every
         Mode      = $rs.Mode; Rsync = $rs.Rsync;   KeyPath = $keyPath
     })
     Write-Host ''
     Write-Host "ok: configuração gravada em $ConfFile."
+
+    if ($newKey) {
+        Write-Host ''
+        Write-Host '===== FALTA UM PASSO, NO SERVIDOR ====='
+        Write-Host 'A chave foi gerada AQUI, então o administrador precisa autorizar a pública:'
+        Write-Host "    sudo rsync-hub add $id <arquivo-com-a-chave>.pub"
+        Write-Host "(ou colando a linha no menu do rsync-hub → 'Adicionar estação')"
+        Write-Host ''
+        Write-Host '--- chave pública (copie a linha inteira) ---'
+        Write-Host $script:pubKey
+        Write-Host '---------------------------------------------'
+        Write-Host ''
+        Write-Host 'depois de autorizada, valide com: .\carbonara-station.ps1 test'
+    }
+
     Write-Host ''
-    Write-Host '===== FALTA UM PASSO, NO SERVIDOR ====='
-    Write-Host 'Entregue a CHAVE PÚBLICA abaixo ao administrador do servidor, que autoriza com:'
-    Write-Host "    sudo rsync-hub add $id <arquivo-com-a-chave>.pub"
-    Write-Host "(ou colando a linha no menu do rsync-hub → 'Adicionar estação')"
-    Write-Host ''
-    Write-Host '--- chave pública (copie a linha inteira) ---'
-    Write-Host $pub
-    Write-Host '---------------------------------------------'
-    Write-Host ''
-    if (Ask-YesNo 'A estação já foi autorizada no servidor? Testar a conexão agora?' $false) {
-        Invoke-Test
+    if (Ask-YesNo ("Ativar o envio automático agora (a cada {0} min, via Agendador de Tarefas)?" -f $every) $true) {
+        Install-Schedule $every
     } else {
-        Write-Host 'quando ela for autorizada, valide com: .\carbonara-station.ps1 test'
+        Write-Host "quando quiser ativar: .\carbonara-station.ps1 schedule   (ou envie manualmente com 'send')"
     }
 }
 
@@ -268,16 +350,11 @@ function Invoke-Setup {
 function Invoke-Test {
     $cfg = Get-Config
     Write-Host ("testando conexão com {0}@{1}:{2} (dry-run, nada é enviado)…" -f $cfg.HubUser, $cfg.HubHost, $cfg.HubPort)
-    $plan = Get-RsyncPlan $cfg @('-an', '--timeout=30') $null
-    $r = Invoke-Native $plan.Exe $plan.Args
-    if ($r.Code -eq 0) {
-        Write-Host 'ok: conexão e permissões funcionando.'
-    } else {
-        Write-Host 'falhou:'
-        $r.Out | ForEach-Object { Write-Host "  $_" }
+    if (-not (Invoke-Probe $cfg)) {
         Write-Host 'verifique:'
-        Write-Host ("  - a chave pública já foi autorizada no servidor? (sudo rsync-hub add {0} …)" -f $cfg.StationId)
-        Write-Host ("  - endereço ({0}) e porta ({1}) corretos? há rede até o servidor?" -f $cfg.HubHost, $cfg.HubPort)
+        Write-Host ("  - a estação foi autorizada no servidor? (lá: sudo rsync-hub add {0} …)" -f $cfg.StationId)
+        Write-Host ("  - a chave é a recebida do servidor? ({0})" -f $cfg.KeyPath)
+        Write-Host ("  - IP ({0}) e porta ({1}) corretos? há rede até o servidor?" -f $cfg.HubHost, $cfg.HubPort)
     }
 }
 
@@ -327,20 +404,24 @@ function Invoke-Send {
 }
 
 # --- Agendamento (Agendador de Tarefas) --------------------------------------------------
-function Invoke-Schedule {
-    $null = Get-Config
-    do {
-        $iv = Ask 'Enviar a cada quantos minutos? (1-1439)' '10'
-    } until ($iv -match '^\d+$' -and [int]$iv -ge 1 -and [int]$iv -le 1439)
+function Install-Schedule([string]$Every) {  # instala/substitui a tarefa de envio periódico
     $tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" send"
-    $r = Invoke-Native 'schtasks.exe' @('/Create', '/F', '/SC', 'MINUTE', '/MO', $iv, '/TN', $TaskName, '/TR', $tr)
+    $r = Invoke-Native 'schtasks.exe' @('/Create', '/F', '/SC', 'MINUTE', '/MO', $Every, '/TN', $TaskName, '/TR', $tr)
     if ($r.Code -eq 0) {
-        Write-Host ("ok: envio agendado a cada {0} min (Agendador de Tarefas, tarefa '{1}')." -f $iv, $TaskName)
+        Write-Host ("ok: envio automático ativo a cada {0} min (Agendador de Tarefas, tarefa '{1}')." -f $Every, $TaskName)
         Write-Host 'para remover: .\carbonara-station.ps1 unschedule'
     } else {
         $r.Out | ForEach-Object { Write-Host "  $_" }
         Write-Host 'falha ao criar a tarefa agendada — tente em um PowerShell como administrador.'
     }
+}
+
+function Invoke-Schedule {
+    $cfg = Get-Config
+    do {
+        $iv = Ask 'Enviar a cada quantos minutos? (1-1439)' $(if ($cfg.SendEveryMin) { $cfg.SendEveryMin } else { '10' })
+    } until ($iv -match '^\d+$' -and [int]$iv -ge 1 -and [int]$iv -le 1439)
+    Install-Schedule $iv
 }
 
 function Invoke-Unschedule {

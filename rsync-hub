@@ -21,7 +21,9 @@
 # Uso:
 #   sudo ./rsync-hub install             # instalação GUIADA do host (pastas+conta+estações)
 #   sudo ./rsync-hub install --defaults  # instalação sem perguntas (usa defaults/ambiente)
-#   sudo ./rsync-hub add  <id> <pub>     # autoriza uma estação (arquivo de chave pública)
+#   sudo ./rsync-hub add <id>            # autoriza GERANDO a chave aqui (stations/<id>/
+#                                        #   guarda o par + INSTRUCOES.txt de ativação)
+#   sudo ./rsync-hub add <id> <pub>      # autoriza com chave pública já existente
 #   sudo ./rsync-hub remove <id>         # revoga o acesso da estação
 #        ./rsync-hub list                # lista estações autorizadas
 #        ./rsync-hub monitor             # fica rodando, mostrando as conexões (Ctrl-C sai)
@@ -201,10 +203,11 @@ install_host() {
 
     # Passo 3/3 — autorizar estações
     echo "--- Passo 3/3: autorizar as estações (clientes) ---"
-    echo "Cada estação gera a própria chave com o assistente do cliente"
-    echo "(station/carbonara-station.sh no Linux · station/carbonara-station.ps1 no Windows)"
-    echo "e apresenta a CHAVE PÚBLICA — é ela que você informa aqui. Dá para adicionar"
-    echo "estações depois também (sudo rsync-hub add <id> <chave.pub>)."
+    echo "O mais simples é GERAR a chave de cada estação aqui mesmo (aperte ENTER na"
+    echo "pergunta da chave): ela fica em $BASE/stations/<id>/ junto com um"
+    echo "INSTRUCOES.txt de ativação — você leva a chave privada para a estação."
+    echo "Se a estação já tem chave própria, informe o arquivo .pub ou cole a linha."
+    echo "Dá para adicionar estações depois também (sudo rsync-hub add <id>)."
     while ask_yn "Adicionar uma estação agora?" s; do
         add_station_wizard || echo "  (estação não adicionada — tente de novo)"
     done
@@ -220,14 +223,64 @@ install_host() {
 }
 
 # --- Papel 2: gerência -------------------------------------------------------------
+write_instructions() {  # $1=id $2=pasta da estação — gera o INSTRUCOES.txt de ativação
+    wi_id="$1"; wi_dir="$2"; wi_addr="$(host_addr)"
+    cat > "$wi_dir/INSTRUCOES.txt" <<EOF
+CARBONARA — ativação da estação '$wi_id'
+========================================
+(gerado por rsync-hub em $(date -u +%FT%TZ))
+
+Servidor (host): $wi_addr · porta: 22 (padrão) · conta: $HUB_USER
+
+1) Copie para a máquina da estação:
+     - a chave privada desta pasta:  ${wi_id}_key   (mantenha-a protegida!)
+     - o cliente (pasta station/ do repositório carbonara-datahub):
+         Linux:    carbonara-station.sh
+         Windows:  carbonara-station.ps1 + carbonara-station.cmd
+
+2) Na estação, rode o assistente guiado:
+         Linux:    ./carbonara-station.sh setup
+         Windows:  .\\carbonara-station.cmd setup
+   Ele pergunta, nesta ordem:
+     - id da estação ................ $wi_id
+     - IP do host ................... $wi_addr   (porta: 22, se não foi alterada)
+     - caminho local da chave ....... onde você salvou o arquivo ${wi_id}_key
+     → teste simples de conexão (o host responde? a chave é aceita?)
+     - pasta local a enviar (rsync)
+     - tempo de reciclagem (minutos) + ativação do envio automático
+
+3) Pronto. Acompanhe as chegadas no servidor com:  rsync-hub monitor
+
+Observações:
+  - A chave pública (${wi_id}_key.pub) permanece nesta pasta e já está autorizada.
+  - Para revogar o acesso desta estação:  sudo rsync-hub remove $wi_id
+EOF
+    chmod 644 "$wi_dir/INSTRUCOES.txt"
+}
+
 add_station() {
     need_root
     id="${1:-}"; pub="${2:-}"
-    [ -n "$id" ] && [ -n "$pub" ] || die "uso: rsync-hub add <id> <arquivo_chave_publica>"
+    [ -n "$id" ] || die "uso: rsync-hub add <id> [arquivo_chave_publica]  (sem o arquivo, a chave é gerada aqui)"
     valid_id "$id"
+    [ -f "$AUTHKEYS" ] || die "host não preparado — rode antes: sudo rsync-hub install"
+
+    generated=""
+    if [ -z "$pub" ]; then
+        # Sem chave informada: gera o par AQUI e o guarda na pasta da estação
+        # ($BASE/stations/<id> — fora do incoming/, que a estação pode escrever e a
+        # ingestão varre), junto com as instruções de ativação. O operador leva a
+        # chave privada para a estação.
+        keydir="$BASE/stations/$id"
+        install -d -m 700 "$keydir"
+        key="$keydir/${id}_key"
+        if [ ! -f "$key.pub" ]; then
+            ssh-keygen -q -t ed25519 -N "" -C "carbonara-$id" -f "$key" || die "falha ao gerar a chave"
+        fi
+        pub="$key.pub"; generated=1
+    fi
     [ -f "$pub" ] || die "chave pública não encontrada: $pub"
     ssh-keygen -l -f "$pub" >/dev/null 2>&1 || die "não parece uma chave pública SSH: $pub"
-    [ -f "$AUTHKEYS" ] || die "host não preparado — rode antes: sudo rsync-hub install"
 
     install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$INCOMING/$id"
     # Remove entrada antiga da mesma estação (se houver) e adiciona a nova.
@@ -235,24 +288,38 @@ add_station() {
     printf 'command="%s serve %s",restrict %s\n' "$(self_path)" "$id" "$(cat "$pub")" >> "$AUTHKEYS.tmp"
     mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
     echo "estação '$id' autorizada (pasta $INCOMING/$id)."
-    echo "no cliente, aponte para: conta $HUB_USER · host $(host_addr) · porta 22 (detalhes: rsync-hub cliente)"
+    if [ -n "$generated" ]; then
+        write_instructions "$id" "$keydir"
+        echo "chave da estação gerada e guardada em $keydir/:"
+        echo "    ${id}_key        ← COPIE para a máquina da estação (chave privada)"
+        echo "    ${id}_key.pub    ← permanece aqui (já autorizada)"
+        echo "    INSTRUCOES.txt   ← passo a passo de ativação, para acompanhar a chave"
+    else
+        echo "no cliente, aponte para: conta $HUB_USER · host $(host_addr) · porta 22 (detalhes: rsync-hub cliente)"
+    fi
 }
 
-add_station_wizard() {  # versão guiada do add: aceita caminho de arquivo OU a linha colada
+add_station_wizard() {  # versão guiada do add: gera a chave (ENTER), aceita arquivo OU linha colada
     id="$(ask "  id da estação (minúsculas/dígitos/_ , ex.: flona01)" "")"
     [ -n "$id" ] || { echo "  id vazio."; return 1; }
     echo "$id" | grep -Eq '^[a-z0-9][a-z0-9_]{1,30}$' || { echo "  id inválido."; return 1; }
-    echo "  informe a chave pública: o CAMINHO do arquivo .pub OU cole a linha inteira"
-    echo "  (começa com 'ssh-ed25519', 'ssh-rsa', 'ecdsa-…')."
-    printf '  chave> '
+    echo "  chave pública da estação: aperte ENTER para GERAR o par aqui no host"
+    echo "  (fica em $BASE/stations/$id/ com as instruções de ativação), OU informe o"
+    echo "  CAMINHO de um arquivo .pub, OU cole a linha inteira ('ssh-ed25519 …')."
+    printf '  chave (ENTER = gerar aqui)> '
     read -r key || return 1
-    [ -n "$key" ] || { echo "  nada informado."; return 1; }
     tmp=""
     case "$key" in
+        "")                 pub="" ;;
         ssh-*|ecdsa-*|sk-*) tmp="$(mktemp)"; printf '%s\n' "$key" > "$tmp"; pub="$tmp" ;;
-        *) pub="$key" ;;
+        *)                  pub="$key" ;;
     esac
-    if ( add_station "$id" "$pub" ); then rc=0; else rc=1; fi   # subshell: erro não derruba o assistente
+    # Subshell: um erro no add não derruba o assistente.
+    if [ -z "$pub" ]; then
+        if ( add_station "$id" ); then rc=0; else rc=1; fi
+    else
+        if ( add_station "$id" "$pub" ); then rc=0; else rc=1; fi
+    fi
     [ -n "$tmp" ] && rm -f "$tmp"
     return "$rc"
 }
@@ -265,6 +332,8 @@ remove_station() {
         grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" || true
         mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
         echo "estação '$id': acesso revogado. Dados preservados em $INCOMING/$id."
+        [ -d "$BASE/stations/$id" ] && \
+            echo "chaves/instruções mantidas em $BASE/stations/$id — apague a pasta se não for reativar."
     else
         echo "estação '$id' não estava autorizada."
     fi
@@ -288,33 +357,28 @@ client_help() {
 Dados DESTE host para informar no assistente do cliente:
     endereço: $addr · porta: 22 · conta de serviço: $HUB_USER
 
-O cliente roda na máquina da estação e envia os arquivos para cá. Há um assistente
-guiado para cada sistema, na pasta station/ deste repositório:
+O jeito mais simples (chave gerada AQUI no host):
+    1. sudo rsync-hub add <id>          # sem arquivo: gera o par da estação
+       → cria $BASE/stations/<id>/ com a chave privada (<id>_key), a pública
+         (que permanece lá, já autorizada) e um INSTRUCOES.txt de ativação.
+    2. leve para a estação: a chave privada <id>_key + o cliente da pasta
+       station/ (Linux: carbonara-station.sh · Windows: carbonara-station.ps1
+       e carbonara-station.cmd, na mesma pasta).
+    3. na estação, rode o assistente:
+           Linux:    ./carbonara-station.sh setup
+           Windows:  .\\carbonara-station.cmd setup
+       ele pergunta, nesta ordem: id da estação → IP do host ($addr, porta 22)
+       → caminho local da chave → TESTE de conexão → pasta a enviar (rsync)
+       → tempo de reciclagem (minutos) + ativação do envio automático.
 
-  Linux ──────────────────────────────────────────────────────────────
-    1. copie station/carbonara-station.sh para a estação
-    2. lá, rode:   ./carbonara-station.sh setup
-       (pergunta id/host/pasta, gera a chave e mostra a CHAVE PÚBLICA)
-    3. traga a chave pública para cá e autorize:
-           sudo rsync-hub add <id> <chave.pub>
-       (ou cole a linha da chave no menu → "Adicionar estação")
-    4. de volta à estação:
-           ./carbonara-station.sh test       # valida a conexão
-           ./carbonara-station.sh send       # envia agora
-           ./carbonara-station.sh schedule   # agenda o envio (cron)
+Alternativa (chave gerada NA estação):
+    - na estação, o próprio setup oferece gerar um novo par quando a chave
+      informada não existe; traga a PÚBLICA para cá e autorize com
+          sudo rsync-hub add <id> <chave.pub>
+      (ou cole a linha no menu → "Adicionar estação").
 
-  Windows ────────────────────────────────────────────────────────────
-    1. copie station\\carbonara-station.ps1 E station\\carbonara-station.cmd
-       para a MESMA pasta na estação (o .cmd executa o .ps1 contornando o
-       bloqueio padrão do Windows a scripts PowerShell)
-    2. na estação:   .\\carbonara-station.cmd setup
-       (o assistente localiza o rsync — ou orienta a instalar via WSL/cwRsync —
-        gera a chave e mostra a CHAVE PÚBLICA)
-    3. autorize aqui:   sudo rsync-hub add <id> <chave.pub>
-    4. na estação:      .\\carbonara-station.cmd test | send | schedule
-
-  Envio manual (alternativa sem o script do cliente) ─────────────────
-    rsync -avz -e "ssh -i ~/.ssh/carbonara_<id>" /pasta/dos/dados/ $HUB_USER@$addr:/
+Envio manual (sem o script do cliente):
+    rsync -avz -e "ssh -i /caminho/<id>_key" /pasta/dos/dados/ $HUB_USER@$addr:/
 EOF
 }
 
@@ -405,7 +469,9 @@ rsync-hub — coleta CARBONARA por rsync-over-SSH (lado HOST / servidor central)
 uso:
   sudo rsync-hub install             instalação GUIADA (pasta raiz + conta + estações)
   sudo rsync-hub install --defaults  instalação sem perguntas (defaults/ambiente)
-  sudo rsync-hub add <id> <pub>      autoriza uma estação (arquivo de chave pública)
+  sudo rsync-hub add <id>            autoriza uma estação GERANDO a chave aqui no host
+                                     (fica em <raiz>/stations/<id>/ + INSTRUCOES.txt)
+  sudo rsync-hub add <id> <pub>      autoriza com uma chave pública já existente
   sudo rsync-hub remove <id>         revoga o acesso da estação (dados preservados)
        rsync-hub list                lista as estações autorizadas
        rsync-hub monitor             modo ao vivo: quem conectou e o que chegou (Ctrl-C sai)

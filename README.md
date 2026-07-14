@@ -30,7 +30,9 @@ pasta raiz → conta de serviço → autorização das estações:
 
 ```bash
 sudo ./rsync-hub install              # instalação GUIADA do host — 1x
-sudo ./rsync-hub add flona01 flona01.pub   # autoriza uma estação (tb. via menu, colando a chave)
+sudo ./rsync-hub add flona01          # autoriza GERANDO a chave aqui: stations/flona01/
+                                      #   guarda o par + INSTRUCOES.txt de ativação
+sudo ./rsync-hub add flona01 f.pub    # ou autoriza uma chave já existente
      ./rsync-hub list                 # lista estações
      ./rsync-hub monitor              # fica rodando mostrando as conexões
      ./rsync-hub cliente              # instruções p/ configurar uma estação
@@ -38,9 +40,10 @@ sudo ./rsync-hub add flona01 flona01.pub   # autoriza uma estação (tb. via men
 ```
 
 O lado **cliente** roda nas estações (Linux **ou Windows**) — assistentes guiados em
-[`station/`](station/): `carbonara-station.sh` (Linux) e `carbonara-station.ps1`
-(Windows), com `setup` (gera a chave e mostra a pública), `test`, `send`, `schedule`
-e `status`. Ver [`station/README.md`](station/README.md).
+[`station/`](station/): `carbonara-station.sh` (Linux) e `carbonara-station.ps1` +
+`carbonara-station.cmd` (Windows). O `setup` pergunta, em ordem: IP do host (porta
+padrão 22) → caminho da chave recebida → teste de conexão → pasta a enviar → tempo de
+reciclagem (com ativação do envio automático). Ver [`station/README.md`](station/README.md).
 
 Isolamento simples e real: cada estação tem uma **chave** que só executa `rsync-hub serve
 <id>` (via `command="…",restrict` no `authorized_keys` — sem shell/túnel/PTY), e o

@@ -5,11 +5,15 @@
 # (o "host", preparado com o script rsync-hub deste projeto), por rsync-over-SSH.
 #
 # Papéis:
-#   1) Assistente guiado — `setup` pergunta id/servidor/pasta, gera a chave SSH e mostra
-#      a CHAVE PÚBLICA que o administrador autoriza no host (sudo rsync-hub add <id> <pub>).
-#   2) Envio — `send` manda os arquivos prontos (idade mínima configurável, para não pegar
-#      arquivo ainda sendo escrito) e, após o sucesso, move-os para .enviados/ (ou apaga,
-#      conforme escolhido) — nada é reenviado, e o rsync --partial retoma em link instável.
+#   1) Assistente guiado — `setup` pergunta, nesta ordem: id da estação → IP do host
+#      (porta opcional, padrão 22) → caminho local da CHAVE recebida do servidor
+#      (gerada lá pelo `rsync-hub add <id>`; se não existir, oferece gerar uma nova
+#      aqui) → TESTE simples de conexão → pasta local a enviar (rsync) → tempo de
+#      reciclagem (minutos) + ativação do envio automático.
+#   2) Envio — `send` manda os arquivos prontos (idade mínima configurável, para não
+#      pegar arquivo ainda sendo escrito) e, após o sucesso, move-os para .enviados/
+#      (ou apaga, conforme escolhido) — nada é reenviado, e o rsync --partial retoma
+#      transferências interrompidas (link instável).
 #   3) Agendamento — `schedule` instala o envio periódico no cron do usuário.
 #
 # Uso:
@@ -52,34 +56,93 @@ load_conf() {
     : "${STATION_ID:?configuração incompleta — rode setup de novo}"
     : "${HUB_HOST:?}" "${DATA_DIR:?}" "${KEY_FILE:?}"
     HUB_PORT="${HUB_PORT:-22}"; HUB_USER="${HUB_USER:-carbonara}"
-    MIN_AGE="${MIN_AGE:-1}"; KEEP_COPY="${KEEP_COPY:-yes}"
+    MIN_AGE="${MIN_AGE:-1}"; KEEP_COPY="${KEEP_COPY:-yes}"; SEND_EVERY="${SEND_EVERY:-10}"
     SENT_DIR="$DATA_DIR/.enviados"
 }
 
 ssh_cmd() { echo "ssh -i $KEY_FILE -p $HUB_PORT -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"; }
+
+# Teste de conexão que NÃO depende da pasta de dados: dry-run a partir de uma pasta
+# vazia — valida rede, porta, chave e o confinamento no servidor, sem enviar nada.
+probe_conn() {
+    tmpd="$(mktemp -d)"
+    if out="$(rsync -an --timeout=20 -e "$(ssh_cmd)" "$tmpd/" "$HUB_USER@$HUB_HOST:/" 2>&1)"; then
+        rmdir "$tmpd" 2>/dev/null || true
+        echo "ok: o servidor respondeu e aceitou a chave."
+        return 0
+    fi
+    rmdir "$tmpd" 2>/dev/null || true
+    echo "falhou:"
+    echo "$out" | sed 's/^/  /'
+    return 1
+}
 
 # --- Configuração guiada -----------------------------------------------------------
 setup() {
     [ -r "$CONF" ] && . "$CONF" || true      # pré-preenche com a configuração atual
     echo
     echo "===== Configuração guiada da estação (Linux) ====="
-    echo "Você vai precisar de: o ENDEREÇO do servidor central e o ID desta estação"
-    echo "(combinados com o administrador do servidor)."
+    echo "Você vai precisar de: o ENDEREÇO (IP) do servidor central, o ID desta estação"
+    echo "e o arquivo de CHAVE recebido do servidor (gerado lá por 'rsync-hub add <id>',"
+    echo "que também cria um INSTRUCOES.txt com esses dados)."
     echo
+
+    # 1. Identificação
     while :; do
         STATION_ID="$(ask "Id desta estação (minúsculas/dígitos/_ , ex.: flona01)" "${STATION_ID:-}")"
         echo "$STATION_ID" | grep -Eq '^[a-z0-9][a-z0-9_]{1,30}$' && break
         echo "  id inválido — use minúsculas, dígitos e '_' (2 a 31 caracteres)."
     done
+
+    # 2. Servidor (IP + porta, padrão 22)
     while :; do
-        HUB_HOST="$(ask "Endereço do servidor central (IP ou hostname)" "${HUB_HOST:-}")"
+        HUB_HOST="$(ask "IP (ou hostname) do servidor central" "${HUB_HOST:-}")"
         [ -n "$HUB_HOST" ] && break
         echo "  informe um endereço."
     done
     HUB_PORT="$(ask "Porta SSH do servidor" "${HUB_PORT:-22}")"
     HUB_USER="$(ask "Conta de serviço no servidor" "${HUB_USER:-carbonara}")"
+
+    # 3. Chave de conexão (recebida do servidor; se não existir, oferece gerar aqui)
+    NEW_KEY=""
+    case "${KEY_FILE:-}" in
+        */carbonara_"$STATION_ID"|*/"${STATION_ID}"_key) : ;;   # default só se for deste id
+        *) KEY_FILE="" ;;
+    esac
     while :; do
-        DATA_DIR="$(ask "Pasta LOCAL onde ficam os dados a enviar" "${DATA_DIR:-$HOME/carbonara-dados}")"
+        KEY_FILE="$(ask "Caminho local da CHAVE desta estação (arquivo ${STATION_ID}_key recebido do servidor)" "${KEY_FILE:-}")"
+        [ -n "$KEY_FILE" ] || { echo "  informe um caminho."; continue; }
+        case "$KEY_FILE" in /*) : ;; *) KEY_FILE="$PWD/$KEY_FILE" ;; esac
+        if [ -f "$KEY_FILE" ]; then
+            chmod 600 "$KEY_FILE" 2>/dev/null || \
+                echo "  aviso: não consegui ajustar as permissões da chave (o ssh exige 600)."
+            break
+        fi
+        echo "  não encontrei a chave em: $KEY_FILE"
+        if ask_yn "  Gerar um NOVO par de chaves aqui (a pública precisará ser autorizada no servidor)?" n; then
+            KEY_FILE="$HOME/.ssh/carbonara_$STATION_ID"
+            mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+            [ -f "$KEY_FILE" ] || ssh-keygen -q -t ed25519 -N "" -C "carbonara-$STATION_ID" -f "$KEY_FILE"
+            NEW_KEY=1
+            break
+        fi
+    done
+
+    # 4. Teste simples de conexão (o host responde? a chave é aceita?)
+    echo
+    if [ -n "$NEW_KEY" ]; then
+        echo "(chave nova, ainda não autorizada no servidor — o teste fica para depois.)"
+    elif ask_yn "Testar a conexão com o servidor agora?" s; then
+        if ! probe_conn; then
+            echo "  dicas: a estação foi autorizada no servidor? IP/porta corretos? há rede?"
+            ask_yn "  Continuar a configuração mesmo assim?" s || { echo "configuração interrompida."; return 1; }
+        fi
+    fi
+    echo
+
+    # 5. Pasta local que será enviada (rsync)
+    while :; do
+        DATA_DIR="$(ask "Pasta LOCAL que deseja enviar por rsync" "${DATA_DIR:-$HOME/carbonara-dados}")"
         case "$DATA_DIR" in /*) : ;; *) echo "  use um caminho absoluto."; continue ;; esac
         [ -d "$DATA_DIR" ] && break
         if ask_yn "  a pasta não existe — criar $DATA_DIR?" s; then mkdir -p "$DATA_DIR"; break; fi
@@ -94,18 +157,12 @@ setup() {
     else KEEP_COPY=no
     fi
 
-    # Mantém a chave já configurada só se ela for a deste id (reconfigurar com outro
-    # id gera/usa outra chave, para não confundir estação e credencial).
-    case "${KEY_FILE:-}" in
-        */carbonara_"$STATION_ID") : ;;
-        *) KEY_FILE="$HOME/.ssh/carbonara_$STATION_ID" ;;
-    esac
-    if [ ! -f "$KEY_FILE" ]; then
-        echo
-        echo "Gerando o par de chaves SSH desta estação ($KEY_FILE)…"
-        mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-        ssh-keygen -q -t ed25519 -N "" -C "carbonara-$STATION_ID" -f "$KEY_FILE"
-    fi
+    # 6. Tempo de reciclagem (intervalo do envio automático)
+    while :; do
+        SEND_EVERY="$(ask "Tempo de reciclagem do envio — a cada quantos minutos? (1-59)" "${SEND_EVERY:-10}")"
+        echo "$SEND_EVERY" | grep -Eq '^[0-9]+$' && [ "$SEND_EVERY" -ge 1 ] && [ "$SEND_EVERY" -le 59 ] && break
+        echo "  informe um número entre 1 e 59."
+    done
 
     mkdir -p "$CONF_DIR"
     { echo "# gerado por carbonara-station setup em $(date -u +%FT%TZ)"
@@ -116,24 +173,31 @@ setup() {
       echo "DATA_DIR=$DATA_DIR"
       echo "KEY_FILE=$KEY_FILE"
       echo "MIN_AGE=$MIN_AGE"
-      echo "KEEP_COPY=$KEEP_COPY"; } > "$CONF"
+      echo "KEEP_COPY=$KEEP_COPY"
+      echo "SEND_EVERY=$SEND_EVERY"; } > "$CONF"
     chmod 600 "$CONF"
     echo
     echo "ok: configuração gravada em $CONF."
+
+    if [ -n "$NEW_KEY" ]; then
+        echo
+        echo "===== FALTA UM PASSO, NO SERVIDOR ====="
+        echo "A chave foi gerada AQUI, então o administrador precisa autorizar a pública:"
+        echo "    sudo rsync-hub add $STATION_ID <arquivo-com-a-chave>.pub"
+        echo "(ou colando a linha no menu do rsync-hub → 'Adicionar estação')"
+        echo
+        echo "--- chave pública (copie a linha inteira) ---"
+        cat "$KEY_FILE.pub"
+        echo "---------------------------------------------"
+        echo
+        echo "depois de autorizada, valide com: $(basename "$0") test"
+    fi
+
     echo
-    echo "===== FALTA UM PASSO, NO SERVIDOR ====="
-    echo "Entregue a CHAVE PÚBLICA abaixo ao administrador do servidor, que autoriza com:"
-    echo "    sudo rsync-hub add $STATION_ID <arquivo-com-a-chave>.pub"
-    echo "(ou colando a linha no menu do rsync-hub → 'Adicionar estação')"
-    echo
-    echo "--- chave pública (copie a linha inteira) ---"
-    cat "$KEY_FILE.pub"
-    echo "---------------------------------------------"
-    echo
-    if ask_yn "A estação já foi autorizada no servidor? Testar a conexão agora?" n; then
-        test_conn || true
+    if ask_yn "Ativar o envio automático agora (a cada $SEND_EVERY min, via cron)?" s; then
+        schedule_install "$SEND_EVERY"
     else
-        echo "quando ela for autorizada, valide com: $(basename "$0") test"
+        echo "quando quiser ativar: $(basename "$0") schedule   (ou envie manualmente com 'send')"
     fi
 }
 
@@ -141,14 +205,11 @@ setup() {
 test_conn() {
     load_conf
     echo "testando conexão com $HUB_USER@$HUB_HOST:$HUB_PORT (dry-run, nada é enviado)…"
-    if out="$(rsync -an --timeout=30 -e "$(ssh_cmd)" "$DATA_DIR/" "$HUB_USER@$HUB_HOST:/" 2>&1)"; then
-        echo "ok: conexão e permissões funcionando."
-    else
-        echo "falhou:"
-        echo "$out" | sed 's/^/  /'
+    if ! probe_conn; then
         echo "verifique:"
-        echo "  - a chave pública já foi autorizada no servidor? (sudo rsync-hub add $STATION_ID …)"
-        echo "  - endereço ($HUB_HOST) e porta ($HUB_PORT) corretos? há rede até o servidor?"
+        echo "  - a estação foi autorizada no servidor? (lá: sudo rsync-hub add $STATION_ID …)"
+        echo "  - a chave é a recebida do servidor? ($KEY_FILE)"
+        echo "  - IP ($HUB_HOST) e porta ($HUB_PORT) corretos? há rede até o servidor?"
         return 1
     fi
 }
@@ -197,19 +258,24 @@ send() {
 }
 
 # --- Agendamento (cron) ---------------------------------------------------------------
-schedule() {
-    load_conf
+schedule_install() {  # $1 = intervalo em minutos (instala/substitui a entrada no cron)
+    iv="$1"
     command -v crontab >/dev/null 2>&1 || die "crontab não encontrado nesta máquina"
-    while :; do
-        iv="$(ask "Enviar a cada quantos minutos? (1-59)" "10")"
-        echo "$iv" | grep -Eq '^[0-9]+$' && [ "$iv" -ge 1 ] && [ "$iv" -le 59 ] && break
-        echo "  informe um número entre 1 e 59."
-    done
     self="$(self_path)"
     ( crontab -l 2>/dev/null | grep -vF "$CRON_TAG" || true
       echo "*/$iv * * * * $self send >> $LOGF 2>&1 $CRON_TAG" ) | crontab -
-    echo "ok: envio agendado a cada $iv min (cron do usuário $(id -un))."
+    echo "ok: envio automático ativo a cada $iv min (cron do usuário $(id -un))."
     echo "para remover: $(basename "$0") unschedule"
+}
+
+schedule() {
+    load_conf
+    while :; do
+        iv="$(ask "Enviar a cada quantos minutos? (1-59)" "$SEND_EVERY")"
+        echo "$iv" | grep -Eq '^[0-9]+$' && [ "$iv" -ge 1 ] && [ "$iv" -le 59 ] && break
+        echo "  informe um número entre 1 e 59."
+    done
+    schedule_install "$iv"
 }
 
 unschedule() {
