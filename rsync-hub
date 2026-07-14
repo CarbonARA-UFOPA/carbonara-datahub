@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# rsync-hub — coleta CARBONARA por rsync-over-SSH, tudo em UM script.
+# rsync-hub — coleta CARBONARA por rsync-over-SSH: o lado HOST (servidor central).
 #
-# Faz três papéis com o mesmo arquivo:
-#   1) Gerência   — autoriza/remove/lista estações e prepara as pastas (menu ou comando).
-#   2) Monitor    — modo que fica rodando mostrando quem conectou e o que chegou.
-#   3) Comando forçado — cada estação, ao conectar por SSH, cai em `rsync-hub serve <id>`,
+# Papéis deste arquivo:
+#   1) Instalação guiada — `install` conduz passo a passo: pasta raiz dos dados, conta
+#      de serviço e, na sequência, a autorização das estações (clientes).
+#   2) Gerência   — autoriza/remove/lista estações (menu interativo ou comando direto).
+#   3) Monitor    — modo que fica rodando mostrando quem conectou e o que chegou.
+#   4) Comando forçado — cada estação, ao conectar por SSH, cai em `rsync-hub serve <id>`,
 #      que confina o rsync à pasta daquela estação (write-only).
+#
+# O lado CLIENTE (estações Linux/Windows) fica em station/carbonara-station.sh e
+# station/carbonara-station.ps1 — assistentes guiados que geram a chave, testam e
+# agendam o envio. Rode `rsync-hub cliente` para ver as instruções passo a passo.
 #
 # Isolamento (simples, mas real): cada estação tem uma CHAVE que só executa este script
 # com o SEU id; o `restrict` no authorized_keys corta shell/túnel/PTY; e o `rrsync -wo`
@@ -13,32 +19,64 @@
 # outras). Uma conta de serviço única dona das pastas — sem criar usuário por estação.
 #
 # Uso:
-#   sudo ./rsync-hub install           # prepara o host (conta + pastas + chave) — 1x
-#   sudo ./rsync-hub add  <id> <pub>   # autoriza uma estação (arquivo de chave pública)
-#   sudo ./rsync-hub remove <id>       # revoga o acesso da estação
-#        ./rsync-hub list              # lista estações autorizadas
-#        ./rsync-hub monitor           # fica rodando, mostrando as conexões (Ctrl-C sai)
-#        ./rsync-hub status            # mostra o status uma vez
-#        ./rsync-hub                    # abre o menu interativo
+#   sudo ./rsync-hub install             # instalação GUIADA do host (pastas+conta+estações)
+#   sudo ./rsync-hub install --defaults  # instalação sem perguntas (usa defaults/ambiente)
+#   sudo ./rsync-hub add  <id> <pub>     # autoriza uma estação (arquivo de chave pública)
+#   sudo ./rsync-hub remove <id>         # revoga o acesso da estação
+#        ./rsync-hub list                # lista estações autorizadas
+#        ./rsync-hub monitor             # fica rodando, mostrando as conexões (Ctrl-C sai)
+#        ./rsync-hub status              # mostra o status uma vez
+#        ./rsync-hub cliente             # como configurar uma estação (cliente)
+#        ./rsync-hub                     # abre o menu interativo
+#
+# Configuração: o `install` grava as escolhas em /etc/rsync-hub.conf; variáveis de
+# ambiente (CARBONARA_ROOT, HUB_USER, RRSYNC) têm precedência sobre o arquivo.
 set -eu
 
-# --- Configuração (ajuste por variável de ambiente se quiser) -------------------
-BASE="${CARBONARA_ROOT:-/srv/carbonara}"     # raiz dos dados no host
-HUB_USER="${HUB_USER:-carbonara}"            # conta de serviço única que recebe os envios
-INCOMING="$BASE/incoming"                    # uma subpasta por estação
-LOG="$BASE/log/connections.log"              # registro de conexões (texto simples)
-AUTHKEYS="$BASE/.ssh/authorized_keys"        # chaves das estações (fora do alcance delas)
-RRSYNC="${RRSYNC:-/usr/bin/rrsync}"          # wrapper restrito que acompanha o rsync
-REFRESH="${RSYNC_HUB_REFRESH:-3}"            # segundos entre atualizações do monitor
-STALE_AFTER="${RSYNC_HUB_STALE:-3600}"       # sem atividade > isto (s) => estação "MUDA"
+# --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
+ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
+CONF_FILE="${RSYNC_HUB_CONF:-/etc/rsync-hub.conf}"
+BASE=""; HUB_USER=""; RRSYNC=""
+[ -r "$CONF_FILE" ] && . "$CONF_FILE"
+BASE="${ENV_BASE:-${BASE:-/srv/carbonara}}"          # raiz dos dados no host
+HUB_USER="${ENV_HUB_USER:-${HUB_USER:-carbonara}}"   # conta de serviço única que recebe os envios
+RRSYNC="${ENV_RRSYNC:-${RRSYNC:-/usr/bin/rrsync}}"   # wrapper restrito que acompanha o rsync
+REFRESH="${RSYNC_HUB_REFRESH:-3}"                    # segundos entre atualizações do monitor
+STALE_AFTER="${RSYNC_HUB_STALE:-3600}"               # sem atividade > isto (s) => estação "MUDA"
+SELF=""                                              # caminho a gravar no authorized_keys (ver install)
+
+derive_paths() {
+    INCOMING="$BASE/incoming"                # uma subpasta por estação
+    LOG="$BASE/log/connections.log"          # registro de conexões (texto simples)
+    AUTHKEYS="$BASE/.ssh/authorized_keys"    # chaves das estações (fora do alcance delas)
+}
+derive_paths
 
 die()      { echo "erro: $*" >&2; exit 1; }
 need_root(){ [ "$(id -u)" = 0 ] || die "execute como root (sudo)"; }
+is_root()  { [ "$(id -u)" = 0 ]; }
+is_tty()   { [ -t 0 ] && [ -t 1 ]; }
 valid_id() { echo "$1" | grep -Eq '^[a-z0-9][a-z0-9_]{1,30}$' \
                 || die "id inválido: '$1' (use minúsculas, dígitos e '_')"; }
-self_path(){ readlink -f "$0" 2>/dev/null || echo "$0"; }
+self_path(){ [ -n "$SELF" ] && { echo "$SELF"; return; }
+             readlink -f "$0" 2>/dev/null || echo "$0"; }
+host_addr(){ hostname -I 2>/dev/null | awk 'NF{print $1; exit}' | grep . || hostname; }
 
-# --- Papel 3: comando forçado (o sshd chama isto; não é para uso manual) ---------
+ask() { # $1=pergunta $2=default → ecoa a resposta (Enter aceita o default)
+    if [ -n "${2:-}" ]; then printf '%s [%s]: ' "$1" "$2" >&2; else printf '%s: ' "$1" >&2; fi
+    read -r a || a=""
+    if [ -n "$a" ]; then printf '%s\n' "$a"; else printf '%s\n' "${2:-}"; fi
+}
+ask_yn() { # $1=pergunta $2=default (s|n) → rc 0 = sim
+    d="${2:-s}"
+    if [ "$d" = s ]; then h="S/n"; else h="s/N"; fi
+    printf '%s [%s]: ' "$1" "$h" >&2
+    read -r a || a=""
+    a="${a:-$d}"
+    case "$a" in s|S|y|Y|sim|Sim|SIM) return 0 ;; *) return 1 ;; esac
+}
+
+# --- Papel 4: comando forçado (o sshd chama isto; não é para uso manual) ---------
 serve() {
     station="${1:-}"; [ -n "$station" ] || exit 1
     ts="$(date -u +%FT%TZ)"; ip="${SSH_CLIENT%% *}"
@@ -49,15 +87,21 @@ serve() {
            echo "rsync-hub: somente rsync (envio) é permitido." >&2; exit 128 ;;
     esac
     echo "$ts CONNECT $station $ip" >>"$LOG" 2>/dev/null || true
-    "$RRSYNC" -wo "$INCOMING/$station"; rc=$?   # -wo = write-only, confinado à pasta
+    rc=0; "$RRSYNC" -wo "$INCOMING/$station" || rc=$?   # -wo = write-only, confinado à pasta
     echo "$(date -u +%FT%TZ) DISCONNECT $station $ip" >>"$LOG" 2>/dev/null || true
     exit "$rc"
 }
 
-# --- Papel 1: gerência -----------------------------------------------------------
-install_host() {
-    need_root
-    command -v "$RRSYNC" >/dev/null 2>&1 || echo "aviso: '$RRSYNC' não encontrado — instale o pacote 'rsync'."
+# --- Papel 1: instalação -----------------------------------------------------------
+find_rrsync() {
+    for c in "$RRSYNC" /usr/bin/rrsync /usr/local/bin/rrsync; do
+        [ -x "$c" ] && { RRSYNC="$c"; return 0; }
+    done
+    if command -v rrsync >/dev/null 2>&1; then RRSYNC="$(command -v rrsync)"; return 0; fi
+    return 1
+}
+
+create_host() {   # o miolo do install: conta de serviço + pastas + arquivos
     id "$HUB_USER" >/dev/null 2>&1 || \
         useradd --system --home-dir "$BASE" --create-home --shell /bin/sh "$HUB_USER"
     passwd -l "$HUB_USER" >/dev/null 2>&1 || true      # tranca a senha: só chave
@@ -65,10 +109,100 @@ install_host() {
     install -d -m 700 -o "$HUB_USER" -g "$HUB_USER" "$BASE/.ssh"
     touch "$LOG"; chown "$HUB_USER:$HUB_USER" "$LOG"; chmod 644 "$LOG"
     touch "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
-    echo "host preparado: conta '$HUB_USER', pastas em $BASE."
-    echo "instale o script no PATH, ex.: sudo install -m 755 $(self_path) /usr/local/bin/rsync-hub"
 }
 
+save_conf() {     # persiste as escolhas para os próximos usos (inclusive o serve via sshd)
+    if { echo "# gerado por 'rsync-hub install' em $(date -u +%FT%TZ)"
+         echo "BASE=$BASE"
+         echo "HUB_USER=$HUB_USER"
+         echo "RRSYNC=$RRSYNC"; } > "$CONF_FILE" 2>/dev/null; then
+        chmod 644 "$CONF_FILE"
+        echo "configuração gravada em $CONF_FILE."
+    else
+        echo "aviso: não consegui gravar $CONF_FILE — defina CARBONARA_ROOT/HUB_USER no ambiente."
+    fi
+}
+
+install_host() {
+    need_root
+    # Sem terminal (ou com --defaults): comportamento direto, sem perguntas.
+    if [ "${1:-}" = "--defaults" ] || ! is_tty; then
+        find_rrsync || echo "aviso: 'rrsync' não encontrado — instale o pacote 'rsync'."
+        create_host; save_conf
+        echo "host preparado: conta '$HUB_USER', pastas em $BASE."
+        echo "instale o script no PATH, ex.: sudo install -m 755 $(self_path) /usr/local/bin/rsync-hub"
+        return 0
+    fi
+
+    echo
+    echo "===== Instalação guiada do host (servidor central) ====="
+    echo "Este assistente prepara ESTA máquina para receber os dados das estações:"
+    echo "  passo 1 — pasta raiz onde os arquivos vão chegar;"
+    echo "  passo 2 — conta de serviço (recebe todos os envios; senha travada, só chave);"
+    echo "  passo 3 — autorização das estações (clientes) que vão se conectar."
+    echo
+
+    # Passo 1/3 — pasta raiz
+    echo "--- Passo 1/3: pasta raiz dos dados ---"
+    echo "Tudo chega em <raiz>/incoming/<estação>/; a ingestão lê dali."
+    while :; do
+        b="$(ask "Pasta raiz dos dados" "$BASE")"
+        case "$b" in
+            /*) BASE="$b"; break ;;
+            *)  echo "  use um caminho absoluto (começando com /)." ;;
+        esac
+    done
+    derive_paths
+    HUB_USER="$(ask "Conta de serviço (será criada se não existir)" "$HUB_USER")"
+    if ! find_rrsync; then
+        echo "  aviso: 'rrsync' não foi encontrado — ele acompanha o pacote 'rsync'."
+        echo "         instale com: sudo apt-get install rsync   (ou o equivalente da distro)"
+        ask_yn "  Continuar mesmo assim?" n || { echo "instalação cancelada."; return 1; }
+    fi
+    echo
+    echo "Resumo: raiz=$BASE · conta=$HUB_USER · rrsync=$RRSYNC"
+    ask_yn "Confirmar e criar?" s || { echo "instalação cancelada."; return 1; }
+    create_host
+    save_conf
+    echo "ok: host preparado (conta '$HUB_USER', pastas em $BASE)."
+    echo
+
+    # Passo 2/3 — script no PATH (o authorized_keys aponta para este caminho)
+    echo "--- Passo 2/3: instalar o script no PATH ---"
+    if [ "$(self_path)" != "/usr/local/bin/rsync-hub" ]; then
+        if ask_yn "Copiar para /usr/local/bin/rsync-hub (recomendado)?" s; then
+            install -m 755 "$(self_path)" /usr/local/bin/rsync-hub
+            SELF="/usr/local/bin/rsync-hub"
+            echo "ok: daqui em diante chame apenas 'rsync-hub', de qualquer pasta."
+        else
+            echo "ok — as chaves das estações vão apontar para $(self_path); não mova o arquivo."
+        fi
+    else
+        echo "já está em /usr/local/bin/rsync-hub."
+    fi
+    echo
+
+    # Passo 3/3 — autorizar estações
+    echo "--- Passo 3/3: autorizar as estações (clientes) ---"
+    echo "Cada estação gera a própria chave com o assistente do cliente"
+    echo "(station/carbonara-station.sh no Linux · station/carbonara-station.ps1 no Windows)"
+    echo "e apresenta a CHAVE PÚBLICA — é ela que você informa aqui. Dá para adicionar"
+    echo "estações depois também (sudo rsync-hub add <id> <chave.pub>)."
+    while ask_yn "Adicionar uma estação agora?" s; do
+        add_station_wizard || echo "  (estação não adicionada — tente de novo)"
+    done
+
+    echo
+    echo "===== Instalação concluída — próximos passos ====="
+    echo "  - em cada estação, rode o assistente do cliente apontando para este host:"
+    echo "      endereço: $(host_addr) · porta: 22 · conta: $HUB_USER"
+    echo "    (instruções completas: rsync-hub cliente)"
+    [ "$BASE" != "/srv/carbonara" ] && \
+        echo "  - use CARBONARA_ROOT=$BASE no .env do docker compose (mesma raiz da coleta)."
+    echo "  - acompanhe as chegadas com: rsync-hub monitor"
+}
+
+# --- Papel 2: gerência -------------------------------------------------------------
 add_station() {
     need_root
     id="${1:-}"; pub="${2:-}"
@@ -83,7 +217,27 @@ add_station() {
     grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" 2>/dev/null || true
     printf 'command="%s serve %s",restrict %s\n' "$(self_path)" "$id" "$(cat "$pub")" >> "$AUTHKEYS.tmp"
     mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
-    echo "estação '$id' autorizada (pasta $INCOMING/$id, envio por rsync -e ssh $HUB_USER@HOST)."
+    echo "estação '$id' autorizada (pasta $INCOMING/$id)."
+    echo "no cliente, aponte para: conta $HUB_USER · host $(host_addr) · porta 22 (detalhes: rsync-hub cliente)"
+}
+
+add_station_wizard() {  # versão guiada do add: aceita caminho de arquivo OU a linha colada
+    id="$(ask "  id da estação (minúsculas/dígitos/_ , ex.: flona01)" "")"
+    [ -n "$id" ] || { echo "  id vazio."; return 1; }
+    echo "$id" | grep -Eq '^[a-z0-9][a-z0-9_]{1,30}$' || { echo "  id inválido."; return 1; }
+    echo "  informe a chave pública: o CAMINHO do arquivo .pub OU cole a linha inteira"
+    echo "  (começa com 'ssh-ed25519', 'ssh-rsa', 'ecdsa-…')."
+    printf '  chave> '
+    read -r key || return 1
+    [ -n "$key" ] || { echo "  nada informado."; return 1; }
+    tmp=""
+    case "$key" in
+        ssh-*|ecdsa-*|sk-*) tmp="$(mktemp)"; printf '%s\n' "$key" > "$tmp"; pub="$tmp" ;;
+        *) pub="$key" ;;
+    esac
+    if ( add_station "$id" "$pub" ); then rc=0; else rc=1; fi   # subshell: erro não derruba o assistente
+    [ -n "$tmp" ] && rm -f "$tmp"
+    return "$rc"
 }
 
 remove_station() {
@@ -108,7 +262,44 @@ list_stations() {
     fi
 }
 
-# --- Papel 2: status / monitor ---------------------------------------------------
+client_help() {
+    addr="$(host_addr)"
+    cat <<EOF
+
+===== Como configurar uma estação (cliente) =====
+
+Dados DESTE host para informar no assistente do cliente:
+    endereço: $addr · porta: 22 · conta de serviço: $HUB_USER
+
+O cliente roda na máquina da estação e envia os arquivos para cá. Há um assistente
+guiado para cada sistema, na pasta station/ deste repositório:
+
+  Linux ──────────────────────────────────────────────────────────────
+    1. copie station/carbonara-station.sh para a estação
+    2. lá, rode:   ./carbonara-station.sh setup
+       (pergunta id/host/pasta, gera a chave e mostra a CHAVE PÚBLICA)
+    3. traga a chave pública para cá e autorize:
+           sudo rsync-hub add <id> <chave.pub>
+       (ou cole a linha da chave no menu → "Adicionar estação")
+    4. de volta à estação:
+           ./carbonara-station.sh test       # valida a conexão
+           ./carbonara-station.sh send       # envia agora
+           ./carbonara-station.sh schedule   # agenda o envio (cron)
+
+  Windows ────────────────────────────────────────────────────────────
+    1. copie station\\carbonara-station.ps1 para a estação
+    2. no PowerShell:   .\\carbonara-station.ps1 setup
+       (o assistente localiza o rsync — ou orienta a instalar via WSL/cwRsync —
+        gera a chave e mostra a CHAVE PÚBLICA)
+    3. autorize aqui:   sudo rsync-hub add <id> <chave.pub>
+    4. na estação:      .\\carbonara-station.ps1 test | send | schedule
+
+  Envio manual (alternativa sem o script do cliente) ─────────────────
+    rsync -avz -e "ssh -i ~/.ssh/carbonara_<id>" /pasta/dos/dados/ $HUB_USER@$addr:/
+EOF
+}
+
+# --- Papel 3: status / monitor -----------------------------------------------------
 print_status() {
     now="$(date +%s)"
     printf '%-16s %-22s %9s  %s\n' "ESTAÇÃO" "ÚLTIMA ATIVIDADE(UTC)" "PENDENTES" "ESTADO"
@@ -152,44 +343,73 @@ monitor() {
     done
 }
 
-# --- Menu interativo -------------------------------------------------------------
+# --- Menu interativo ---------------------------------------------------------------
 menu() {
     while true; do
         echo
-        echo "===== rsync-hub ====="
-        echo " 1) Listar estações"
-        echo " 2) Adicionar estação"
+        echo "===== rsync-hub — servidor central (host) ====="
+        echo " 1) Instalar/preparar este host (guiado)"
+        echo " 2) Adicionar estação (guiado)"
         echo " 3) Remover estação"
-        echo " 4) Monitorar conexões (ao vivo)"
+        echo " 4) Listar estações"
         echo " 5) Status agora"
+        echo " 6) Monitorar conexões (ao vivo)"
+        echo " 7) Como configurar um cliente (estação)"
         echo " 0) Sair"
         printf "opção> "
         read -r op || exit 0
         case "$op" in
-            1) list_stations ;;
-            2) printf "id da estação> "; read -r id
-               printf "arquivo da chave pública> "; read -r pub
-               add_station "$id" "$pub" ;;
-            3) printf "id da estação> "; read -r id; remove_station "$id" ;;
-            4) monitor ;;
+            1|2|3) if ! is_root; then echo "requer root — rode: sudo $(self_path)"; continue; fi ;;
+        esac
+        case "$op" in
+            1) install_host || true ;;
+            2) add_station_wizard || true ;;
+            3) id="$(ask "id da estação" "")"
+               [ -n "$id" ] || { echo "id vazio."; continue; }
+               if ask_yn "revogar o acesso de '$id'? (os dados são preservados)" n; then
+                   ( remove_station "$id" ) || true
+               fi ;;
+            4) list_stations ;;
             5) print_status ;;
+            6) monitor ;;
+            7) client_help ;;
             0|q|"") exit 0 ;;
             *) echo "opção inválida" ;;
         esac
     done
 }
 
-usage() { sed -n '2,22p' "$(self_path)" | sed 's/^# \{0,1\}//'; }
+usage() {
+    cat <<EOF
+rsync-hub — coleta CARBONARA por rsync-over-SSH (lado HOST / servidor central)
 
-# --- Despacho --------------------------------------------------------------------
+uso:
+  sudo rsync-hub install             instalação GUIADA (pasta raiz + conta + estações)
+  sudo rsync-hub install --defaults  instalação sem perguntas (defaults/ambiente)
+  sudo rsync-hub add <id> <pub>      autoriza uma estação (arquivo de chave pública)
+  sudo rsync-hub remove <id>         revoga o acesso da estação (dados preservados)
+       rsync-hub list                lista as estações autorizadas
+       rsync-hub monitor             modo ao vivo: quem conectou e o que chegou (Ctrl-C sai)
+       rsync-hub status              uma leitura do status
+       rsync-hub cliente             como configurar uma estação (Linux e Windows)
+       rsync-hub                     menu interativo com tudo acima
+
+configuração: gravada pelo install em $CONF_FILE (raiz atual: $BASE);
+CARBONARA_ROOT, HUB_USER e RRSYNC no ambiente têm precedência.
+o lado CLIENTE fica em station/carbonara-station.sh (Linux) e .ps1 (Windows).
+EOF
+}
+
+# --- Despacho ----------------------------------------------------------------------
 case "${1:-}" in
     serve)   shift; serve "$@" ;;
-    install) install_host ;;
+    install) shift; install_host "${1:-}" ;;
     add)     shift; add_station "$@" ;;
     remove)  shift; remove_station "$@" ;;
     list)    list_stations ;;
     monitor) monitor ;;
     status)  print_status ;;
+    cliente|client|client-help) client_help ;;
     ""|menu) menu ;;
     -h|--help|help) usage ;;
     *) usage; exit 1 ;;

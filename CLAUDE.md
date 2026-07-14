@@ -55,9 +55,11 @@ The core design principle is that transport, ingestion, and storage are independ
 swappable, connected only through a **shared landing directory** (`/srv/carbonara/incoming/`).
 Full rationale in `docs/architecture.md`.
 
-1. **Transport** (rsync-over-SSH) — how a file gets from station to hub. Stations *push*; the
-   station agents live in the `carbonara-stations` repo, not here. On the hub side this layer
-   is the single `rsync-hub` script (see below).
+1. **Transport** (rsync-over-SSH) — how a file gets from station to hub. Stations *push*;
+   the full-featured station agents live in the `carbonara-stations` repo, but this repo
+   ships **simple guided clients** in `station/` (`carbonara-station.sh` for Linux,
+   `carbonara-station.ps1` for Windows — see below). On the hub side this layer is the
+   single `rsync-hub` script (see below).
 2. **Ingestion/parsing** (`ingestion/`) — turns files into DB rows. It is **deliberately blind
    to transport**: it only watches the landing directory and does not know how a file arrived.
    Untouched by the FTP→rsync migration.
@@ -72,8 +74,11 @@ TimescaleDB`, with processed files moved to `archive/<station_id>/<date>/` and f
 All collection is **one bash script** at repo root, `rsync-hub`, running natively on the host
 (not in Compose). It has three roles, dispatched by its first arg:
 
-- **Management** — `rsync-hub install` (one-time host prep: service account + dirs + keyfile),
-  `add <id> <pubkey>`, `remove <id>`, `list`. Run without args it opens an interactive menu.
+- **Management** — `rsync-hub install` is a **guided wizard** on a TTY (root dir → service
+  account → add stations; persists choices to `/etc/rsync-hub.conf`, env vars still win);
+  `install --defaults` (or no TTY) skips the questions. Also `add <id> <pubkey>`,
+  `remove <id>`, `list`, and `cliente` (prints client-setup instructions). Run without args
+  it opens an interactive menu (the guided "add" there accepts a pasted pubkey line too).
 - **Monitor** — `rsync-hub monitor` (stays running, live table + recent connections),
   `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`.
 - **Forced command** — `rsync-hub serve <id>` is what each station's `authorized_keys` line
@@ -92,6 +97,19 @@ keep rrsync as a child so the line runs after it exits.
 > Python `monitor` container). If you find references to those paths, `hubctl`, `st_<id>`
 > per-station users, or `connections.jsonl`/`status.json`, they are stale — it's all `rsync-hub`
 > and `connections.log` now.
+
+### Station clients (`station/`) — run on the stations, not the hub
+
+Guided client scripts, one per OS: `station/carbonara-station.sh` (Linux, bash + cron) and
+`station/carbonara-station.ps1` (Windows PowerShell 5.1+; rsync via WSL or cwRsync — `setup`
+detects/instructs; scheduling via Task Scheduler). Both expose the same subcommands:
+`setup` (wizard: generates the SSH key, prints the pubkey to authorize on the hub), `test`
+(rsync dry-run), `send`, `schedule`/`unschedule`, `status`, and an interactive menu when
+run without args. Send semantics (keep in sync across both): only files older than the
+configured min age, dotfiles/dot-dirs skipped (matches the hub's ingestion rule); on rsync
+rc=0 files are moved to `.enviados/` inside the data dir (or deleted if so configured) so
+nothing is re-sent; on failure nothing moves. Config lives per user
+(`~/.config/carbonara-station/config` / `%LOCALAPPDATA%\carbonara-station\config.json`).
 
 ## Ingestion service (`ingestion/`)
 

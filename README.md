@@ -23,15 +23,24 @@ estações → rsync/ssh → incoming/ → ingestion (parse) → TimescaleDB
              registra conexões em log; `rsync-hub monitor` mostra ao vivo
 ```
 
-### Coleta em um script (`rsync-hub`)
+### Coleta: host guiado (`rsync-hub`) + clientes (`station/`)
+
+O lado **host** (esta workstation) é um script guiado — o `install` conduz passo a passo:
+pasta raiz → conta de serviço → autorização das estações:
 
 ```bash
-sudo ./rsync-hub install              # prepara o host (conta + pastas + chave) — 1x
-sudo ./rsync-hub add flona01 flona01.pub   # autoriza uma estação
+sudo ./rsync-hub install              # instalação GUIADA do host — 1x
+sudo ./rsync-hub add flona01 flona01.pub   # autoriza uma estação (tb. via menu, colando a chave)
      ./rsync-hub list                 # lista estações
      ./rsync-hub monitor              # fica rodando mostrando as conexões
-     ./rsync-hub                       # menu interativo
+     ./rsync-hub cliente              # instruções p/ configurar uma estação
+     ./rsync-hub                      # menu interativo
 ```
+
+O lado **cliente** roda nas estações (Linux **ou Windows**) — assistentes guiados em
+[`station/`](station/): `carbonara-station.sh` (Linux) e `carbonara-station.ps1`
+(Windows), com `setup` (gera a chave e mostra a pública), `test`, `send`, `schedule`
+e `status`. Ver [`station/README.md`](station/README.md).
 
 Isolamento simples e real: cada estação tem uma **chave** que só executa `rsync-hub serve
 <id>` (via `command="…",restrict` no `authorized_keys` — sem shell/túnel/PTY), e o
@@ -57,7 +66,8 @@ Passo a passo completo e teste ponta a ponta em [`docs/installation.md`](docs/in
 carbonara-datahub/
 ├── docker-compose.yml        # db + ingestion + ftp (distribuição)
 ├── .env.example
-├── rsync-hub                 # script único da coleta: gerência + monitor + comando forçado
+├── rsync-hub                 # coleta, lado HOST: instalação guiada + gerência + monitor + comando forçado
+├── station/                  # coleta, lado CLIENTE: assistentes guiados p/ estações Linux e Windows
 ├── ftp/                      # config do FTP/FTPS (agora só distribuição)
 ├── database/init/            # SQL idempotente rodado no 1º start (schema + hypertable)
 ├── ingestion/                # ingest.py + parsers plugáveis + Dockerfile

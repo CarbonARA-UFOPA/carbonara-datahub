@@ -32,33 +32,38 @@ cd carbonara-datahub
 
 ## Parte A — Coleta com `rsync-hub` (nativo no host)
 
-### A1. Instalar dependências e preparar o host
+### A1. Instalar dependências e preparar o host (guiado)
 
 ```bash
 sudo apt-get update && sudo apt-get install -y openssh-server rsync
-sudo ./rsync-hub install          # cria a conta de serviço, as pastas e o authorized_keys
+sudo ./rsync-hub install          # instalação GUIADA: pasta raiz → conta → estações
 ```
 
-`install` cria: a conta `carbonara` (senha travada, só chave), a raiz `/srv/carbonara` com
-`incoming/`, `log/` e `.ssh/authorized_keys`. Se o `rrsync` não estiver em `/usr/bin/rrsync`,
-o comando avisa — ajuste a variável `RRSYNC` (ver o cabeçalho do script).
-
-Opcional, para chamar de qualquer lugar:
-
-```bash
-sudo install -m 755 rsync-hub /usr/local/bin/rsync-hub
-```
+O assistente conduz passo a passo: pergunta a **pasta raiz** dos dados (default
+`/srv/carbonara`) e a **conta de serviço** (default `carbonara`, senha travada, só chave),
+cria `incoming/`, `log/` e `.ssh/authorized_keys`, grava as escolhas em
+`/etc/rsync-hub.conf`, oferece a cópia para `/usr/local/bin/rsync-hub` e já emenda na
+autorização das primeiras estações. Para automação sem perguntas:
+`sudo ./rsync-hub install --defaults`. Se o `rrsync` não for encontrado, o assistente
+avisa (ele acompanha o pacote `rsync`).
 
 ### A2. Autorizar cada estação
 
-Cada estação gera seu par de chaves SSH (no agente, repo `carbonara-stations`) e te envia a
-**chave pública**. No servidor, autorize-a:
+Cada estação gera seu par de chaves SSH com o **assistente do cliente**
+([`station/carbonara-station.sh`](../station/carbonara-station.sh) no Linux,
+[`station/carbonara-station.ps1`](../station/carbonara-station.ps1) no Windows — ver
+[`station/README.md`](../station/README.md)) e te apresenta a **chave pública**. No
+servidor, autorize-a:
 
 ```bash
 sudo rsync-hub add flona01 flona01.pub    # cria incoming/flona01 + registra a chave
 sudo rsync-hub add flona02 flona02.pub
 rsync-hub list                            # confere as estações autorizadas
 ```
+
+No menu interativo (`sudo rsync-hub` → "Adicionar estação") dá para **colar a linha** da
+chave pública direto, sem salvar arquivo. Instruções prontas para passar ao operador da
+estação: `rsync-hub cliente`.
 
 Cada chave fica amarrada ao seu `serve <id>`: a estação só escreve na **própria** pasta, em
 modo write-only (não baixa nem alcança as outras). Para revogar: `sudo rsync-hub remove flona01`
@@ -162,8 +167,9 @@ sudo ls -R /srv/carbonara/archive/flona01
 > Em desenvolvimento, sem `CARBONARA_ROOT`, troque `/srv/carbonara` por `./data` (e dispense o
 > `sudo`): `mkdir -p data/incoming/flona01 && cp examples/... data/incoming/flona01/`.
 
-Para testar uma estação **real** enviando por rsync-over-SSH (em vez de copiar o arquivo à mão),
-veja o agente no repo
+Para testar uma estação **real** enviando por rsync-over-SSH (em vez de copiar o arquivo à
+mão), use o cliente guiado em [`station/`](../station/README.md) — `setup` → autorizar no
+host → `test` → `send` — ou o agente completo do repo
 [`carbonara-stations`](https://github.com/CarbonARA-UFOPA/carbonara-stations).
 
 ---
