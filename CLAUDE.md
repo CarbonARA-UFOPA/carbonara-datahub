@@ -105,16 +105,33 @@ keep rrsync as a child so the line runs after it exits.
 ### Station clients (`station/`) — run on the stations, not the hub
 
 Guided client scripts, one per OS: `station/carbonara-station.sh` (Linux, bash + cron) and
-`station/carbonara-station.ps1` (Windows PowerShell 5.1+; rsync via WSL or cwRsync — `setup`
-detects/instructs; scheduling via Task Scheduler). On Windows, users launch via
-`station/carbonara-station.cmd` (same dir), which runs the `.ps1` with
-`-ExecutionPolicy Bypass` — default Windows policy blocks `.ps1` files outright, so keep
-the `.cmd` shipped alongside it. Setup wizard order (keep both clients in sync): station
-id → hub IP/port (default 22) → local path of the key received from the hub (falls back
-to generating one locally and printing the pubkey if the path doesn't exist; on WSL mode
-the key is copied into the WSL home because /mnt/c permissions make ssh reject it) →
-connection probe (dry-run from an empty temp dir) → data folder → recycle interval
-(`SEND_EVERY`/`SendEveryMin`), offering to install the schedule immediately. Both expose the same subcommands:
+`station/carbonara-station.ps1` (Windows PowerShell 5.1+; scheduling via Task Scheduler).
+On Windows, users launch via `station/carbonara-station.cmd` (same dir), which runs the
+`.ps1` with `-ExecutionPolicy Bypass` — default Windows policy blocks `.ps1` files
+outright, so keep the `.cmd` shipped alongside it.
+
+Windows transport is **cwRsync only** (WSL support was deliberately removed — wsl.exe
+exists on machines without a distro and hangs waiting for hidden input). On first setup
+the client **auto-installs cwRsync**: downloads the official zip (URL in `$CwRsyncUrl`)
+and extracts to `C:\cwrsync` (`Find-Rsync` looks there first, then PATH). Creating
+`C:\cwrsync` needs elevation, so the wizard instructs the user to reopen PowerShell as
+Administrator for that first run only. cwRsync recipe honored in `Get-RsyncPlan`:
+prepend `bin\` to PATH (cygwin DLLs + bundled ssh), set `HOME` (known_hosts), and pass
+all paths as `/cygdrive/...` (no cygpath.exe in the free zip — manual conversion).
+`Invoke-NativeQuiet` (stdin closed + timeout/kill) is the hang-proof runner for probes.
+
+Setup wizard order (keep both clients in sync): station id → hub IP/port (default 22) →
+local path of the key received from the hub (falls back to generating one locally and
+printing the pubkey if the path doesn't exist) → connection probe (dry-run from an empty
+temp dir) → data folder → recycle interval (`SEND_EVERY`/`SendEveryMin`), offering to
+install the schedule immediately.
+
+**Encoding invariant (Windows files):** `carbonara-station.ps1` MUST be saved as **UTF-8
+with BOM** — Windows PowerShell 5.1 reads BOM-less files as ANSI, and the pt-BR em dash
+(`—`, UTF-8 `E2 80 94`) mojibakes into a CP-1252 smart quote that terminates strings and
+breaks the whole parse. A full-file rewrite drops the BOM; restore it with
+`printf '\xEF\xBB\xBF' | cat - file > tmp && mv tmp file` and check via
+`head -c 3 file | xxd` (`efbbbf`). `carbonara-station.cmd` must stay pure ASCII. Both expose the same subcommands:
 `setup` (wizard: generates the SSH key, prints the pubkey to authorize on the hub), `test`
 (rsync dry-run), `send`, `schedule`/`unschedule`, `status`, and an interactive menu when
 run without args. Send semantics (keep in sync across both): only files older than the

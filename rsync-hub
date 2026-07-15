@@ -241,6 +241,8 @@ Servidor (host): $wi_addr · porta: 22 (padrão) · conta: $HUB_USER
 2) Na estação, rode o assistente guiado:
          Linux:    ./carbonara-station.sh setup
          Windows:  .\\carbonara-station.cmd setup
+                   (na 1ª vez o assistente instala o rsync (cwRsync) sozinho —
+                    abra o PowerShell COMO ADMINISTRADOR só nessa primeira vez)
    Ele pergunta, nesta ordem:
      - id da estação ................ $wi_id
      - IP do host ................... $wi_addr   (porta: 22, se não foi alterada)
@@ -367,6 +369,8 @@ O jeito mais simples (chave gerada AQUI no host):
     3. na estação, rode o assistente:
            Linux:    ./carbonara-station.sh setup
            Windows:  .\\carbonara-station.cmd setup
+       (Windows, 1ª vez: o assistente baixa e instala o rsync (cwRsync) em
+        C:\\cwrsync — abra o PowerShell COMO ADMINISTRADOR só nessa vez)
        ele pergunta, nesta ordem: id da estação → IP do host ($addr, porta 22)
        → caminho local da chave → TESTE de conexão → pasta a enviar (rsync)
        → tempo de reciclagem (minutos) + ativação do envio automático.

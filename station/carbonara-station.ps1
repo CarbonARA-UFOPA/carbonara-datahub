@@ -1,17 +1,21 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 carbonara-station.ps1 — CLIENTE de coleta CARBONARA para Windows, tudo em UM script.
 
 Roda na máquina da ESTAÇÃO e envia os arquivos de dados para o servidor central
 (o "host", preparado com o script rsync-hub deste projeto), por rsync-over-SSH.
 
+O transporte usa o cwRsync (rsync nativo para Windows, base cygwin). Na PRIMEIRA vez,
+o `setup` baixa e instala o cwRsync automaticamente em C:\cwrsync — para isso é
+preciso rodar o PowerShell COMO ADMINISTRADOR (o assistente avisa e orienta). Depois
+de instalado, todo o resto (setup/test/send/schedule) funciona sem administrador.
+
 Papéis:
-  1) Assistente guiado — `setup` localiza o rsync (ou orienta a instalação: WSL ou
-     cwRsync) e pergunta, nesta ordem: id da estação → IP do host (porta opcional,
-     padrão 22) → caminho local da CHAVE recebida do servidor (gerada lá pelo
-     `rsync-hub add <id>`; se não existir, oferece gerar uma nova aqui) → TESTE
-     simples de conexão → pasta local a enviar (rsync) → tempo de reciclagem
-     (minutos) + ativação do envio automático.
+  1) Assistente guiado — `setup` instala/localiza o rsync e pergunta, nesta ordem:
+     id da estação → IP do host (porta opcional, padrão 22) → caminho local da CHAVE
+     recebida do servidor (gerada lá pelo `rsync-hub add <id>`; se não existir,
+     oferece gerar uma nova aqui) → TESTE simples de conexão → pasta local a enviar
+     (rsync) → tempo de reciclagem (minutos) + ativação do envio automático.
   2) Envio — `send` manda os arquivos prontos (idade mínima configurável) e, após o
      sucesso, move-os para .enviados\ (ou apaga, conforme escolhido) — nada é
      reenviado, e o rsync --partial retoma transferências em link instável.
@@ -28,10 +32,7 @@ Uso (PowerShell):
 
 Se o Windows bloquear o script ("running scripts is disabled on this system"), use o
 atalho carbonara-station.cmd (mesma pasta) — ele executa este .ps1 contornando a
-política de execução. Alternativas: liberar uma vez com
-  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   (+ Unblock-File .\carbonara-station.ps1
-  se o arquivo veio por download/pendrive), ou rodar pontualmente com
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\carbonara-station.ps1
+política de execução.
 
 Configuração gravada em %LOCALAPPDATA%\carbonara-station\config.json.
 #>
@@ -42,10 +43,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ConfDir  = Join-Path $env:LOCALAPPDATA 'carbonara-station'
-$ConfFile = Join-Path $ConfDir 'config.json'
-$LogFile  = Join-Path $ConfDir 'envios.log'
-$TaskName = 'CarbonaraStationSend'
+$ConfDir    = Join-Path $env:LOCALAPPDATA 'carbonara-station'
+$ConfFile   = Join-Path $ConfDir 'config.json'
+$LogFile    = Join-Path $ConfDir 'envios.log'
+$TaskName   = 'CarbonaraStationSend'
+$CwRsyncDir = 'C:\cwrsync'
+$CwRsyncUrl = 'https://itefix.net/sites/default/files/2026-06/cwrsync_6.4.8_x64_free.zip'
 
 # --- Utilitários -----------------------------------------------------------------
 function Ask([string]$Pergunta, [string]$Default = '') {
@@ -66,6 +69,12 @@ function Write-EnvioLog([string]$Msg) {
     Add-Content -Path $LogFile -Value "$ts $Msg"
 }
 
+function Test-IsAdmin {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 # Executa um programa nativo capturando saída+erro sem disparar exceção do PowerShell.
 function Invoke-Native([string]$Exe, [object[]]$Argv) {
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
@@ -73,6 +82,33 @@ function Invoke-Native([string]$Exe, [object[]]$Argv) {
         $out = & $Exe @Argv 2>&1
         return @{ Out = @($out | ForEach-Object { "$_" }); Code = $LASTEXITCODE }
     } finally { $ErrorActionPreference = $eap }
+}
+
+# Como Invoke-Native, mas à prova de TRAVAMENTO: stdin fechado (nada pode "perguntar"
+# e ficar esperando) e tempo-limite com kill.
+function Invoke-NativeQuiet([string]$Exe, [object[]]$Argv, [int]$TimeoutSec = 30) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.Arguments = ($Argv | ForEach-Object {
+        $a = "$_"
+        if ($a -match '[\s"]') { '"' + ($a -replace '"', '\"') + '"' } else { $a }
+    }) -join ' '
+    $psi.UseShellExecute        = $false
+    $psi.RedirectStandardInput  = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    try { $p = [System.Diagnostics.Process]::Start($psi) }
+    catch { return @{ Out = @("$($_.Exception.Message)"); Code = -1; TimedOut = $false } }
+    $p.StandardInput.Close()
+    $outTask = $p.StandardOutput.ReadToEndAsync()
+    $errTask = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+        try { $p.Kill() } catch {}
+        return @{ Out = @(); Code = -1; TimedOut = $true }
+    }
+    $text = $outTask.Result + "`n" + $errTask.Result
+    $lines = @($text -split "`r?`n" | ForEach-Object { $_.Trim([char]0) } | Where-Object { $_ })
+    return @{ Out = $lines; Code = $p.ExitCode; TimedOut = $false }
 }
 
 function Get-Config([switch]$Optional) {
@@ -88,80 +124,100 @@ function Save-Config($Cfg) {
     $Cfg | ConvertTo-Json | Set-Content -Path $ConfFile -Encoding UTF8
 }
 
-# --- rsync: detecção e caminhos ---------------------------------------------------
-# Procura o rsync em duas formas: nativo (cwRsync/MSYS2/scoop no PATH) ou via WSL.
+# --- cwRsync: localização e instalação automática ----------------------------------
+# O cliente usa SEMPRE o cwRsync (rsync nativo para Windows). Ordem de busca:
+# a instalação padrão deste projeto (C:\cwrsync\bin\rsync.exe) e depois o PATH.
 function Find-Rsync {
-    $c = Get-Command rsync.exe -ErrorAction SilentlyContinue
-    if ($c) { return [pscustomobject]@{ Mode = 'nativo'; Rsync = $c.Source } }
-    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
-        $r = Invoke-Native 'wsl.exe' @('-e', 'sh', '-c', 'command -v rsync')
-        if ($r.Code -eq 0) { return [pscustomobject]@{ Mode = 'wsl'; Rsync = 'rsync' } }
+    $std = Join-Path $CwRsyncDir 'bin\rsync.exe'
+    if (Test-Path -LiteralPath $std) { return $std }
+    if (Test-Path -LiteralPath $CwRsyncDir) {
+        $hit = Get-ChildItem -Path $CwRsyncDir -Recurse -Filter 'rsync.exe' -ErrorAction SilentlyContinue |
+               Select-Object -First 1
+        if ($hit) { return $hit.FullName }
     }
+    $c = Get-Command rsync.exe -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
     return $null
 }
 
-function Show-RsyncInstallHelp {
+# Baixa e extrai o cwRsync para C:\cwrsync. Precisa de PowerShell como ADMINISTRADOR
+# (criar C:\cwrsync exige elevação) — se não for o caso, orienta e devolve $null.
+function Install-CwRsync {
+    if (-not (Test-IsAdmin)) {
+        Write-Host ''
+        Write-Host '*** PRIMEIRA CONFIGURAÇÃO: é preciso instalar o rsync (cwRsync). ***'
+        Write-Host ''
+        Write-Host 'Para isso, abra o PowerShell COMO ADMINISTRADOR:'
+        Write-Host '    menu Iniciar → digite "PowerShell" → clique com o botão DIREITO'
+        Write-Host '    → "Executar como administrador"'
+        Write-Host ''
+        Write-Host 'e, na janela que abrir, rode o setup de novo:'
+        Write-Host "    cd `"$PSScriptRoot`""
+        Write-Host '    .\carbonara-station.cmd setup'
+        Write-Host ''
+        Write-Host '(só esta primeira vez precisa de administrador; o uso normal, não.)'
+        return $null
+    }
     Write-Host ''
-    Write-Host 'O rsync não foi encontrado nesta máquina. Instale por UMA das opções:'
-    Write-Host ''
-    Write-Host '  Opção A — WSL (recomendada no Windows 10/11):'
-    Write-Host '     1. em um PowerShell como ADMINISTRADOR:   wsl --install'
-    Write-Host '     2. reinicie, abra o Ubuntu e rode:        sudo apt install -y rsync openssh-client'
-    Write-Host '     3. rode este assistente de novo.'
-    Write-Host ''
-    Write-Host '  Opção B — cwRsync (rsync nativo para Windows, sem WSL):'
-    Write-Host '     1. baixe o "cwRsync free client" em https://itefix.net/cwrsync'
-    Write-Host '     2. extraia (ex.: C:\cwrsync) e adicione a subpasta bin ao PATH do usuário'
-    Write-Host '     3. rode este assistente de novo.'
-    Write-Host ''
+    Write-Host "O cwRsync será baixado e instalado em $CwRsyncDir (uma vez só)."
+    if (-not (Ask-YesNo 'Baixar e instalar agora?' $true)) { Write-Host 'instalação cancelada.'; return $null }
+
+    $zip = Join-Path $env:TEMP 'cwrsync_free.zip'
+    Write-Host "baixando de $CwRsyncUrl (aprox. 5 MB)…"
+    $pp = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $CwRsyncUrl -OutFile $zip -UseBasicParsing
+    } catch {
+        Write-Host "falha no download: $($_.Exception.Message)"
+        Write-Host ''
+        Write-Host 'Sem internet nesta máquina? Instale manualmente:'
+        Write-Host '  1. em outra máquina, baixe o "cwRsync free client": https://itefix.net/cwrsync'
+        Write-Host "  2. extraia o zip para $CwRsyncDir (deve existir $CwRsyncDir\bin\rsync.exe)"
+        Write-Host '  3. rode o setup de novo.'
+        return $null
+    } finally { $ProgressPreference = $pp }
+
+    Write-Host "extraindo para $CwRsyncDir…"
+    try {
+        New-Item -ItemType Directory -Force -Path $CwRsyncDir | Out-Null
+        Expand-Archive -Path $zip -DestinationPath $CwRsyncDir -Force
+    } catch {
+        Write-Host "falha ao extrair: $($_.Exception.Message)"
+        return $null
+    } finally {
+        Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    }
+    $r = Find-Rsync
+    if ($r) { Write-Host "ok: rsync instalado ($r)." } else { Write-Host "não encontrei rsync.exe após a extração — confira $CwRsyncDir." }
+    return $r
 }
 
-# Converte um caminho Windows para a forma que o rsync em uso entende
-# (wslpath no WSL; cygpath ou /cygdrive/... no rsync nativo, que é base cygwin).
-function ConvertTo-UnixPath([string]$WinPath, $Cfg) {
-    if ($Cfg.Mode -eq 'wsl') {
-        $r = Invoke-Native 'wsl.exe' @('-e', 'wslpath', '-a', '--', $WinPath)
-        if ($r.Code -ne 0) { throw "wslpath falhou para: $WinPath" }
-        return ($r.Out | Select-Object -First 1).Trim()
-    }
-    $cygpath = Join-Path (Split-Path $Cfg.Rsync) 'cygpath.exe'
-    if (Test-Path $cygpath) {
-        $r = Invoke-Native $cygpath @('-u', $WinPath)
-        if ($r.Code -eq 0) { return ($r.Out | Select-Object -First 1).Trim() }
-    }
+# Converte um caminho Windows para a forma cygwin que o cwRsync entende:
+# C:\pasta\arq → /cygdrive/c/pasta/arq
+function ConvertTo-UnixPath([string]$WinPath) {
     if ($WinPath -match '^([A-Za-z]):[\\/](.*)$') {
         return '/cygdrive/' + $Matches[1].ToLower() + '/' + ($Matches[2] -replace '\\', '/')
     }
     return ($WinPath -replace '\\', '/')
 }
 
-# Monta a linha de comando do rsync (executável + argumentos) conforme o modo.
+# Monta a linha de comando do rsync (executável + argumentos).
 # $SourceDir permite trocar a origem (ex.: pasta vazia no teste de conexão).
 function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [string]$SourceDir = '') {
     if (-not $SourceDir) { $SourceDir = $Cfg.DataDir }
     $dest = '{0}@{1}:/' -f $Cfg.HubUser, $Cfg.HubHost
-    $sshOpts = "-p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
-    if ($Cfg.Mode -eq 'wsl') {
-        # Chave e ssh vivem DENTRO do WSL; os dados são alcançados via /mnt/c/...
-        $ssh  = "ssh -i $($Cfg.KeyPath) $sshOpts"
-        $argv = @('-e', 'rsync') + $ExtraArgs
-        if ($FilesFromWin) { $argv += "--files-from=$(ConvertTo-UnixPath $FilesFromWin $Cfg)" }
-        $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir $Cfg)/", $dest)
-        return @{ Exe = 'wsl.exe'; Args = $argv }
-    }
-    # Modo nativo: prefere o ssh que acompanha o rsync (mesma família cygwin);
-    # sem ele, cai no OpenSSH do Windows (caminhos com '/').
     $rsyncDir = Split-Path $Cfg.Rsync
-    if (Test-Path (Join-Path $rsyncDir 'ssh.exe')) {
-        if ($env:PATH -notlike "$rsyncDir*") { $env:PATH = "$rsyncDir;$env:PATH" }
-        $keyArg = ConvertTo-UnixPath $Cfg.KeyPath $Cfg
-    } else {
-        $keyArg = ($Cfg.KeyPath -replace '\\', '/')
-    }
-    $ssh  = "ssh -i $keyArg $sshOpts"
+    # Receita do próprio cwRsync: bin\ no PATH (DLLs cygwin) e HOME definido
+    # (o ssh cygwin usa HOME para gravar o known_hosts).
+    if ($env:PATH -notlike "$rsyncDir*") { $env:PATH = "$rsyncDir;$env:PATH" }
+    if (-not $env:HOME) { $env:HOME = $env:USERPROFILE }
+    $keyArg = ConvertTo-UnixPath $Cfg.KeyPath
+    $ssh  = "ssh -i $keyArg -p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
     $argv = @() + $ExtraArgs
-    if ($FilesFromWin) { $argv += "--files-from=$(ConvertTo-UnixPath $FilesFromWin $Cfg)" }
-    $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir $Cfg)/", $dest)
+    if ($FilesFromWin) { $argv += "--files-from=$(ConvertTo-UnixPath $FilesFromWin)" }
+    $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir)/", $dest)
     return @{ Exe = $Cfg.Rsync; Args = $argv }
 }
 
@@ -172,7 +228,8 @@ function Invoke-Probe($Cfg) {
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     try {
         $plan = Get-RsyncPlan $Cfg @('-an', '--timeout=20') '' $tmp
-        $r = Invoke-Native $plan.Exe $plan.Args
+        $r = Invoke-NativeQuiet $plan.Exe $plan.Args 90
+        if ($r.TimedOut) { Write-Host 'falhou: o teste não respondeu a tempo (rede?).'; return $false }
         if ($r.Code -eq 0) {
             Write-Host 'ok: o servidor respondeu e aceitou a chave.'
             return $true
@@ -205,9 +262,15 @@ function Invoke-Setup {
     Write-Host "e o arquivo de CHAVE recebido do servidor (gerado lá por 'rsync-hub add <id>',"
     Write-Host 'que também cria um INSTRUCOES.txt com esses dados).'
     Write-Host ''
-    $rs = Find-Rsync
-    if (-not $rs) { Show-RsyncInstallHelp; return }
-    Write-Host ("rsync encontrado (modo {0})." -f $rs.Mode)
+
+    # 0. rsync (cwRsync) — instala automaticamente na primeira vez
+    $rsyncPath = Find-Rsync
+    if (-not $rsyncPath) {
+        $rsyncPath = Install-CwRsync
+        if (-not $rsyncPath) { return }
+        Write-Host ''
+    }
+    Write-Host ("rsync: {0}" -f $rsyncPath)
     Write-Host ''
 
     $old = Get-Config -Optional
@@ -234,44 +297,30 @@ function Invoke-Setup {
         $keyWin = Ask ("Caminho local da CHAVE desta estação (arquivo {0}_key recebido do servidor)" -f $id)
         if (-not $keyWin) { Write-Host '  informe um caminho.'; continue }
         if (Test-Path -LiteralPath $keyWin) {
-            if ($rs.Mode -eq 'wsl') {
-                # Copia a chave para DENTRO do WSL: em /mnt/c as permissões ficam
-                # abertas e o ssh recusa a chave privada.
-                $dst = "~/.ssh/carbonara_$id"
-                $src = ConvertTo-UnixPath (Get-Item -LiteralPath $keyWin).FullName ([pscustomobject]@{ Mode = 'wsl' })
-                $r = Invoke-Native 'wsl.exe' @('-e', 'sh', '-c',
-                    "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cp '$src' $dst && chmod 600 $dst")
-                if ($r.Code -ne 0) { Write-Host "  falha ao importar a chave no WSL: $($r.Out -join ' ')"; continue }
-                $keyPath = $dst
-                Write-Host "  chave importada para dentro do WSL ($dst)."
-            } else {
-                $keyPath = (Get-Item -LiteralPath $keyWin).FullName
-                # Restringe a chave ao usuário atual (o ssh recusa chave com permissão aberta).
-                Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
-            }
+            $keyPath = (Get-Item -LiteralPath $keyWin).FullName
+            # Restringe a chave ao usuário atual (o ssh recusa chave com permissão aberta).
+            Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
         } else {
             Write-Host "  não encontrei a chave em: $keyWin"
             if (Ask-YesNo '  Gerar um NOVO par de chaves aqui (a pública precisará ser autorizada no servidor)?' $false) {
-                if ($rs.Mode -eq 'wsl') {
-                    $keyPath = "~/.ssh/carbonara_$id"
-                    $r = Invoke-Native 'wsl.exe' @('-e', 'sh', '-c',
-                        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && { [ -f $keyPath ] || ssh-keygen -q -t ed25519 -N '' -C carbonara-$id -f $keyPath; }")
-                    if ($r.Code -ne 0) { throw "falha ao gerar a chave no WSL: $($r.Out -join ' ')" }
-                    $script:pubKey = ((Invoke-Native 'wsl.exe' @('-e', 'sh', '-c', "cat $keyPath.pub")).Out -join "`n").Trim()
-                } else {
-                    if (-not (Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue)) {
-                        throw "ssh-keygen não encontrado — instale o 'Cliente OpenSSH' (Configurações > Aplicativos > Recursos Opcionais)."
+                # ssh-keygen: o do Windows (OpenSSH nativo) ou o que acompanha o cwRsync.
+                $sshDir = Join-Path $env:USERPROFILE '.ssh'
+                New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+                $keyPath = Join-Path $sshDir "carbonara_$id"
+                if (-not (Test-Path -LiteralPath $keyPath)) {
+                    $winKeygen = Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue
+                    if ($winKeygen) {
+                        $r = Invoke-NativeQuiet $winKeygen.Source @('-q', '-t', 'ed25519', '-N', '', '-C', "carbonara-$id", '-f', $keyPath) 30
+                    } else {
+                        $cwKeygen = Join-Path (Split-Path $rsyncPath) 'ssh-keygen.exe'
+                        if (-not (Test-Path -LiteralPath $cwKeygen)) { throw 'ssh-keygen não encontrado (nem no Windows, nem no cwRsync).' }
+                        if (-not $env:HOME) { $env:HOME = $env:USERPROFILE }
+                        $r = Invoke-NativeQuiet $cwKeygen @('-q', '-t', 'ed25519', '-N', '', '-C', "carbonara-$id", '-f', (ConvertTo-UnixPath $keyPath)) 30
                     }
-                    $sshDir = Join-Path $env:USERPROFILE '.ssh'
-                    New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
-                    $keyPath = Join-Path $sshDir "carbonara_$id"
-                    if (-not (Test-Path -LiteralPath $keyPath)) {
-                        $r = Invoke-Native 'ssh-keygen.exe' @('-q', '-t', 'ed25519', '-N', '', '-C', "carbonara-$id", '-f', $keyPath)
-                        if ($r.Code -ne 0) { throw "falha ao gerar a chave SSH: $($r.Out -join ' ')" }
-                    }
-                    Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
-                    $script:pubKey = (Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim()
+                    if ($r.TimedOut -or $r.Code -ne 0) { throw "falha ao gerar a chave SSH: $($r.Out -join ' ')" }
                 }
+                Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
+                $script:pubKey = (Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim()
                 $newKey = $true
             }
         }
@@ -280,7 +329,7 @@ function Invoke-Setup {
     # 4. Teste simples de conexão (o host responde? a chave é aceita?)
     Write-Host ''
     $probeCfg = [pscustomobject]@{
-        Mode = $rs.Mode; Rsync = $rs.Rsync; KeyPath = $keyPath
+        Rsync = $rsyncPath; KeyPath = $keyPath
         HubUser = $hubUser; HubHost = $hubHost; HubPort = $hubPort; DataDir = $env:TEMP
     }
     if ($newKey) {
@@ -319,7 +368,7 @@ function Invoke-Setup {
     Save-Config ([pscustomobject]@{
         StationId = $id;      HubHost = $hubHost; HubPort = $hubPort; HubUser = $hubUser
         DataDir   = $dataDir; MinAgeMin = $minAge; KeepCopy = $keep;  SendEveryMin = $every
-        Mode      = $rs.Mode; Rsync = $rs.Rsync;   KeyPath = $keyPath
+        Rsync     = $rsyncPath; KeyPath = $keyPath
     })
     Write-Host ''
     Write-Host "ok: configuração gravada em $ConfFile."
@@ -435,7 +484,7 @@ function Invoke-Status {
     $pos = if ($cfg.KeepCopy) { 'move para .enviados\' } else { 'apaga' }
     Write-Host ("estação:   {0}" -f $cfg.StationId)
     Write-Host ("servidor:  {0}@{1}:{2}" -f $cfg.HubUser, $cfg.HubHost, $cfg.HubPort)
-    Write-Host ("rsync:     modo {0} ({1})" -f $cfg.Mode, $cfg.Rsync)
+    Write-Host ("rsync:     {0}" -f $cfg.Rsync)
     Write-Host ("chave:     {0}" -f $cfg.KeyPath)
     Write-Host ("dados:     {0} (pós-envio: {1})" -f $cfg.DataDir, $pos)
     $pend = @(Get-PendingFiles $cfg -IgnoreAge).Count
@@ -498,7 +547,8 @@ uso (PowerShell):
   .\carbonara-station.ps1 status        configuração, pendências e últimos envios
   .\carbonara-station.ps1               menu interativo
 
-requisitos: rsync (WSL ou cwRsync — o setup orienta) e OpenSSH (nativo no Win10+).
+transporte: cwRsync (instalado automaticamente pelo setup em $CwRsyncDir;
+a primeira instalação pede PowerShell como administrador).
 configuração em $ConfFile
 "@
 }

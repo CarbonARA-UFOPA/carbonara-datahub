@@ -7,7 +7,7 @@ arquivos de dados para o servidor central (o *host*, preparado com o
 | Script | Sistema | Requisitos |
 |--------|---------|------------|
 | `carbonara-station.sh` | Linux | `rsync` e `openssh-client` (padrão na maioria das distros) |
-| `carbonara-station.ps1` + `carbonara-station.cmd` | Windows 10/11 | `rsync` via **WSL** ou **cwRsync** (o `setup` orienta a instalação) e OpenSSH (nativo) |
+| `carbonara-station.ps1` + `carbonara-station.cmd` | Windows 10/11 | **cwRsync** — o `setup` **baixa e instala sozinho** em `C:\cwrsync` na primeira vez (requer PowerShell **como administrador** só nessa primeira vez) |
 
 > **Windows:** copie os **dois** arquivos (`.ps1` e `.cmd`) para a mesma pasta e execute o
 > **`carbonara-station.cmd`** (duplo clique abre o menu). Ele existe porque o Windows, por
@@ -77,12 +77,15 @@ Sem argumentos, os dois scripts abrem um **menu interativo** com todas as opçõ
 
 Rodar `setup` de novo reconfigura (os valores atuais viram os defaults do assistente).
 
-## Windows sem rsync?
+## Windows: como o rsync é instalado
 
-O `setup` detecta e orienta. Resumo das opções:
+O transporte no Windows é o **cwRsync** (rsync nativo, base cygwin). Na **primeira vez**
+que o `setup` roda numa máquina sem rsync, ele mesmo **baixa o zip oficial e extrai para
+`C:\cwrsync`** — como criar `C:\cwrsync` exige elevação, o assistente pede para você
+abrir o **PowerShell como administrador** (menu Iniciar → digite "PowerShell" → botão
+direito → *Executar como administrador*) e rodar o `setup` de novo. Só essa primeira vez
+precisa de administrador; o uso normal (test/send/schedule) não.
 
-- **WSL (recomendada)** — em um PowerShell como administrador: `wsl --install`; depois,
-  no Ubuntu: `sudo apt install -y rsync openssh-client`. A chave SSH fica dentro do WSL
-  e os dados do Windows são alcançados via `/mnt/c/...` automaticamente.
-- **cwRsync (sem WSL)** — baixe o *free client* em <https://itefix.net/cwrsync>, extraia
-  (ex.: `C:\cwrsync`) e adicione a subpasta `bin` ao PATH do usuário.
+Máquina da estação **sem internet**? Baixe o *cwRsync free client* em
+<https://itefix.net/cwrsync> em outra máquina e extraia o zip para `C:\cwrsync` (deve
+existir `C:\cwrsync\bin\rsync.exe`) — o `setup` reconhece e segue normalmente.

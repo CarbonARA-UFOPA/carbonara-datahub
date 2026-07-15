@@ -1,5 +1,5 @@
 @echo off
-rem carbonara-station.cmd — atalho para o cliente CARBONARA no Windows.
+rem carbonara-station.cmd -- atalho para o cliente CARBONARA no Windows.
 rem
 rem Executa o carbonara-station.ps1 (que deve estar NA MESMA PASTA) contornando a
 rem politica de execucao do PowerShell (ExecutionPolicy), que por padrao bloqueia
