@@ -79,6 +79,12 @@ All collection is **one bash script** at repo root, `rsync-hub`, running nativel
   inside `/home/<admin>/` breaks with `sh: ... rsync-hub: Permission denied` at the
   station (homes are 750). `add_station` therefore self-installs the running copy to
   `/usr/local/bin/rsync-hub` and always points keys there — keep that behavior.
+- **Version drift** — `RSYNC_HUB_VERSION` (top of script): bump it on every behavior
+  change; it shows in `rsync-hub help` and the monitor title, which is how a stale
+  `/usr/local/bin` copy is spotted. The dispatcher also warns (except in `serve`) when
+  the running copy differs from the installed one (`cmp`). Admins run the installed
+  copy day-to-day, so an outdated `/usr/local/bin` silently reintroduces old behavior
+  (e.g., 700/600 perms in `stations/`) — that's the failure mode this guards against.
 - **Management** — `rsync-hub install` is a **guided wizard** on a TTY (root dir → service
   account → add stations; persists choices to `/etc/rsync-hub.conf`, env vars still win);
   `install --defaults` (or no TTY) skips the questions. `add <id>` **without** a pubkey
@@ -125,16 +131,17 @@ All collection is **one bash script** at repo root, `rsync-hub`, running nativel
   invokes (`command="…/rsync-hub serve flona01",restrict`). It logs CONNECT/DISCONNECT/REJECT
   to `log/connections.log`, then runs `rrsync -wo /srv/carbonara/incoming/<id>`.
 
-**Host read policy (deliberate):** local users of the hub machine may READ everything —
-data under `incoming/`/`archive/` and the per-station credentials in
-`$BASE/stations/<id>/` (private keys and password INSTRUCOES are 644, dirs 755) — so
-admins can copy keys/instructions for operators **without sudo**. Write isolation
-applies to *stations* (forced command + rrsync / write-only rsyncd modules), not to
-local host users; the host is trusted. Two exceptions that MUST stay 600:
-`$BASE/.ssh/authorized_keys` (sshd) and `$BASE/rsyncd.secrets` (rsyncd strict modes
-refuses a world-readable secrets file — each station's password is instead readable via
-its INSTRUCOES.txt). Clients upload with `-rltz --chmod=D755,F644` (not `-a`) so
-arriving files are world-readable regardless of source permissions.
+**Host read policy (deliberate):** local users of the hub machine may READ everything
+without sudo — data under `incoming/`/`archive/`, per-station credentials in
+`$BASE/stations/<id>/` (private keys and INSTRUCOES are 644, dirs 755), the station
+list (`$BASE/.ssh` is 755 and `authorized_keys` 644 — sshd StrictModes only forbids
+group/other WRITE), and `rsyncd.secrets` (644, which requires `strict modes = false` in
+the generated rsyncd.conf — without it the daemon refuses a world-readable secrets
+file). Nothing is writable by local users (owner root/carbonara everywhere); write
+isolation applies to *stations* (forced command + rrsync / write-only rsyncd modules).
+The host is trusted — do not "harden" these perms back, it breaks sudo-less `list` and
+key copying. Clients upload with `-rltz --chmod=D755,F644` (not `-a`) so arriving files
+are world-readable regardless of source permissions.
 
 **Model & invariants** (don't weaken): a **single service account** (`carbonara`, locked
 password, keys in `$BASE/.ssh/authorized_keys`) receives all pushes — there is *no* per-station

@@ -37,6 +37,10 @@
 # ambiente (CARBONARA_ROOT, HUB_USER, RRSYNC) têm precedência sobre o arquivo.
 set -eu
 
+# Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
+# defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
+RSYNC_HUB_VERSION="2026-07-15.2"
+
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
 CONF_FILE="${RSYNC_HUB_CONF:-/etc/rsync-hub.conf}"
@@ -56,7 +60,7 @@ derive_paths() {
     LOG="$BASE/log/connections.log"          # registro de conexões (texto simples)
     AUTHKEYS="$BASE/.ssh/authorized_keys"    # chaves das estações (fora do alcance delas)
     RSYNCD_CONF="$BASE/rsyncd.conf"          # módulos do modo usuário+senha (gerado)
-    RSYNCD_SECRETS="$BASE/rsyncd.secrets"    # credenciais id:senha (600, fonte da verdade)
+    RSYNCD_SECRETS="$BASE/rsyncd.secrets"    # credenciais id:senha (644, fonte da verdade)
     RSYNCD_LOG="$BASE/log/rsyncd.log"
 }
 derive_paths
@@ -115,14 +119,21 @@ create_host() {   # o miolo do install: conta de serviço + pastas + arquivos
         useradd --system --home-dir "$BASE" --create-home --shell /bin/sh "$HUB_USER"
     passwd -l "$HUB_USER" >/dev/null 2>&1 || true      # tranca a senha: só chave
     install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$BASE" "$INCOMING" "$BASE/log"
-    install -d -m 700 -o "$HUB_USER" -g "$HUB_USER" "$BASE/.ssh"
+    # .ssh 755 e authorized_keys 644: o sshd (StrictModes) só exige que NÃO sejam
+    # graváveis por grupo/outros — leitura aberta é permitida e é a política do host.
+    install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$BASE/.ssh"
     install -d -m 755 "$BASE/stations"
     touch "$LOG"; chown "$HUB_USER:$HUB_USER" "$LOG"; chmod 644 "$LOG"
-    touch "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
-    # Política de LEITURA do host: os usuários locais podem VER tudo (dados e as
-    # credenciais/instruções em stations/ — cópia sem sudo). A segurança de ESCRITA
-    # continua valendo para as estações (forced command + rrsync/módulo write-only).
+    touch "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
+    # Política de LEITURA do host: os usuários locais podem VER tudo (dados, chaves,
+    # credenciais/instruções, lista de estações) sem sudo — mas nada é gravável por
+    # eles. A segurança de ESCRITA continua valendo para as estações (forced command +
+    # rrsync/módulo write-only). Normaliza também instalações antigas:
     chmod -R u+rwX,go+rX "$BASE/stations" 2>/dev/null || true
+    if [ -f "$RSYNCD_SECRETS" ]; then
+        chmod 644 "$RSYNCD_SECRETS"
+        rebuild_rsyncd_conf
+    fi
 }
 
 save_conf() {     # persiste as escolhas para os próximos usos (inclusive o serve via sshd)
@@ -286,6 +297,9 @@ rebuild_rsyncd_conf() {   # regenera o rsyncd.conf inteiro a partir do secrets
         echo "uid = $HUB_USER"
         echo "gid = $HUB_USER"
         echo "use chroot = true"
+        # strict modes = false: permite o rsyncd.secrets 644 (política de leitura
+        # aberta do host — sem isso o daemon recusa um secrets legível por todos).
+        echo "strict modes = false"
         echo "pid file = $BASE/rsyncd.pid"
         echo "lock file = $BASE/rsyncd.lock"
         echo "log file = $RSYNCD_LOG"
@@ -410,7 +424,7 @@ Observações:
   - Para revogar o acesso:  sudo rsync-hub remove $wp_id
 EOF
     # Legível pelos usuários locais do host (política de leitura aberta) — a senha da
-    # estação está aqui; o rsyncd.secrets continua 600 porque o daemon exige.
+    # estação está aqui e o rsyncd.secrets é 644 (strict modes desativado no daemon).
     chmod 644 "$wp_dir/INSTRUCOES.txt"
 }
 
@@ -425,10 +439,10 @@ add_station_pw() {   # $1=id $2=senha (vazio = gerar)
     [ -n "$pw" ] || die "falha ao gerar a senha"
     case "$pw" in *:*|*' '*) die "senha não pode conter ':' nem espaço" ;; esac
     install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$INCOMING/$id"
-    touch "$RSYNCD_SECRETS"; chmod 600 "$RSYNCD_SECRETS"
+    touch "$RSYNCD_SECRETS"; chmod 644 "$RSYNCD_SECRETS"
     grep -v "^$id:" "$RSYNCD_SECRETS" > "$RSYNCD_SECRETS.tmp" 2>/dev/null || true
     printf '%s:%s\n' "$id" "$pw" >> "$RSYNCD_SECRETS.tmp"
-    mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 600 "$RSYNCD_SECRETS"
+    mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 644 "$RSYNCD_SECRETS"
     ensure_rsyncd
     open_firewall_port
     keydir="$BASE/stations/$id"
@@ -496,7 +510,7 @@ add_station() {
     # Remove entrada antiga da mesma estação (se houver) e adiciona a nova.
     grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" 2>/dev/null || true
     printf 'command="%s serve %s",restrict %s\n' "$(self_path)" "$id" "$(cat "$pub")" >> "$AUTHKEYS.tmp"
-    mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
+    mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
     echo "estação '$id' autorizada (pasta $INCOMING/$id)."
     if [ -n "$generated" ]; then
         write_instructions "$id" "$keydir"
@@ -551,13 +565,13 @@ remove_station() {
     revoked=0
     if [ -f "$AUTHKEYS" ] && grep -qF "serve $id\"" "$AUTHKEYS"; then
         grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" || true
-        mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
+        mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
         echo "estação '$id': acesso por CHAVE revogado."
         revoked=1
     fi
     if [ -f "$RSYNCD_SECRETS" ] && grep -q "^$id:" "$RSYNCD_SECRETS"; then
         grep -v "^$id:" "$RSYNCD_SECRETS" > "$RSYNCD_SECRETS.tmp" || true
-        mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 600 "$RSYNCD_SECRETS"
+        mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 644 "$RSYNCD_SECRETS"
         rebuild_rsyncd_conf
         echo "estação '$id': acesso por USUÁRIO+SENHA revogado."
         revoked=1
@@ -700,7 +714,7 @@ monitor() {
     trap 'echo; exit 0' INT
     while true; do
         clear 2>/dev/null || printf '\033[2J\033[H'
-        echo "rsync-hub — monitor (atualiza a cada ${REFRESH}s · Ctrl-C sai)   $(date '+%F %T')"
+        echo "rsync-hub v$RSYNC_HUB_VERSION — monitor (atualiza a cada ${REFRESH}s · Ctrl-C sai)   $(date '+%F %T')"
         echo
         print_status
         echo
@@ -752,7 +766,7 @@ menu() {
 
 usage() {
     cat <<EOF
-rsync-hub — coleta CARBONARA por rsync-over-SSH (lado HOST / servidor central)
+rsync-hub v$RSYNC_HUB_VERSION — coleta CARBONARA por rsync-over-SSH (lado HOST / servidor central)
 
 uso:
   sudo rsync-hub install             instalação GUIADA (pasta raiz + conta + estações)
@@ -776,6 +790,18 @@ EOF
 }
 
 # --- Despacho ----------------------------------------------------------------------
+# Aviso de defasagem: rodando uma cópia (ex.: a do repositório) diferente da instalada
+# em /usr/local/bin — as chaves apontam para a instalada, então mantenha-as iguais.
+# (Não vale para 'serve': roda a cada conexão de estação e não deve poluir o stderr.)
+case "${1:-}" in
+    serve) : ;;
+    *) if [ "$(self_path)" != /usr/local/bin/rsync-hub ] && [ -f /usr/local/bin/rsync-hub ] \
+          && ! cmp -s "$(self_path)" /usr/local/bin/rsync-hub 2>/dev/null; then
+           echo "aviso: /usr/local/bin/rsync-hub difere desta cópia — atualize com:" >&2
+           echo "       sudo install -m 755 $(self_path) /usr/local/bin/rsync-hub" >&2
+       fi ;;
+esac
+
 case "${1:-}" in
     serve)   shift; serve "$@" ;;
     install) shift; install_host "${1:-}" ;;
