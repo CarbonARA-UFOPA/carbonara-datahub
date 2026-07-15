@@ -39,7 +39,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-07-15.2"
+RSYNC_HUB_VERSION="2026-07-15.3"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -664,7 +664,7 @@ print_status() {
     else
         C_ON=""; C_OFF=""; C_RX=""; C_0=""
     fi
-    printf '  %-16s %-18s %-22s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (UTC)" "CICLO"
+    printf '  %-16s %-18s %-22s %-8s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (UTC)" "CICLO" "PASTA"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
     found=0
     for d in "$INCOMING"/*/; do
@@ -705,7 +705,7 @@ print_status() {
         else
             dot="${C_OFF}●${C_0}"; txt="Offline"
         fi
-        printf '%s %-16s %-18s %-22s %s\n' "$dot" "$id" "$txt" "$when" "$cyc"
+        printf '%s %-16s %-18s %-22s %-8s %s\n' "$dot" "$id" "$txt" "$when" "$cyc" "$INCOMING/$id"
     done
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
 }
