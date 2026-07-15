@@ -13,7 +13,9 @@ lê dele. Dá para instalar/testar cada parte separadamente.
 - **Host (coleta):** `openssh-server` e `rsync` (o `rrsync` acompanha o pacote `rsync`).
 - **Stack de dados:** Docker Engine 24+ e Docker Compose v2 (`docker compose version`).
 - **Portas livres:**
-  - `22` — SSH, usada pela coleta (rsync das estações).
+  - `22` — SSH, usada pela coleta (rsync das estações por **chave**).
+  - `873` — rsync daemon, usada pela coleta das estações por **usuário+senha** (opcional;
+    só se alguma estação usar esse modo).
   - `21` + faixa passiva `30000-30009` — FTP de **distribuição** (saída dos dados processados).
   - `5432` — PostgreSQL.
 - Espaço em disco proporcional ao volume das estações (`incoming` + `archive` + banco).
@@ -61,10 +63,25 @@ leve-a para a estação), a pública (permanece lá, já autorizada) e um **`INS
 com o passo a passo de ativação para o operador (ver
 [`station/README.md`](../station/README.md)).
 
-Alternativa: a estação gera a própria chave no `setup` do cliente e te apresenta a
-**chave pública** — autorize com `sudo rsync-hub add flona01 flona01.pub` (ou colando a
-linha no menu interativo → "Adicionar estação"). Instruções prontas para passar ao
-operador: `rsync-hub cliente`.
+> **Leitura sem sudo:** os arquivos de `stations/` (e os dados de `incoming/`/`archive/`)
+> são legíveis por qualquer usuário local da workstation — dá para copiar a chave e as
+> instruções para o operador sem `sudo`. A blindagem de **escrita** vale para as
+> estações remotas; o host é considerado confiável. Instalações antigas: normalize com
+> `sudo chmod -R u+rwX,go+rX /srv/carbonara/stations`.
+
+Alternativas:
+
+- a estação gera a própria chave no `setup` do cliente e te apresenta a **chave
+  pública** — autorize com `sudo rsync-hub add flona01 flona01.pub` (ou colando a linha
+  no menu interativo → "Adicionar estação");
+- **usuário+senha** (sem chave nenhuma — o mais simples no cliente):
+  `sudo rsync-hub add flona01 --senha` cria o usuário (= id da estação) e gera a senha,
+  servida por um **rsync daemon** na porta `873` (serviço `carbonara-rsyncd`, gerenciado
+  pelo próprio `rsync-hub`; módulo write-only, `--delete` recusado). **Atenção:** a
+  senha não trafega em claro, mas os **dados sim** — prefira chave fora de redes
+  fechadas/VPN.
+
+Instruções prontas para passar ao operador: `rsync-hub cliente`.
 
 Cada chave fica amarrada ao seu `serve <id>`: a estação só escreve na **própria** pasta, em
 modo write-only (não baixa nem alcança as outras). Para revogar: `sudo rsync-hub remove flona01`

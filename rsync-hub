@@ -24,6 +24,8 @@
 #   sudo ./rsync-hub add <id>            # autoriza GERANDO a chave aqui (stations/<id>/
 #                                        #   guarda o par + INSTRUCOES.txt de ativação)
 #   sudo ./rsync-hub add <id> <pub>      # autoriza com chave pública já existente
+#   sudo ./rsync-hub add <id> --senha    # autoriza por USUÁRIO+SENHA (rsync daemon:873;
+#                                        #   simples no cliente, dados sem criptografia)
 #   sudo ./rsync-hub remove <id>         # revoga o acesso da estação
 #        ./rsync-hub list                # lista estações autorizadas
 #        ./rsync-hub monitor             # fica rodando, mostrando as conexões (Ctrl-C sai)
@@ -47,10 +49,15 @@ REFRESH="${RSYNC_HUB_REFRESH:-3}"                    # segundos entre atualizaç
 STALE_AFTER="${RSYNC_HUB_STALE:-3600}"               # sem atividade > isto (s) => estação "MUDA"
 SELF=""                                              # caminho a gravar no authorized_keys (ver install)
 
+RSYNCD_PORT="${RSYNCD_PORT:-873}"            # porta do modo usuário+senha (rsync daemon)
+
 derive_paths() {
     INCOMING="$BASE/incoming"                # uma subpasta por estação
     LOG="$BASE/log/connections.log"          # registro de conexões (texto simples)
     AUTHKEYS="$BASE/.ssh/authorized_keys"    # chaves das estações (fora do alcance delas)
+    RSYNCD_CONF="$BASE/rsyncd.conf"          # módulos do modo usuário+senha (gerado)
+    RSYNCD_SECRETS="$BASE/rsyncd.secrets"    # credenciais id:senha (600, fonte da verdade)
+    RSYNCD_LOG="$BASE/log/rsyncd.log"
 }
 derive_paths
 
@@ -109,8 +116,13 @@ create_host() {   # o miolo do install: conta de serviço + pastas + arquivos
     passwd -l "$HUB_USER" >/dev/null 2>&1 || true      # tranca a senha: só chave
     install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$BASE" "$INCOMING" "$BASE/log"
     install -d -m 700 -o "$HUB_USER" -g "$HUB_USER" "$BASE/.ssh"
+    install -d -m 755 "$BASE/stations"
     touch "$LOG"; chown "$HUB_USER:$HUB_USER" "$LOG"; chmod 644 "$LOG"
     touch "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
+    # Política de LEITURA do host: os usuários locais podem VER tudo (dados e as
+    # credenciais/instruções em stations/ — cópia sem sudo). A segurança de ESCRITA
+    # continua valendo para as estações (forced command + rrsync/módulo write-only).
+    chmod -R u+rwX,go+rX "$BASE/stations" 2>/dev/null || true
 }
 
 save_conf() {     # persiste as escolhas para os próximos usos (inclusive o serve via sshd)
@@ -260,6 +272,190 @@ EOF
     chmod 644 "$wi_dir/INSTRUCOES.txt"
 }
 
+# --- Modo usuário+senha: rsync daemon (porta 873) -----------------------------------
+# Alternativa às chaves para estações onde a chave complica: o rsync daemon tem
+# autenticação própria (usuário=id da estação, senha desafio-resposta — a senha não
+# trafega em claro) e cada estação vira um módulo confinado à sua pasta, write-only e
+# com --delete recusado. ATENÇÃO: os DADOS trafegam sem criptografia — para redes
+# públicas, prefira o modo chave SSH.
+gen_password() { LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 12; }
+
+rebuild_rsyncd_conf() {   # regenera o rsyncd.conf inteiro a partir do secrets
+    {
+        echo "# gerado por rsync-hub em $(date -u +%FT%TZ) — NÃO edite (regenerado no add/remove)"
+        echo "uid = $HUB_USER"
+        echo "gid = $HUB_USER"
+        echo "use chroot = true"
+        echo "pid file = $BASE/rsyncd.pid"
+        echo "lock file = $BASE/rsyncd.lock"
+        echo "log file = $RSYNCD_LOG"
+        echo "port = $RSYNCD_PORT"
+        while IFS=: read -r sid _; do
+            [ -n "$sid" ] || continue
+            echo
+            echo "[$sid]"
+            echo "    path = $INCOMING/$sid"
+            echo "    comment = estacao CARBONARA $sid (write-only)"
+            echo "    auth users = $sid"
+            echo "    secrets file = $RSYNCD_SECRETS"
+            echo "    read only = false"
+            echo "    write only = true"
+            echo "    refuse options = delete* remove-source-files"
+            echo "    max connections = 4"
+            echo "    timeout = 600"
+        done < "$RSYNCD_SECRETS"
+    } > "$RSYNCD_CONF"
+    chmod 644 "$RSYNCD_CONF"
+}
+
+open_firewall_port() {  # tenta liberar a porta do rsyncd no firewall DO HOST
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        if ufw allow "$RSYNCD_PORT/tcp" >/dev/null 2>&1; then
+            echo "ok: porta $RSYNCD_PORT/tcp liberada no firewall do host (ufw)."
+        else
+            echo "aviso: não consegui liberar a porta $RSYNCD_PORT no ufw — libere manualmente."
+        fi
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        if firewall-cmd --permanent --add-port="$RSYNCD_PORT/tcp" >/dev/null 2>&1 \
+           && firewall-cmd --reload >/dev/null 2>&1; then
+            echo "ok: porta $RSYNCD_PORT/tcp liberada no firewall do host (firewalld)."
+        else
+            echo "aviso: não consegui liberar a porta $RSYNCD_PORT no firewalld — libere manualmente."
+        fi
+    else
+        echo "(nenhum firewall gerenciável detectado no host — ufw/firewalld inativos ou ausentes.)"
+    fi
+}
+
+rsyncd_listening() {  # o daemon está escutando na porta?
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -q ":$RSYNCD_PORT "
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -ltn 2>/dev/null | grep -q ":$RSYNCD_PORT "
+    else
+        return 0    # sem como checar: não alarma
+    fi
+}
+
+ensure_rsyncd() {   # deixa o daemon no ar (config e senhas são relidos a cada conexão)
+    rebuild_rsyncd_conf
+    if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+        cat > /etc/systemd/system/carbonara-rsyncd.service <<EOF
+[Unit]
+Description=CARBONARA rsync daemon (estações com usuário+senha)
+After=network.target
+
+[Service]
+ExecStart=$(command -v rsync) --daemon --no-detach --config=$RSYNCD_CONF
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+        systemctl enable --now carbonara-rsyncd >/dev/null 2>&1 || true
+        systemctl is-active carbonara-rsyncd >/dev/null 2>&1 || \
+            echo "aviso: o serviço carbonara-rsyncd não subiu — veja: systemctl status carbonara-rsyncd"
+    else
+        # Sem systemd: sobe direto se ainda não estiver rodando (pid file).
+        if ! { [ -f "$BASE/rsyncd.pid" ] && kill -0 "$(cat "$BASE/rsyncd.pid" 2>/dev/null)" 2>/dev/null; }; then
+            rsync --daemon --config="$RSYNCD_CONF" || echo "aviso: falha ao subir o rsync --daemon"
+        fi
+    fi
+}
+
+write_instructions_pw() {  # $1=id $2=pasta da estação $3=senha
+    wp_id="$1"; wp_dir="$2"; wp_pw="$3"; wp_addr="$(host_addr)"
+    cat > "$wp_dir/INSTRUCOES.txt" <<EOF
+CARBONARA — ativação da estação '$wp_id' (modo USUÁRIO+SENHA)
+=============================================================
+(gerado por rsync-hub em $(date -u +%FT%TZ))
+
+Servidor (host): $wp_addr · porta: $RSYNCD_PORT (rsync direto, sem SSH)
+Credenciais:     usuário: $wp_id   ·   senha: $wp_pw
+                 (guarde este arquivo com cuidado — a senha está nele)
+
+1) Copie o cliente para a máquina da estação (pasta station/ do repositório
+   carbonara-datahub):
+       Linux:    carbonara-station.sh
+       Windows:  carbonara-station.ps1 + carbonara-station.cmd
+
+2) Na estação, rode o assistente guiado:
+       Linux:    ./carbonara-station.sh setup
+       Windows:  .\\carbonara-station.cmd setup
+                 (na 1ª vez o assistente instala o rsync (cwRsync) sozinho —
+                  abra o PowerShell COMO ADMINISTRADOR só nessa primeira vez)
+   Ele pergunta, nesta ordem:
+     - id da estação ................ $wp_id
+     - IP do host ................... $wp_addr
+     - autenticação ................. escolha "usuário e senha"
+     - porta ........................ $RSYNCD_PORT (padrão desse modo)
+     - senha ........................ a senha acima
+     → teste simples de conexão (o host responde? a senha confere?)
+     - pasta local a enviar (rsync)
+     - tempo de reciclagem (minutos) + ativação do envio automático
+
+3) Pronto. Acompanhe as chegadas no servidor com:  rsync-hub monitor
+
+Observações:
+  - Este modo NÃO usa a porta do SSH: a porta $RSYNCD_PORT/tcp precisa estar aberta em
+    todo o caminho estação→servidor (firewall do host E firewall/roteador externo).
+    Teste rápido, de qualquer máquina:  rsync rsync://$wp_addr:$RSYNCD_PORT/
+    (deve responder listando os módulos). Se a porta não puder ser aberta, peça ao
+    administrador o modo CHAVE (porta 22).
+  - A estação só escreve na própria pasta (incoming/$wp_id), em modo write-only,
+    e o servidor recusa --delete: ela não lê, não baixa e não apaga nada.
+  - O tráfego NÃO é criptografado (a senha não circula em claro, os dados sim).
+    Em redes públicas, prefira o modo chave SSH.
+  - Para revogar o acesso:  sudo rsync-hub remove $wp_id
+EOF
+    # Legível pelos usuários locais do host (política de leitura aberta) — a senha da
+    # estação está aqui; o rsyncd.secrets continua 600 porque o daemon exige.
+    chmod 644 "$wp_dir/INSTRUCOES.txt"
+}
+
+add_station_pw() {   # $1=id $2=senha (vazio = gerar)
+    need_root
+    id="${1:-}"; pw="${2:-}"
+    [ -n "$id" ] || die "uso: rsync-hub add <id> --senha [senha]"
+    valid_id "$id"
+    [ -d "$BASE" ] || die "host não preparado — rode antes: sudo rsync-hub install"
+    command -v rsync >/dev/null 2>&1 || die "'rsync' não encontrado no host"
+    [ -n "$pw" ] || pw="$(gen_password)"
+    [ -n "$pw" ] || die "falha ao gerar a senha"
+    case "$pw" in *:*|*' '*) die "senha não pode conter ':' nem espaço" ;; esac
+    install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$INCOMING/$id"
+    touch "$RSYNCD_SECRETS"; chmod 600 "$RSYNCD_SECRETS"
+    grep -v "^$id:" "$RSYNCD_SECRETS" > "$RSYNCD_SECRETS.tmp" 2>/dev/null || true
+    printf '%s:%s\n' "$id" "$pw" >> "$RSYNCD_SECRETS.tmp"
+    mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 600 "$RSYNCD_SECRETS"
+    ensure_rsyncd
+    open_firewall_port
+    keydir="$BASE/stations/$id"
+    install -d -m 755 "$keydir"
+    write_instructions_pw "$id" "$keydir" "$pw"
+    echo "estação '$id' autorizada por USUÁRIO+SENHA (pasta $INCOMING/$id, write-only, sem delete)."
+    echo "    usuário: $id"
+    echo "    senha:   $pw"
+    echo "    porta:   $RSYNCD_PORT"
+    echo "    INSTRUCOES.txt (com a senha) em: $keydir/"
+    if rsyncd_listening; then
+        echo "ok: o daemon está escutando na porta $RSYNCD_PORT deste host."
+    else
+        echo "AVISO: não vi o daemon escutando na porta $RSYNCD_PORT — confira:"
+        echo "       systemctl status carbonara-rsyncd   ·   ss -ltn | grep $RSYNCD_PORT"
+    fi
+    echo
+    echo "IMPORTANTE — este modo NÃO usa a porta do SSH: a porta $RSYNCD_PORT/tcp precisa estar"
+    echo "aberta em TODO o caminho até a estação (firewall do host: tentei liberar acima;"
+    echo "firewall externo/roteador da instituição: peça a liberação). Teste de qualquer"
+    echo "máquina:  rsync rsync://$(host_addr):$RSYNCD_PORT/   (deve listar os módulos)."
+    echo "Se a porta $RSYNCD_PORT não puder ser aberta, use o modo CHAVE (porta 22):"
+    echo "    sudo rsync-hub add $id"
+    echo
+    echo "atenção: tráfego SEM criptografia (dados em claro; a senha, não)."
+}
+
 add_station() {
     need_root
     id="${1:-}"; pub="${2:-}"
@@ -274,11 +470,14 @@ add_station() {
         # ingestão varre), junto com as instruções de ativação. O operador leva a
         # chave privada para a estação.
         keydir="$BASE/stations/$id"
-        install -d -m 700 "$keydir"
+        install -d -m 755 "$keydir"
         key="$keydir/${id}_key"
         if [ ! -f "$key.pub" ]; then
             ssh-keygen -q -t ed25519 -N "" -C "carbonara-$id" -f "$key" || die "falha ao gerar a chave"
         fi
+        # Legíveis pelos usuários locais do host (política de leitura aberta: o
+        # administrador copia a chave para o operador SEM sudo).
+        chmod 644 "$key" "$key.pub"
         pub="$key.pub"; generated=1
     fi
     [ -f "$pub" ] || die "chave pública não encontrada: $pub"
@@ -296,15 +495,25 @@ add_station() {
         echo "    ${id}_key        ← COPIE para a máquina da estação (chave privada)"
         echo "    ${id}_key.pub    ← permanece aqui (já autorizada)"
         echo "    INSTRUCOES.txt   ← passo a passo de ativação, para acompanhar a chave"
+        echo "(arquivos legíveis pelos usuários locais do host — a cópia dispensa sudo.)"
     else
         echo "no cliente, aponte para: conta $HUB_USER · host $(host_addr) · porta 22 (detalhes: rsync-hub cliente)"
     fi
 }
 
-add_station_wizard() {  # versão guiada do add: gera a chave (ENTER), aceita arquivo OU linha colada
+add_station_wizard() {  # versão guiada do add: escolhe o modo de autenticação
     id="$(ask "  id da estação (minúsculas/dígitos/_ , ex.: flona01)" "")"
     [ -n "$id" ] || { echo "  id vazio."; return 1; }
     echo "$id" | grep -Eq '^[a-z0-9][a-z0-9_]{1,30}$' || { echo "  id inválido."; return 1; }
+    echo "  como a estação vai se autenticar?"
+    echo "    1) chave SSH (recomendado — tráfego criptografado, usa a porta 22 já aberta)"
+    echo "    2) usuário e senha (mais simples no cliente — MAS exige a porta $RSYNCD_PORT/tcp"
+    echo "       aberta até a estação, além da 22; dados SEM criptografia)"
+    modo="$(ask "  modo" "1")"
+    if [ "$modo" = 2 ]; then
+        pw="$(ask "  senha (ENTER = gerar uma)" "")"
+        if ( add_station_pw "$id" "$pw" ); then return 0; else return 1; fi
+    fi
     echo "  chave pública da estação: aperte ENTER para GERAR o par aqui no host"
     echo "  (fica em $BASE/stations/$id/ com as instruções de ativação), OU informe o"
     echo "  CAMINHO de um arquivo .pub, OU cole a linha inteira ('ssh-ed25519 …')."
@@ -330,10 +539,22 @@ remove_station() {
     need_root
     id="${1:-}"; [ -n "$id" ] || die "uso: rsync-hub remove <id>"
     valid_id "$id"
+    revoked=0
     if [ -f "$AUTHKEYS" ] && grep -qF "serve $id\"" "$AUTHKEYS"; then
         grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" || true
         mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 600 "$AUTHKEYS"
-        echo "estação '$id': acesso revogado. Dados preservados em $INCOMING/$id."
+        echo "estação '$id': acesso por CHAVE revogado."
+        revoked=1
+    fi
+    if [ -f "$RSYNCD_SECRETS" ] && grep -q "^$id:" "$RSYNCD_SECRETS"; then
+        grep -v "^$id:" "$RSYNCD_SECRETS" > "$RSYNCD_SECRETS.tmp" || true
+        mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 600 "$RSYNCD_SECRETS"
+        rebuild_rsyncd_conf
+        echo "estação '$id': acesso por USUÁRIO+SENHA revogado."
+        revoked=1
+    fi
+    if [ "$revoked" = 1 ]; then
+        echo "dados preservados em $INCOMING/$id."
         [ -d "$BASE/stations/$id" ] && \
             echo "chaves/instruções mantidas em $BASE/stations/$id — apague a pasta se não for reativar."
     else
@@ -342,12 +563,18 @@ remove_station() {
 }
 
 list_stations() {
+    any=0
     if [ -f "$AUTHKEYS" ] && grep -q 'serve ' "$AUTHKEYS"; then
-        echo "estações autorizadas:"
+        echo "estações por CHAVE SSH:"
         sed -n 's/.*serve \([^"]*\)".*/  - \1/p' "$AUTHKEYS" | sort
-    else
-        echo "(nenhuma estação autorizada — use 'rsync-hub add')"
+        any=1
     fi
+    if [ -r "$RSYNCD_SECRETS" ] && grep -q ':' "$RSYNCD_SECRETS" 2>/dev/null; then
+        echo "estações por USUÁRIO+SENHA (rsync daemon, porta $RSYNCD_PORT):"
+        cut -d: -f1 "$RSYNCD_SECRETS" | sort | sed 's/^/  - /'
+        any=1
+    fi
+    [ "$any" = 1 ] || echo "(nenhuma estação autorizada — use 'rsync-hub add')"
 }
 
 client_help() {
@@ -381,8 +608,17 @@ Alternativa (chave gerada NA estação):
           sudo rsync-hub add <id> <chave.pub>
       (ou cole a linha no menu → "Adicionar estação").
 
+Alternativa SEM chave (usuário+senha — a mais simples no cliente):
+    1. sudo rsync-hub add <id> --senha       # cria usuário=<id> e gera a senha
+       → INSTRUCOES.txt (com a senha) em $BASE/stations/<id>/
+    2. na estação, no setup, escolha "usuário e senha" e informe IP, porta $RSYNCD_PORT
+       e a senha — sem arquivo de chave nenhum.
+    Atenção: rsync direto na porta $RSYNCD_PORT (libere no firewall); a senha não
+    trafega em claro, mas os DADOS sim — prefira chave em redes públicas.
+
 Envio manual (sem o script do cliente):
-    rsync -avz -e "ssh -i /caminho/<id>_key" /pasta/dos/dados/ $HUB_USER@$addr:/
+    chave:  rsync -avz -e "ssh -i /caminho/<id>_key" /pasta/dos/dados/ $HUB_USER@$addr:/
+    senha:  RSYNC_PASSWORD=<senha> rsync -avz /pasta/dos/dados/ rsync://<id>@$addr:$RSYNCD_PORT/<id>/
 EOF
 }
 
@@ -424,8 +660,12 @@ monitor() {
         echo
         print_status
         echo
-        echo "últimas conexões:"
+        echo "últimas conexões (chave SSH):"
         tail -n 6 "$LOG" 2>/dev/null | sed 's/^/  /' || echo "  (sem registros)"
+        if [ -f "$RSYNCD_LOG" ]; then
+            echo "últimas conexões (usuário+senha, rsync daemon):"
+            tail -n 4 "$RSYNCD_LOG" 2>/dev/null | sed 's/^/  /'
+        fi
         sleep "$REFRESH"
     done
 }
@@ -476,6 +716,8 @@ uso:
   sudo rsync-hub add <id>            autoriza uma estação GERANDO a chave aqui no host
                                      (fica em <raiz>/stations/<id>/ + INSTRUCOES.txt)
   sudo rsync-hub add <id> <pub>      autoriza com uma chave pública já existente
+  sudo rsync-hub add <id> --senha    autoriza por USUÁRIO+SENHA (rsync daemon, porta $RSYNCD_PORT;
+                                     mais simples no cliente, mas dados SEM criptografia)
   sudo rsync-hub remove <id>         revoga o acesso da estação (dados preservados)
        rsync-hub list                lista as estações autorizadas
        rsync-hub monitor             modo ao vivo: quem conectou e o que chegou (Ctrl-C sai)
@@ -493,7 +735,9 @@ EOF
 case "${1:-}" in
     serve)   shift; serve "$@" ;;
     install) shift; install_host "${1:-}" ;;
-    add)     shift; add_station "$@" ;;
+    add)     shift
+             if [ "${2:-}" = "--senha" ]; then add_station_pw "${1:-}" "${3:-}"
+             else add_station "$@"; fi ;;
     remove)  shift; remove_station "$@" ;;
     list)    list_stations ;;
     monitor) monitor ;;

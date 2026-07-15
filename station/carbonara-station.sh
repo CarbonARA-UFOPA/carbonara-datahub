@@ -5,15 +5,17 @@
 # (o "host", preparado com o script rsync-hub deste projeto), por rsync-over-SSH.
 #
 # Papéis:
-#   1) Assistente guiado — `setup` pergunta, nesta ordem: id da estação → IP do host
-#      (porta opcional, padrão 22) → caminho local da CHAVE recebida do servidor
-#      (gerada lá pelo `rsync-hub add <id>`; se não existir, oferece gerar uma nova
-#      aqui) → TESTE simples de conexão → pasta local a enviar (rsync) → tempo de
+#   1) Assistente guiado — `setup` pergunta, nesta ordem: id da estação → IP do host →
+#      como autenticar: CHAVE SSH (porta 22; arquivo recebido do servidor, gerado lá
+#      pelo `rsync-hub add <id>`) OU USUÁRIO+SENHA (porta 873, rsync direto; criado lá
+#      pelo `rsync-hub add <id> --senha` — mais simples, porém dados sem criptografia)
+#      → TESTE simples de conexão → pasta local a enviar (rsync) → tempo de
 #      reciclagem (minutos) + ativação do envio automático.
-#   2) Envio — `send` manda os arquivos prontos (idade mínima configurável, para não
-#      pegar arquivo ainda sendo escrito) e, após o sucesso, move-os para .enviados/
-#      (ou apaga, conforme escolhido) — nada é reenviado, e o rsync --partial retoma
-#      transferências interrompidas (link instável).
+#   2) Envio — `send` SINCRONIZA a pasta local com o servidor: NUNCA move nem apaga
+#      nada da pasta local. O controle do que já foi enviado é um estado local
+#      (tamanho+mtime por arquivo, em ~/.config/carbonara-station/sent.state): só vai
+#      o que é novo ou mudou desde o último envio. Idade mínima configurável evita
+#      arquivo ainda sendo escrito; o rsync --partial retoma em link instável.
 #   3) Agendamento — `schedule` instala o envio periódico no cron do usuário.
 #
 # Uso:
@@ -31,6 +33,7 @@ set -eu
 CONF_DIR="${CARBONARA_STATION_HOME:-$HOME/.config/carbonara-station}"
 CONF="$CONF_DIR/config"
 LOGF="$CONF_DIR/envios.log"
+STATE="$CONF_DIR/sent.state"     # o que já foi enviado: caminho<TAB>tamanho:mtime
 CRON_TAG="# carbonara-station send"
 
 die()      { echo "erro: $*" >&2; exit 1; }
@@ -54,24 +57,53 @@ load_conf() {
     [ -r "$CONF" ] || die "estação não configurada — rode: $(basename "$0") setup"
     . "$CONF"
     : "${STATION_ID:?configuração incompleta — rode setup de novo}"
-    : "${HUB_HOST:?}" "${DATA_DIR:?}" "${KEY_FILE:?}"
-    HUB_PORT="${HUB_PORT:-22}"; HUB_USER="${HUB_USER:-carbonara}"
-    MIN_AGE="${MIN_AGE:-1}"; KEEP_COPY="${KEEP_COPY:-yes}"; SEND_EVERY="${SEND_EVERY:-10}"
-    SENT_DIR="$DATA_DIR/.enviados"
+    : "${HUB_HOST:?}" "${DATA_DIR:?}"
+    AUTH_MODE="${AUTH_MODE:-chave}"
+    if [ "$AUTH_MODE" = senha ]; then
+        : "${PASSWORD:?configuração incompleta (senha) — rode setup de novo}"
+        HUB_PORT="${HUB_PORT:-873}"
+    else
+        : "${KEY_FILE:?configuração incompleta (chave) — rode setup de novo}"
+        HUB_PORT="${HUB_PORT:-22}"
+    fi
+    HUB_USER="${HUB_USER:-carbonara}"
+    MIN_AGE="${MIN_AGE:-1}"; SEND_EVERY="${SEND_EVERY:-10}"
+}
+
+rsync_dest() {  # destino conforme o modo: módulo do rsync daemon OU conta ssh
+    if [ "$AUTH_MODE" = senha ]; then
+        echo "rsync://$STATION_ID@$HUB_HOST:$HUB_PORT/$STATION_ID/"
+    else
+        echo "$HUB_USER@$HUB_HOST:/"
+    fi
+}
+
+sig_of() { # tamanho:mtime — a "assinatura" que detecta arquivo novo/alterado
+    stat -c '%s:%Y' "$1" 2>/dev/null || stat -f '%z:%m' "$1"
+}
+
+scan_all() { # gera $1: inventário completo da pasta — caminho<TAB>assinatura
+    ( cd "$DATA_DIR" && find . -type f -not -path '*/.*' -not -name '.*' 2>/dev/null \
+        | sed 's|^\./||' | sort \
+        | while IFS= read -r f; do printf '%s\t%s\n' "$f" "$(sig_of "$f")"; done ) > "$1"
 }
 
 ssh_cmd() { echo "ssh -i $KEY_FILE -p $HUB_PORT -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"; }
 
 # Teste de conexão que NÃO depende da pasta de dados: dry-run a partir de uma pasta
-# vazia — valida rede, porta, chave e o confinamento no servidor, sem enviar nada.
+# vazia — valida rede, porta, credencial e o confinamento no servidor, sem enviar nada.
 probe_conn() {
     tmpd="$(mktemp -d)"
-    if out="$(rsync -an --timeout=20 -e "$(ssh_cmd)" "$tmpd/" "$HUB_USER@$HUB_HOST:/" 2>&1)"; then
-        rmdir "$tmpd" 2>/dev/null || true
-        echo "ok: o servidor respondeu e aceitou a chave."
-        return 0
+    if [ "$AUTH_MODE" = senha ]; then
+        out="$(RSYNC_PASSWORD="$PASSWORD" rsync -an --timeout=20 "$tmpd/" "$(rsync_dest)" 2>&1)" && ok=0 || ok=1
+    else
+        out="$(rsync -an --timeout=20 -e "$(ssh_cmd)" "$tmpd/" "$(rsync_dest)" 2>&1)" && ok=0 || ok=1
     fi
     rmdir "$tmpd" 2>/dev/null || true
+    if [ "$ok" = 0 ]; then
+        echo "ok: o servidor respondeu e aceitou a credencial."
+        return 0
+    fi
     echo "falhou:"
     echo "$out" | sed 's/^/  /'
     return 1
@@ -100,41 +132,74 @@ setup() {
         [ -n "$HUB_HOST" ] && break
         echo "  informe um endereço."
     done
-    HUB_PORT="$(ask "Porta SSH do servidor" "${HUB_PORT:-22}")"
-    HUB_USER="$(ask "Conta de serviço no servidor" "${HUB_USER:-carbonara}")"
+    # 3. Autenticação: chave SSH ou usuário+senha
+    echo "Como esta estação se autentica no servidor?"
+    echo "  1) chave SSH (recomendado — tráfego criptografado; porta 22)"
+    echo "  2) usuário e senha (mais simples — rsync direto na porta 873; dados sem criptografia)"
+    d=1; [ "${AUTH_MODE:-}" = senha ] && d=2
+    modo="$(ask "modo" "$d")"
+    if [ "$modo" = 2 ]; then AUTH_MODE=senha; else AUTH_MODE=chave; fi
 
-    # 3. Chave de conexão (recebida do servidor; se não existir, oferece gerar aqui)
     NEW_KEY=""
-    case "${KEY_FILE:-}" in
-        */carbonara_"$STATION_ID"|*/"${STATION_ID}"_key) : ;;   # default só se for deste id
-        *) KEY_FILE="" ;;
-    esac
-    while :; do
-        KEY_FILE="$(ask "Caminho local da CHAVE desta estação (arquivo ${STATION_ID}_key recebido do servidor)" "${KEY_FILE:-}")"
-        [ -n "$KEY_FILE" ] || { echo "  informe um caminho."; continue; }
-        case "$KEY_FILE" in /*) : ;; *) KEY_FILE="$PWD/$KEY_FILE" ;; esac
-        if [ -f "$KEY_FILE" ]; then
-            chmod 600 "$KEY_FILE" 2>/dev/null || \
-                echo "  aviso: não consegui ajustar as permissões da chave (o ssh exige 600)."
-            break
+    if [ "$AUTH_MODE" = senha ]; then
+        HUB_PORT="$(ask "Porta do rsync no servidor" "${HUB_PORT:-873}")"
+        echo "O usuário é o próprio id da estação ($STATION_ID); a senha está no"
+        echo "INSTRUCOES.txt entregue pelo administrador (gerada por 'rsync-hub add $STATION_ID --senha')."
+        while :; do
+            PASSWORD="$(ask "Senha desta estação" "${PASSWORD:-}")"
+            [ -n "$PASSWORD" ] && break
+            echo "  informe a senha."
+        done
+    else
+        HUB_PORT="$(ask "Porta SSH do servidor" "${HUB_PORT:-22}")"
+        # A conta de serviço é ÚNICA no servidor (recebe todas as estações) — quase sempre
+        # 'carbonara'. Usuários tendem a digitar o id da estação aqui; confirme se mudar.
+        HUB_USER="$(ask "Conta de serviço no servidor — NÃO é o id da estação; aperte Enter" "${HUB_USER:-carbonara}")"
+        if [ "$HUB_USER" != carbonara ]; then
+            if ! ask_yn "  atenção: normalmente a conta é 'carbonara' — usar '$HUB_USER' mesmo?" n; then
+                HUB_USER=carbonara
+                echo "  ok, usando 'carbonara'."
+            fi
         fi
-        echo "  não encontrei a chave em: $KEY_FILE"
-        if ask_yn "  Gerar um NOVO par de chaves aqui (a pública precisará ser autorizada no servidor)?" n; then
-            KEY_FILE="$HOME/.ssh/carbonara_$STATION_ID"
-            mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-            [ -f "$KEY_FILE" ] || ssh-keygen -q -t ed25519 -N "" -C "carbonara-$STATION_ID" -f "$KEY_FILE"
-            NEW_KEY=1
-            break
-        fi
-    done
+        # Chave recebida do servidor; se não existir, oferece gerar aqui.
+        case "${KEY_FILE:-}" in
+            */carbonara_"$STATION_ID"|*/"${STATION_ID}"_key) : ;;   # default só se for deste id
+            *) KEY_FILE="" ;;
+        esac
+        while :; do
+            KEY_FILE="$(ask "Caminho local da CHAVE desta estação (arquivo ${STATION_ID}_key recebido do servidor)" "${KEY_FILE:-}")"
+            [ -n "$KEY_FILE" ] || { echo "  informe um caminho."; continue; }
+            case "$KEY_FILE" in /*) : ;; *) KEY_FILE="$PWD/$KEY_FILE" ;; esac
+            if [ -f "$KEY_FILE" ]; then
+                chmod 600 "$KEY_FILE" 2>/dev/null || \
+                    echo "  aviso: não consegui ajustar as permissões da chave (o ssh exige 600)."
+                break
+            fi
+            echo "  não encontrei a chave em: $KEY_FILE"
+            if ask_yn "  Gerar um NOVO par de chaves aqui (a pública precisará ser autorizada no servidor)?" n; then
+                KEY_FILE="$HOME/.ssh/carbonara_$STATION_ID"
+                mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+                [ -f "$KEY_FILE" ] || ssh-keygen -q -t ed25519 -N "" -C "carbonara-$STATION_ID" -f "$KEY_FILE"
+                NEW_KEY=1
+                break
+            fi
+        done
+    fi
 
-    # 4. Teste simples de conexão (o host responde? a chave é aceita?)
+    # 4. Teste simples de conexão (o host responde? a credencial é aceita?)
     echo
     if [ -n "$NEW_KEY" ]; then
         echo "(chave nova, ainda não autorizada no servidor — o teste fica para depois.)"
     elif ask_yn "Testar a conexão com o servidor agora?" s; then
         if ! probe_conn; then
-            echo "  dicas: a estação foi autorizada no servidor? IP/porta corretos? há rede?"
+            if [ "$AUTH_MODE" = senha ]; then
+                echo "  dicas: senha correta? a estação foi criada no servidor com"
+                echo "         'rsync-hub add $STATION_ID --senha'? porta $HUB_PORT liberada no firewall?"
+            else
+                echo "  dicas: 'Permission denied' → a conta de serviço está certa? (padrão: carbonara,"
+                echo "         não é o id da estação) e a chave é a gerada no servidor para este id?"
+                echo "         Outras causas: estação não autorizada, IP/porta errados, sem rede."
+            fi
             ask_yn "  Continuar a configuração mesmo assim?" s || { echo "configuração interrompida."; return 1; }
         fi
     fi
@@ -152,10 +217,8 @@ setup() {
         echo "$MIN_AGE" | grep -Eq '^[0-9]+$' && break
         echo "  informe um número inteiro de minutos."
     done
-    if ask_yn "Manter cópia local após o envio (move para $DATA_DIR/.enviados)?" s
-    then KEEP_COPY=yes
-    else KEEP_COPY=no
-    fi
+    echo "  (a pasta local NUNCA é alterada: nada é movido nem apagado — o envio só"
+    echo "   sincroniza com o servidor o que for novo ou mudar.)"
 
     # 6. Tempo de reciclagem (intervalo do envio automático)
     while :; do
@@ -169,11 +232,15 @@ setup() {
       echo "STATION_ID=$STATION_ID"
       echo "HUB_HOST=$HUB_HOST"
       echo "HUB_PORT=$HUB_PORT"
-      echo "HUB_USER=$HUB_USER"
+      echo "AUTH_MODE=$AUTH_MODE"
+      if [ "$AUTH_MODE" = senha ]; then
+          echo "PASSWORD=$PASSWORD"
+      else
+          echo "HUB_USER=${HUB_USER:-carbonara}"
+          echo "KEY_FILE=$KEY_FILE"
+      fi
       echo "DATA_DIR=$DATA_DIR"
-      echo "KEY_FILE=$KEY_FILE"
       echo "MIN_AGE=$MIN_AGE"
-      echo "KEEP_COPY=$KEEP_COPY"
       echo "SEND_EVERY=$SEND_EVERY"; } > "$CONF"
     chmod 600 "$CONF"
     echo
@@ -207,14 +274,25 @@ test_conn() {
     echo "testando conexão com $HUB_USER@$HUB_HOST:$HUB_PORT (dry-run, nada é enviado)…"
     if ! probe_conn; then
         echo "verifique:"
-        echo "  - a estação foi autorizada no servidor? (lá: sudo rsync-hub add $STATION_ID …)"
-        echo "  - a chave é a recebida do servidor? ($KEY_FILE)"
+        if [ "$AUTH_MODE" = senha ]; then
+            echo "  - a senha confere com a do servidor? (lá: sudo rsync-hub add $STATION_ID --senha)"
+            echo "  - porta $HUB_PORT liberada no firewall? o serviço carbonara-rsyncd está no ar?"
+        else
+            echo "  - 'Permission denied' → a conta de serviço está certa? (a sua: '$HUB_USER';"
+            echo "    o padrão é 'carbonara' — não é o id da estação)"
+            echo "  - a estação foi autorizada no servidor? (lá: sudo rsync-hub add $STATION_ID …)"
+            echo "  - a chave é a recebida do servidor? ($KEY_FILE)"
+        fi
         echo "  - IP ($HUB_HOST) e porta ($HUB_PORT) corretos? há rede até o servidor?"
         return 1
     fi
 }
 
 # --- Envio ---------------------------------------------------------------------------
+# Sincronização pura: NADA é movido ou apagado da pasta local. O que já foi enviado é
+# controlado pelo estado local ($STATE, assinatura tamanho:mtime por arquivo) — só vai
+# o que é novo ou mudou; arquivos que crescem (ex.: .dat de datalogger) são reenviados
+# por inteiro e o servidor não duplica medições (ingestão idempotente).
 send() {
     load_conf
     mkdir -p "$CONF_DIR"
@@ -223,38 +301,62 @@ send() {
         echo "outro envio já está em andamento — saindo."
         return 0
     fi
-    cd "$DATA_DIR"
-    list="$(mktemp)"
-    # Elegíveis: arquivos "assentados" (mais velhos que MIN_AGE), fora de pastas ocultas
-    # (inclui a .enviados/) — mesmo critério de dotfiles da ingestão no servidor.
-    find . -type f -not -path '*/.*' -not -name '.*' -mmin "+$MIN_AGE" 2>/dev/null \
-        | sed 's|^\./||' | sort > "$list"
-    n="$(wc -l < "$list" | tr -d ' ')"
+    [ -f "$STATE" ] || : > "$STATE"
+    all="$(mktemp)"; elig="$(mktemp)"; tosend="$(mktemp)"; lista="$(mktemp)"
+    scan_all "$all"
+    # Elegíveis: já "assentados" (mais velhos que MIN_AGE), fora de pastas/arquivos
+    # ocultos — mesmo critério de dotfiles da ingestão no servidor.
+    ( cd "$DATA_DIR" && find . -type f -not -path '*/.*' -not -name '.*' -mmin "+$MIN_AGE" 2>/dev/null \
+        | sed 's|^\./||' ) > "$elig"
+    # A enviar: elegíveis que são novos ou cuja assinatura mudou desde o último envio.
+    awk -F'\t' '
+        FILENAME==ARGV[1] { st[$1]=$2; next }
+        FILENAME==ARGV[2] { el[$1]=1;  next }
+        ($1 in el) && st[$1] != $2 { print }
+    ' "$STATE" "$elig" "$all" > "$tosend"
+    n="$(wc -l < "$tosend" | tr -d ' ')"
     if [ "$n" = 0 ]; then
-        echo "nada a enviar (arquivos com menos de $MIN_AGE min de idade não contam)."
-        rm -f "$list"; return 0
+        echo "nada novo a sincronizar (arquivos com menos de $MIN_AGE min não contam)."
+        rm -f "$all" "$elig" "$tosend" "$lista"; return 0
     fi
-    echo "enviando $n arquivo(s) para $HUB_USER@${HUB_HOST}…"
+    cut -f1 "$tosend" > "$lista"
+    echo "sincronizando $n arquivo(s) novo(s)/alterado(s) com ${HUB_HOST}…"
     rc=0
-    rsync -az --partial --timeout=120 --files-from="$list" -e "$(ssh_cmd)" \
-        ./ "$HUB_USER@$HUB_HOST:/" || rc=$?
+    # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
+    # legíveis pelos usuários locais do host, independentemente das permissões aqui.
+    if [ "$AUTH_MODE" = senha ]; then
+        ( cd "$DATA_DIR" && RSYNC_PASSWORD="$PASSWORD" rsync -rltz --chmod=D755,F644 \
+            --partial --timeout=120 --files-from="$lista" ./ "$(rsync_dest)" ) || rc=$?
+    else
+        ( cd "$DATA_DIR" && rsync -rltz --chmod=D755,F644 --partial --timeout=120 \
+            --files-from="$lista" -e "$(ssh_cmd)" ./ "$(rsync_dest)" ) || rc=$?
+    fi
     if [ "$rc" = 0 ]; then
-        while IFS= read -r f; do
-            if [ "$KEEP_COPY" = yes ]; then
-                mkdir -p "$SENT_DIR/$(dirname "$f")"
-                mv -f "$f" "$SENT_DIR/$f"
-            else
-                rm -f "$f"
-            fi
-        done < "$list"
-        echo "$(date -u +%FT%TZ) OK $n arquivo(s) enviados" >> "$LOGF"
-        echo "ok: $n arquivo(s) enviados."
+        # Registra no estado — a pasta local permanece intocada.
+        awk -F'\t' 'NR==FNR { u[$1]=1; next } !($1 in u)' "$tosend" "$STATE" > "$STATE.tmp" || true
+        cat "$tosend" >> "$STATE.tmp"
+        # Poda do estado: só entradas de arquivos que ainda existem localmente.
+        awk -F'\t' 'NR==FNR { ex[$1]=1; next } ($1 in ex)' "$all" "$STATE.tmp" > "$STATE"
+        rm -f "$STATE.tmp"
+        echo "$(date -u +%FT%TZ) OK $n arquivo(s) sincronizados" >> "$LOGF"
+        echo "ok: $n arquivo(s) sincronizados (nada foi movido ou apagado localmente)."
     else
         echo "$(date -u +%FT%TZ) FALHA rc=$rc ($n arquivo(s) pendentes)" >> "$LOGF"
-        echo "falha no envio (rsync rc=$rc) — nada foi movido; será tentado de novo no próximo ciclo." >&2
+        case "$rc" in
+            23) echo "aviso: parte dos arquivos não pôde ser lida (em uso pelo datalogger?)." >&2
+                echo "       nada foi registrado; tudo será tentado de novo no próximo ciclo." >&2 ;;
+            24) echo "aviso: um arquivo sumiu durante a transferência — o próximo ciclo se ajusta sozinho." >&2 ;;
+            *)  echo "falha no envio (rsync rc=$rc) — o estado não mudou; será tentado de novo no próximo ciclo." >&2 ;;
+        esac
     fi
-    rm -f "$list"
+    rm -f "$all" "$elig" "$tosend" "$lista"
     return "$rc"
+}
+
+reset_state() {  # força reenvio completo no próximo send (o servidor não duplica)
+    rm -f "$STATE"
+    echo "ok: estado de envio limpo — o próximo 'send' reenvia tudo."
+    echo "(o servidor não duplica medições: a ingestão é idempotente.)"
 }
 
 # --- Agendamento (cron) ---------------------------------------------------------------
@@ -287,13 +389,20 @@ unschedule() {
 # --- Status ---------------------------------------------------------------------------
 status() {
     load_conf
-    if [ "$KEEP_COPY" = yes ]; then pos="move para .enviados/"; else pos="apaga"; fi
     echo "estação:   $STATION_ID"
-    echo "servidor:  $HUB_USER@$HUB_HOST:$HUB_PORT"
-    echo "chave:     $KEY_FILE"
-    echo "dados:     $DATA_DIR (pós-envio: $pos)"
-    pend="$(find "$DATA_DIR" -type f -not -path '*/.*' -not -name '.*' 2>/dev/null | wc -l | tr -d ' ')"
-    echo "pendentes: $pend arquivo(s)"
+    if [ "$AUTH_MODE" = senha ]; then
+        echo "servidor:  $HUB_HOST:$HUB_PORT (usuário+senha, rsync direto)"
+    else
+        echo "servidor:  $HUB_USER@$HUB_HOST:$HUB_PORT (chave SSH)"
+        echo "chave:     $KEY_FILE"
+    fi
+    echo "dados:     $DATA_DIR (somente leitura: nada é movido/apagado)"
+    all="$(mktemp)"; scan_all "$all"
+    total="$(wc -l < "$all" | tr -d ' ')"
+    [ -f "$STATE" ] || : > "$STATE"
+    pend="$(awk -F'\t' 'FILENAME==ARGV[1] { st[$1]=$2; next } st[$1]!=$2 { n++ } END { print n+0 }' "$STATE" "$all")"
+    rm -f "$all"
+    echo "arquivos:  $total no total · $pend novo(s)/alterado(s) a sincronizar"
     if crontab -l 2>/dev/null | grep -qF "$CRON_TAG"; then
         echo "agenda:    $(crontab -l 2>/dev/null | grep -F "$CRON_TAG" | awk '{print $1}') (cron)"
     else
@@ -314,6 +423,7 @@ menu() {
         echo " 4) Agendar envio periódico"
         echo " 5) Remover agendamento"
         echo " 6) Status"
+        echo " 7) Limpar estado de envio (força reenvio de tudo)"
         echo " 0) Sair"
         printf "opção> "
         read -r op || exit 0
@@ -324,6 +434,7 @@ menu() {
             4) ( schedule ) || true ;;
             5) ( unschedule ) || true ;;
             6) ( status ) || true ;;
+            7) if ask_yn "limpar o estado e reenviar tudo no próximo envio?" n; then reset_state; fi ;;
             0|q|"") exit 0 ;;
             *) echo "opção inválida" ;;
         esac
@@ -337,12 +448,15 @@ carbonara-station — cliente de coleta CARBONARA (Linux)
 uso:
   $(basename "$0") setup        configuração guiada (1ª vez ou reconfigurar)
   $(basename "$0") test         testa a conexão com o servidor (dry-run)
-  $(basename "$0") send         envia agora os arquivos pendentes
+  $(basename "$0") send         sincroniza agora (só o que é novo/alterado)
   $(basename "$0") schedule     agenda o envio periódico (cron)
   $(basename "$0") unschedule   remove o agendamento
   $(basename "$0") status       configuração, pendências e últimos envios
+  $(basename "$0") reset        limpa o estado de envio (força reenvio de tudo)
   $(basename "$0")              menu interativo
 
+a pasta local NUNCA é alterada (nada é movido nem apagado); o controle do que já
+foi enviado fica em $STATE
 configuração por usuário em $CONF
 EOF
 }
@@ -354,6 +468,7 @@ case "${1:-}" in
     schedule)   schedule ;;
     unschedule) unschedule ;;
     status)     status ;;
+    reset)      reset_state ;;
     ""|menu)    menu ;;
     -h|--help|help) usage ;;
     *) usage; exit 1 ;;

@@ -33,6 +33,8 @@ sudo ./rsync-hub install              # instalação GUIADA do host — 1x
 sudo ./rsync-hub add flona01          # autoriza GERANDO a chave aqui: stations/flona01/
                                       #   guarda o par + INSTRUCOES.txt de ativação
 sudo ./rsync-hub add flona01 f.pub    # ou autoriza uma chave já existente
+sudo ./rsync-hub add flona01 --senha  # ou por USUÁRIO+SENHA (rsync daemon:873 — mais
+                                      #   simples no cliente; dados sem criptografia)
      ./rsync-hub list                 # lista estações
      ./rsync-hub monitor              # fica rodando mostrando as conexões
      ./rsync-hub cliente              # instruções p/ configurar uma estação

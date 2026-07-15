@@ -83,11 +83,38 @@ All collection is **one bash script** at repo root, `rsync-hub`, running nativel
   ingestion sweeps it). `add <id> <pubkey>` authorizes an existing key. Also `remove <id>`,
   `list`, and `cliente` (prints client-setup instructions). Run without args it opens an
   interactive menu (the guided "add" accepts ENTER = generate, a path, or a pasted line).
+- **Password mode (second auth path)** — `add <id> --senha [senha]` authorizes a station
+  via the **rsync daemon** (port 873) instead of SSH: user = station id, secrets in
+  `$BASE/rsyncd.secrets` (600, source of truth), `$BASE/rsyncd.conf` fully regenerated
+  from it on every add/remove (one module per station: `auth users = <id>`,
+  `write only = true`, `refuse options = delete* remove-source-files`, chroot, uid/gid
+  `carbonara`). The daemon is a systemd unit `carbonara-rsyncd` written by
+  `ensure_rsyncd()` (fallback: bare `rsync --daemon`); rsyncd re-reads config+secrets on
+  every connection, so no reload is needed after add/remove. Port 873 is a **separate
+  requirement from SSH**: `add --senha` tries to open it on the host firewall
+  (`open_firewall_port`: ufw/firewalld), verifies the daemon is listening
+  (`rsyncd_listening`: ss/netstat) and prints a reachability checklist — but an external
+  firewall on the path still needs manual liberation; if 873 cannot be opened
+  end-to-end, key mode (port 22) is the only option. Tradeoff (documented everywhere
+  user-facing): rsyncd auth is challenge-response (password never travels in clear) but
+  **data is unencrypted** — key mode stays the recommendation for public networks.
+  `remove <id>` revokes both modes.
 - **Monitor** — `rsync-hub monitor` (stays running, live table + recent connections),
   `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`.
 - **Forced command** — `rsync-hub serve <id>` is what each station's `authorized_keys` line
   invokes (`command="…/rsync-hub serve flona01",restrict`). It logs CONNECT/DISCONNECT/REJECT
   to `log/connections.log`, then runs `rrsync -wo /srv/carbonara/incoming/<id>`.
+
+**Host read policy (deliberate):** local users of the hub machine may READ everything —
+data under `incoming/`/`archive/` and the per-station credentials in
+`$BASE/stations/<id>/` (private keys and password INSTRUCOES are 644, dirs 755) — so
+admins can copy keys/instructions for operators **without sudo**. Write isolation
+applies to *stations* (forced command + rrsync / write-only rsyncd modules), not to
+local host users; the host is trusted. Two exceptions that MUST stay 600:
+`$BASE/.ssh/authorized_keys` (sshd) and `$BASE/rsyncd.secrets` (rsyncd strict modes
+refuses a world-readable secrets file — each station's password is instead readable via
+its INSTRUCOES.txt). Clients upload with `-rltz --chmod=D755,F644` (not `-a`) so
+arriving files are world-readable regardless of source permissions.
 
 **Model & invariants** (don't weaken): a **single service account** (`carbonara`, locked
 password, keys in `$BASE/.ssh/authorized_keys`) receives all pushes — there is *no* per-station
@@ -118,27 +145,50 @@ and extracts to `C:\cwrsync` (`Find-Rsync` looks there first, then PATH). Creati
 Administrator for that first run only. cwRsync recipe honored in `Get-RsyncPlan`:
 prepend `bin\` to PATH (cygwin DLLs + bundled ssh), set `HOME` (known_hosts), and pass
 all paths as `/cygdrive/...` (no cygpath.exe in the free zip — manual conversion).
-`Invoke-NativeQuiet` (stdin closed + timeout/kill) is the hang-proof runner for probes.
+`Invoke-NativeQuiet` (stdin closed + timeout/kill) is the hang-proof runner for probes —
+and also for `schtasks /Create`: its hand-built argument line escapes the inner quotes of
+`/TR` as `\"`, required when the script path has spaces (PowerShell's `&` operator breaks
+there). Default Windows data folder offered by setup: `C:\Campbellsci\LoggerNet` when it
+exists (Campbell Scientific LoggerNet output, the project's standard datalogger software).
 
-Setup wizard order (keep both clients in sync): station id → hub IP/port (default 22) →
-local path of the key received from the hub (falls back to generating one locally and
-printing the pubkey if the path doesn't exist) → connection probe (dry-run from an empty
-temp dir) → data folder → recycle interval (`SEND_EVERY`/`SendEveryMin`), offering to
-install the schedule immediately.
+Setup wizard order (keep both clients in sync): station id → hub IP → auth mode
+(`AUTH_MODE`/`AuthMode`: `chave` = rsync-over-ssh, port 22, local path of the key
+received from the hub, falling back to generating one locally and printing the pubkey;
+`senha` = rsync daemon, port 873, password from the hub's INSTRUCOES.txt, user = station
+id, sent via the `RSYNC_PASSWORD` env var — never on the command line — against
+`rsync://<id>@host:port/<id>/`) → connection probe (dry-run from an empty temp dir) →
+data folder → recycle interval (`SEND_EVERY`/`SendEveryMin`), offering to install the
+schedule immediately.
 
 **Encoding invariant (Windows files):** `carbonara-station.ps1` MUST be saved as **UTF-8
 with BOM** — Windows PowerShell 5.1 reads BOM-less files as ANSI, and the pt-BR em dash
 (`—`, UTF-8 `E2 80 94`) mojibakes into a CP-1252 smart quote that terminates strings and
 breaks the whole parse. A full-file rewrite drops the BOM; restore it with
 `printf '\xEF\xBB\xBF' | cat - file > tmp && mv tmp file` and check via
-`head -c 3 file | xxd` (`efbbbf`). `carbonara-station.cmd` must stay pure ASCII. Both expose the same subcommands:
-`setup` (wizard: generates the SSH key, prints the pubkey to authorize on the hub), `test`
-(rsync dry-run), `send`, `schedule`/`unschedule`, `status`, and an interactive menu when
-run without args. Send semantics (keep in sync across both): only files older than the
-configured min age, dotfiles/dot-dirs skipped (matches the hub's ingestion rule); on rsync
-rc=0 files are moved to `.enviados/` inside the data dir (or deleted if so configured) so
-nothing is re-sent; on failure nothing moves. Config lives per user
+`head -c 3 file | xxd` (`efbbbf`). `carbonara-station.cmd` must stay pure ASCII.
+
+Both clients expose the same subcommands: `setup` (guided wizard), `test` (rsync
+dry-run), `send`, `schedule`/`unschedule`, `status`, `reset`, and an interactive menu
+when run without args. Send semantics (keep in sync across both — this is a hard product
+requirement): **the local data folder is NEVER modified** — no moves, no deletes; the
+client is a one-way synchronizer. What was already sent is tracked in a local state file
+(`sent.state`, one `relpath<TAB>size:mtime` line per file, next to the config); each
+cycle sends only new-or-changed files (growing datalogger `.dat`s re-send whole — fine,
+hub ingestion is idempotent), and on rsync rc=0 the state is updated and pruned to files
+that still exist locally. `reset` wipes the state to force a full re-send. Only files
+older than the configured min age are eligible; dotfiles/dot-dirs are skipped (matches
+the hub's ingestion rule); on failure the state is untouched. Config lives per user
 (`~/.config/carbonara-station/config` / `%LOCALAPPDATA%\carbonara-station\config.json`).
+
+Concurrent-append safety (why reading live datalogger files is fine): clients only READ
+sources — a reader never blocks the datalogger's writes; if the writer holds an
+exclusive lock, it is the *send* that fails (rc 23 → distinct warning, state untouched,
+retried next cycle), never the collection. A file appended mid-transfer yields a torn
+snapshot that self-heals: the state stores the *pre-transfer* signature, so the changed
+file re-sends whole next cycle and idempotent ingestion absorbs it. Server side can
+never see half-uploads (rsync hidden temp + atomic rename, ingestion skips dotfiles +
+settle_seconds). Don't "fix" this with source-file locking — it would invert the
+guarantee and risk the collection.
 
 ## Ingestion service (`ingestion/`)
 

@@ -12,13 +12,16 @@ de instalado, todo o resto (setup/test/send/schedule) funciona sem administrador
 
 Papéis:
   1) Assistente guiado — `setup` instala/localiza o rsync e pergunta, nesta ordem:
-     id da estação → IP do host (porta opcional, padrão 22) → caminho local da CHAVE
-     recebida do servidor (gerada lá pelo `rsync-hub add <id>`; se não existir,
-     oferece gerar uma nova aqui) → TESTE simples de conexão → pasta local a enviar
-     (rsync) → tempo de reciclagem (minutos) + ativação do envio automático.
-  2) Envio — `send` manda os arquivos prontos (idade mínima configurável) e, após o
-     sucesso, move-os para .enviados\ (ou apaga, conforme escolhido) — nada é
-     reenviado, e o rsync --partial retoma transferências em link instável.
+     id da estação → IP do host → como autenticar: CHAVE SSH (porta 22; arquivo
+     recebido do servidor, gerado lá pelo `rsync-hub add <id>`) OU USUÁRIO+SENHA
+     (porta 873, rsync direto; criado lá pelo `rsync-hub add <id> --senha` — mais
+     simples, porém dados sem criptografia) → TESTE simples de conexão → pasta local
+     a enviar (rsync) → tempo de reciclagem (minutos) + ativação do envio automático.
+  2) Envio — `send` SINCRONIZA a pasta local com o servidor: NUNCA move nem apaga
+     nada da pasta local. O controle do que já foi enviado é um estado local
+     (tamanho+mtime por arquivo, em %LOCALAPPDATA%\carbonara-station\sent.state):
+     só vai o que é novo ou mudou desde o último envio. Idade mínima configurável
+     evita arquivo ainda sendo escrito; o rsync --partial retoma em link instável.
   3) Agendamento — `schedule` cria a tarefa no Agendador de Tarefas do Windows.
 
 Uso (PowerShell):
@@ -38,7 +41,7 @@ Configuração gravada em %LOCALAPPDATA%\carbonara-station\config.json.
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('menu', 'setup', 'test', 'send', 'schedule', 'unschedule', 'status', 'help')]
+    [ValidateSet('menu', 'setup', 'test', 'send', 'schedule', 'unschedule', 'status', 'reset', 'help')]
     [string]$Command = 'menu'
 )
 
@@ -46,6 +49,7 @@ $ErrorActionPreference = 'Stop'
 $ConfDir    = Join-Path $env:LOCALAPPDATA 'carbonara-station'
 $ConfFile   = Join-Path $ConfDir 'config.json'
 $LogFile    = Join-Path $ConfDir 'envios.log'
+$StateFile  = Join-Path $ConfDir 'sent.state'   # o que já foi enviado: caminho<TAB>tamanho:mtime
 $TaskName   = 'CarbonaraStationSend'
 $CwRsyncDir = 'C:\cwrsync'
 $CwRsyncUrl = 'https://itefix.net/sites/default/files/2026-06/cwrsync_6.4.8_x64_free.zip'
@@ -203,21 +207,29 @@ function ConvertTo-UnixPath([string]$WinPath) {
     return ($WinPath -replace '\\', '/')
 }
 
-# Monta a linha de comando do rsync (executável + argumentos).
+# Monta a linha de comando do rsync (executável + argumentos), conforme o modo de
+# autenticação: chave SSH (rsync-over-ssh) ou usuário+senha (rsync daemon, rsync://).
 # $SourceDir permite trocar a origem (ex.: pasta vazia no teste de conexão).
 function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [string]$SourceDir = '') {
     if (-not $SourceDir) { $SourceDir = $Cfg.DataDir }
-    $dest = '{0}@{1}:/' -f $Cfg.HubUser, $Cfg.HubHost
     $rsyncDir = Split-Path $Cfg.Rsync
     # Receita do próprio cwRsync: bin\ no PATH (DLLs cygwin) e HOME definido
     # (o ssh cygwin usa HOME para gravar o known_hosts).
     if ($env:PATH -notlike "$rsyncDir*") { $env:PATH = "$rsyncDir;$env:PATH" }
     if (-not $env:HOME) { $env:HOME = $env:USERPROFILE }
-    $keyArg = ConvertTo-UnixPath $Cfg.KeyPath
-    $ssh  = "ssh -i $keyArg -p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
     $argv = @() + $ExtraArgs
     if ($FilesFromWin) { $argv += "--files-from=$(ConvertTo-UnixPath $FilesFromWin)" }
-    $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir)/", $dest)
+    if ($Cfg.AuthMode -eq 'senha') {
+        # usuário = id da estação; a senha vai pela variável RSYNC_PASSWORD (os
+        # chamadores definem/limpam) — nunca pela linha de comando.
+        $dest = 'rsync://{0}@{1}:{2}/{0}/' -f $Cfg.StationId, $Cfg.HubHost, $Cfg.HubPort
+        $argv += @("$(ConvertTo-UnixPath $SourceDir)/", $dest)
+    } else {
+        $dest = '{0}@{1}:/' -f $Cfg.HubUser, $Cfg.HubHost
+        $keyArg = ConvertTo-UnixPath $Cfg.KeyPath
+        $ssh  = "ssh -i $keyArg -p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
+        $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir)/", $dest)
+    }
     return @{ Exe = $Cfg.Rsync; Args = $argv }
 }
 
@@ -226,32 +238,58 @@ function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [strin
 function Invoke-Probe($Cfg) {
     $tmp = Join-Path $env:TEMP ("carbonara-probe-" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    if ($Cfg.AuthMode -eq 'senha') { $env:RSYNC_PASSWORD = $Cfg.Password }
     try {
         $plan = Get-RsyncPlan $Cfg @('-an', '--timeout=20') '' $tmp
         $r = Invoke-NativeQuiet $plan.Exe $plan.Args 90
         if ($r.TimedOut) { Write-Host 'falhou: o teste não respondeu a tempo (rede?).'; return $false }
         if ($r.Code -eq 0) {
-            Write-Host 'ok: o servidor respondeu e aceitou a chave.'
+            Write-Host 'ok: o servidor respondeu e aceitou a credencial.'
             return $true
         }
         Write-Host 'falhou:'
         $r.Out | ForEach-Object { Write-Host "  $_" }
         return $false
     } finally {
+        Remove-Item Env:RSYNC_PASSWORD -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $tmp -Force -Recurse -ErrorAction SilentlyContinue
     }
 }
 
-# Arquivos elegíveis para envio: fora de pastas ocultas (inclui .enviados) e mais
-# velhos que MinAgeMin — mesmo critério de dotfiles da ingestão no servidor.
-function Get-PendingFiles($Cfg, [switch]$IgnoreAge) {
+# Inventário da pasta local (fora de pastas/arquivos ocultos — mesmo critério de
+# dotfiles da ingestão no servidor): caminho relativo, assinatura (tamanho:mtime,
+# detecta arquivo novo/alterado) e se já "assentou" (mais velho que MinAgeMin).
+function Get-LocalFiles($Cfg) {
     $dataDir = (Get-Item -LiteralPath $Cfg.DataDir).FullName.TrimEnd('\')
     $cut = (Get-Date).AddMinutes(-[int]$Cfg.MinAgeMin)
     Get-ChildItem -LiteralPath $dataDir -Recurse -File | Where-Object {
-        ($IgnoreAge -or $_.LastWriteTime -le $cut) -and
         $_.Name -notlike '.*' -and
         $_.FullName.Substring($dataDir.Length) -notmatch '[\\/]\.'
+    } | ForEach-Object {
+        [pscustomobject]@{
+            Rel     = $_.FullName.Substring($dataDir.Length + 1) -replace '\\', '/'
+            Sig     = '{0}:{1}' -f $_.Length, $_.LastWriteTimeUtc.Ticks
+            Settled = ($_.LastWriteTime -le $cut)
+        }
     }
+}
+
+# Estado local do que já foi enviado (a pasta de dados NUNCA é alterada).
+function Get-SentState {
+    $h = @{}
+    if (Test-Path $StateFile) {
+        foreach ($ln in Get-Content $StateFile) {
+            $i = $ln.LastIndexOf("`t")
+            if ($i -gt 0) { $h[$ln.Substring(0, $i)] = $ln.Substring($i + 1) }
+        }
+    }
+    return $h
+}
+
+function Save-SentState($State) {
+    New-Item -ItemType Directory -Force -Path $ConfDir | Out-Null
+    $lines = $State.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)`t$($_.Value)" }
+    [IO.File]::WriteAllLines($StateFile, [string[]]@($lines), (New-Object System.Text.UTF8Encoding($false)))
 }
 
 # --- Configuração guiada -----------------------------------------------------------
@@ -287,12 +325,39 @@ function Invoke-Setup {
         $hubHost = Ask 'IP (ou hostname) do servidor central' $(if ($old) { $old.HubHost })
         if (-not $hubHost) { Write-Host '  informe um endereço.' }
     } until ($hubHost)
-    $hubPort = Ask 'Porta SSH do servidor' $(if ($old -and $old.HubPort) { $old.HubPort } else { '22' })
-    $hubUser = Ask 'Conta de serviço no servidor' $(if ($old -and $old.HubUser) { $old.HubUser } else { 'carbonara' })
+    # 3. Autenticação: chave SSH ou usuário+senha
+    Write-Host 'Como esta estação se autentica no servidor?'
+    Write-Host '  1) chave SSH (recomendado — tráfego criptografado; porta 22)'
+    Write-Host '  2) usuário e senha (mais simples — rsync direto na porta 873; dados sem criptografia)'
+    $dModo = if ($old -and $old.AuthMode -eq 'senha') { '2' } else { '1' }
+    $modo = Ask 'modo' $dModo
+    $authMode = if ($modo -eq '2') { 'senha' } else { 'chave' }
 
-    # 3. Chave de conexão (recebida do servidor; se não existir, oferece gerar aqui)
     $newKey = $false
     $keyPath = $null
+    $hubUser = 'carbonara'
+    $password = $null
+    if ($authMode -eq 'senha') {
+        $hubPort = Ask 'Porta do rsync no servidor' $(if ($old -and $old.AuthMode -eq 'senha' -and $old.HubPort) { $old.HubPort } else { '873' })
+        Write-Host ("O usuário é o próprio id da estação ({0}); a senha está no INSTRUCOES.txt" -f $id)
+        Write-Host "entregue pelo administrador (gerada por 'rsync-hub add $id --senha')."
+        do {
+            $password = Ask 'Senha desta estação' $(if ($old -and $old.Password) { $old.Password })
+            if (-not $password) { Write-Host '  informe a senha.' }
+        } until ($password)
+    } else {
+    $hubPort = Ask 'Porta SSH do servidor' $(if ($old -and $old.AuthMode -ne 'senha' -and $old.HubPort) { $old.HubPort } else { '22' })
+    # A conta de serviço é ÚNICA no servidor (recebe todas as estações) — quase sempre
+    # 'carbonara'. Usuários tendem a digitar o id da estação aqui; confirme se mudar.
+    $hubUser = Ask "Conta de serviço no servidor — NÃO é o id da estação; aperte Enter" $(if ($old -and $old.HubUser) { $old.HubUser } else { 'carbonara' })
+    if ($hubUser -ne 'carbonara') {
+        if (-not (Ask-YesNo ("  atenção: normalmente a conta é 'carbonara' — usar '{0}' mesmo?" -f $hubUser) $false)) {
+            $hubUser = 'carbonara'
+            Write-Host "  ok, usando 'carbonara'."
+        }
+    }
+
+    # Chave de conexão (recebida do servidor; se não existir, oferece gerar aqui)
     while (-not $keyPath) {
         $keyWin = Ask ("Caminho local da CHAVE desta estação (arquivo {0}_key recebido do servidor)" -f $id)
         if (-not $keyWin) { Write-Host '  informe um caminho.'; continue }
@@ -326,17 +391,27 @@ function Invoke-Setup {
         }
     }
 
-    # 4. Teste simples de conexão (o host responde? a chave é aceita?)
+    }
+
+    # 4. Teste simples de conexão (o host responde? a credencial é aceita?)
     Write-Host ''
     $probeCfg = [pscustomobject]@{
-        Rsync = $rsyncPath; KeyPath = $keyPath
+        Rsync = $rsyncPath; KeyPath = $keyPath; AuthMode = $authMode
+        StationId = $id; Password = $password
         HubUser = $hubUser; HubHost = $hubHost; HubPort = $hubPort; DataDir = $env:TEMP
     }
     if ($newKey) {
         Write-Host '(chave nova, ainda não autorizada no servidor — o teste fica para depois.)'
     } elseif (Ask-YesNo 'Testar a conexão com o servidor agora?' $true) {
         if (-not (Invoke-Probe $probeCfg)) {
-            Write-Host '  dicas: a estação foi autorizada no servidor? IP/porta corretos? há rede?'
+            if ($authMode -eq 'senha') {
+                Write-Host '  dicas: senha correta? a estação foi criada no servidor com'
+                Write-Host ("         'rsync-hub add {0} --senha'? porta {1} liberada no firewall?" -f $id, $hubPort)
+            } else {
+                Write-Host "  dicas: 'Permission denied' → a conta de serviço está certa? (padrão: carbonara,"
+                Write-Host '         não é o id da estação) e a chave é a gerada no servidor para este id?'
+                Write-Host '         Outras causas: estação não autorizada, IP/porta errados, sem rede.'
+            }
             if (-not (Ask-YesNo '  Continuar a configuração mesmo assim?' $true)) {
                 Write-Host 'configuração interrompida.'
                 return
@@ -346,8 +421,12 @@ function Invoke-Setup {
     Write-Host ''
 
     # 5. Pasta local que será enviada (rsync)
+    # Default: a pasta de saída do LoggerNet (dataloggers Campbell Scientific, o padrão
+    # das estações do projeto) quando existir; senão, uma pasta genérica do usuário.
     do {
-        $default = if ($old) { $old.DataDir } else { Join-Path $env:USERPROFILE 'carbonara-dados' }
+        $default = if ($old) { $old.DataDir }
+                   elseif (Test-Path -LiteralPath 'C:\Campbellsci\LoggerNet') { 'C:\Campbellsci\LoggerNet' }
+                   else { Join-Path $env:USERPROFILE 'carbonara-dados' }
         $dataDir = Ask 'Pasta LOCAL que deseja enviar por rsync' $default
         if (-not (Test-Path -LiteralPath $dataDir)) {
             if (Ask-YesNo "  a pasta não existe — criar $dataDir?") {
@@ -358,7 +437,8 @@ function Invoke-Setup {
     do {
         $minAge = Ask 'Idade mínima (minutos) para um arquivo ser considerado pronto' $(if ($old -and $old.MinAgeMin) { $old.MinAgeMin } else { '1' })
     } until ($minAge -match '^\d+$')
-    $keep = Ask-YesNo 'Manter cópia local após o envio (move para .enviados)?' $true
+    Write-Host '  (a pasta local NUNCA é alterada: nada é movido nem apagado — o envio só'
+    Write-Host '   sincroniza com o servidor o que for novo ou mudar.)'
 
     # 6. Tempo de reciclagem (intervalo do envio automático)
     do {
@@ -367,7 +447,8 @@ function Invoke-Setup {
 
     Save-Config ([pscustomobject]@{
         StationId = $id;      HubHost = $hubHost; HubPort = $hubPort; HubUser = $hubUser
-        DataDir   = $dataDir; MinAgeMin = $minAge; KeepCopy = $keep;  SendEveryMin = $every
+        AuthMode  = $authMode; Password = $password
+        DataDir   = $dataDir; MinAgeMin = $minAge; SendEveryMin = $every
         Rsync     = $rsyncPath; KeyPath = $keyPath
     })
     Write-Host ''
@@ -401,50 +482,66 @@ function Invoke-Test {
     Write-Host ("testando conexão com {0}@{1}:{2} (dry-run, nada é enviado)…" -f $cfg.HubUser, $cfg.HubHost, $cfg.HubPort)
     if (-not (Invoke-Probe $cfg)) {
         Write-Host 'verifique:'
-        Write-Host ("  - a estação foi autorizada no servidor? (lá: sudo rsync-hub add {0} …)" -f $cfg.StationId)
-        Write-Host ("  - a chave é a recebida do servidor? ({0})" -f $cfg.KeyPath)
+        if ($cfg.AuthMode -eq 'senha') {
+            Write-Host ("  - a senha confere com a do servidor? (lá: sudo rsync-hub add {0} --senha)" -f $cfg.StationId)
+            Write-Host ("  - porta {0} liberada no firewall? o serviço carbonara-rsyncd está no ar?" -f $cfg.HubPort)
+        } else {
+            Write-Host ("  - 'Permission denied' → a conta de serviço está certa? (a sua: '{0}'; o padrão é 'carbonara' — não é o id da estação)" -f $cfg.HubUser)
+            Write-Host ("  - a estação foi autorizada no servidor? (lá: sudo rsync-hub add {0} …)" -f $cfg.StationId)
+            Write-Host ("  - a chave é a recebida do servidor? ({0})" -f $cfg.KeyPath)
+        }
         Write-Host ("  - IP ({0}) e porta ({1}) corretos? há rede até o servidor?" -f $cfg.HubHost, $cfg.HubPort)
     }
 }
 
 # --- Envio -----------------------------------------------------------------------------
+# Sincronização pura: NADA é movido ou apagado da pasta local. O que já foi enviado é
+# controlado pelo estado local ($StateFile, assinatura tamanho:mtime por arquivo) — só
+# vai o que é novo ou mudou; arquivos que crescem (ex.: .dat do LoggerNet) são
+# reenviados por inteiro e o servidor não duplica medições (ingestão idempotente).
 function Invoke-Send {
     $cfg = Get-Config
     $mtx = New-Object System.Threading.Mutex($false, 'CarbonaraStationSend')
     if (-not $mtx.WaitOne(0)) { Write-Host 'outro envio já está em andamento — saindo.'; return }
     try {
-        $dataDir = (Get-Item -LiteralPath $cfg.DataDir).FullName.TrimEnd('\')
-        $files = @(Get-PendingFiles $cfg)
-        if ($files.Count -eq 0) {
-            Write-Host ("nada a enviar (arquivos com menos de {0} min de idade não contam)." -f $cfg.MinAgeMin)
+        $state  = Get-SentState
+        $files  = @(Get-LocalFiles $cfg)
+        $tosend = @($files | Where-Object { $_.Settled -and $state[$_.Rel] -ne $_.Sig })
+        if ($tosend.Count -eq 0) {
+            Write-Host ("nada novo a sincronizar (arquivos com menos de {0} min não contam)." -f $cfg.MinAgeMin)
             return
         }
-        $rel = $files | ForEach-Object { $_.FullName.Substring($dataDir.Length + 1) -replace '\\', '/' }
         New-Item -ItemType Directory -Force -Path $ConfDir | Out-Null
         $list = Join-Path $ConfDir 'files-from.txt'
         # UTF-8 SEM BOM — um BOM corromperia o primeiro caminho da lista no rsync.
-        [IO.File]::WriteAllLines($list, [string[]]$rel, (New-Object System.Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllLines($list, [string[]]@($tosend | ForEach-Object { $_.Rel }), (New-Object System.Text.UTF8Encoding($false)))
 
-        Write-Host ("enviando {0} arquivo(s) para {1}@{2}…" -f $files.Count, $cfg.HubUser, $cfg.HubHost)
-        $plan = Get-RsyncPlan $cfg @('-az', '--partial', '--timeout=120') $list
-        $r = Invoke-Native $plan.Exe $plan.Args
+        Write-Host ("sincronizando {0} arquivo(s) novo(s)/alterado(s) com {1}…" -f $tosend.Count, $cfg.HubHost)
+        # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
+        # legíveis pelos usuários locais do host, independentemente das permissões aqui.
+        $plan = Get-RsyncPlan $cfg @('-rltz', '--chmod=D755,F644', '--partial', '--timeout=120') $list
+        if ($cfg.AuthMode -eq 'senha') { $env:RSYNC_PASSWORD = $cfg.Password }
+        try { $r = Invoke-Native $plan.Exe $plan.Args }
+        finally { Remove-Item Env:RSYNC_PASSWORD -ErrorAction SilentlyContinue }
         $r.Out | ForEach-Object { Write-Host "  $_" }
         if ($r.Code -eq 0) {
-            foreach ($p in $rel) {
-                $srcWin = Join-Path $dataDir ($p -replace '/', '\')
-                if ($cfg.KeepCopy) {
-                    $dst = Join-Path (Join-Path $dataDir '.enviados') ($p -replace '/', '\')
-                    New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
-                    Move-Item -LiteralPath $srcWin -Destination $dst -Force
-                } else {
-                    Remove-Item -LiteralPath $srcWin -Force
-                }
-            }
-            Write-EnvioLog ("OK {0} arquivo(s) enviados" -f $files.Count)
-            Write-Host ("ok: {0} arquivo(s) enviados." -f $files.Count)
+            # Registra no estado — a pasta local permanece intocada.
+            foreach ($f in $tosend) { $state[$f.Rel] = $f.Sig }
+            # Poda do estado: só entradas de arquivos que ainda existem localmente.
+            $existing = @{}
+            foreach ($f in $files) { $existing[$f.Rel] = $true }
+            foreach ($k in @($state.Keys)) { if (-not $existing[$k]) { $state.Remove($k) } }
+            Save-SentState $state
+            Write-EnvioLog ("OK {0} arquivo(s) sincronizados" -f $tosend.Count)
+            Write-Host ("ok: {0} arquivo(s) sincronizados (nada foi movido ou apagado localmente)." -f $tosend.Count)
         } else {
-            Write-EnvioLog ("FALHA rc={0} ({1} arquivo(s) pendentes)" -f $r.Code, $files.Count)
-            Write-Host ("falha no envio (rsync rc={0}) — nada foi movido; será tentado de novo no próximo ciclo." -f $r.Code)
+            Write-EnvioLog ("FALHA rc={0} ({1} arquivo(s) pendentes)" -f $r.Code, $tosend.Count)
+            switch ($r.Code) {
+                23 { Write-Host 'aviso: parte dos arquivos não pôde ser lida (em uso pelo datalogger?).'
+                     Write-Host '       nada foi registrado; tudo será tentado de novo no próximo ciclo.' }
+                24 { Write-Host 'aviso: um arquivo sumiu durante a transferência — o próximo ciclo se ajusta sozinho.' }
+                default { Write-Host ("falha no envio (rsync rc={0}) — o estado não mudou; será tentado de novo no próximo ciclo." -f $r.Code) }
+            }
         }
     } finally {
         $mtx.ReleaseMutex() | Out-Null
@@ -452,10 +549,19 @@ function Invoke-Send {
     }
 }
 
+function Invoke-Reset {  # força reenvio completo no próximo send (o servidor não duplica)
+    Remove-Item -LiteralPath $StateFile -Force -ErrorAction SilentlyContinue
+    Write-Host "ok: estado de envio limpo — o próximo 'send' reenvia tudo."
+    Write-Host '(o servidor não duplica medições: a ingestão é idempotente.)'
+}
+
 # --- Agendamento (Agendador de Tarefas) --------------------------------------------------
 function Install-Schedule([string]$Every) {  # instala/substitui a tarefa de envio periódico
     $tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" send"
-    $r = Invoke-Native 'schtasks.exe' @('/Create', '/F', '/SC', 'MINUTE', '/MO', $Every, '/TN', $TaskName, '/TR', $tr)
+    # Invoke-NativeQuiet monta a linha de comando escapando as aspas internas do /TR
+    # como \" — obrigatório quando o caminho do script tem espaços (ex.: C:\Users\Km67
+    # Eddy System\...); com o operador & do PowerShell o schtasks quebraria no espaço.
+    $r = Invoke-NativeQuiet 'schtasks.exe' @('/Create', '/F', '/SC', 'MINUTE', '/MO', $Every, '/TN', $TaskName, '/TR', $tr) 30
     if ($r.Code -eq 0) {
         Write-Host ("ok: envio automático ativo a cada {0} min (Agendador de Tarefas, tarefa '{1}')." -f $Every, $TaskName)
         Write-Host 'para remover: .\carbonara-station.ps1 unschedule'
@@ -481,14 +587,19 @@ function Invoke-Unschedule {
 # --- Status ------------------------------------------------------------------------------
 function Invoke-Status {
     $cfg = Get-Config
-    $pos = if ($cfg.KeepCopy) { 'move para .enviados\' } else { 'apaga' }
     Write-Host ("estação:   {0}" -f $cfg.StationId)
-    Write-Host ("servidor:  {0}@{1}:{2}" -f $cfg.HubUser, $cfg.HubHost, $cfg.HubPort)
+    if ($cfg.AuthMode -eq 'senha') {
+        Write-Host ("servidor:  {0}:{1} (usuário+senha, rsync direto)" -f $cfg.HubHost, $cfg.HubPort)
+    } else {
+        Write-Host ("servidor:  {0}@{1}:{2} (chave SSH)" -f $cfg.HubUser, $cfg.HubHost, $cfg.HubPort)
+        Write-Host ("chave:     {0}" -f $cfg.KeyPath)
+    }
     Write-Host ("rsync:     {0}" -f $cfg.Rsync)
-    Write-Host ("chave:     {0}" -f $cfg.KeyPath)
-    Write-Host ("dados:     {0} (pós-envio: {1})" -f $cfg.DataDir, $pos)
-    $pend = @(Get-PendingFiles $cfg -IgnoreAge).Count
-    Write-Host ("pendentes: {0} arquivo(s)" -f $pend)
+    Write-Host ("dados:     {0} (somente leitura: nada é movido/apagado)" -f $cfg.DataDir)
+    $state = Get-SentState
+    $files = @(Get-LocalFiles $cfg)
+    $pend  = @($files | Where-Object { $state[$_.Rel] -ne $_.Sig }).Count
+    Write-Host ("arquivos:  {0} no total · {1} novo(s)/alterado(s) a sincronizar" -f $files.Count, $pend)
     $r = Invoke-Native 'schtasks.exe' @('/Query', '/TN', $TaskName)
     if ($r.Code -eq 0) {
         Write-Host ("agenda:    tarefa '{0}' ativa (Agendador de Tarefas)" -f $TaskName)
@@ -514,6 +625,7 @@ function Show-Menu {
         Write-Host ' 4) Agendar envio periódico'
         Write-Host ' 5) Remover agendamento'
         Write-Host ' 6) Status'
+        Write-Host ' 7) Limpar estado de envio (força reenvio de tudo)'
         Write-Host ' 0) Sair'
         $op = Read-Host 'opção'
         try {
@@ -524,6 +636,7 @@ function Show-Menu {
                 '4' { Invoke-Schedule }
                 '5' { Invoke-Unschedule }
                 '6' { Invoke-Status }
+                '7' { if (Ask-YesNo 'limpar o estado e reenviar tudo no próximo envio?' $false) { Invoke-Reset } }
                 '0' { return }
                 ''  { return }
                 default { Write-Host 'opção inválida' }
@@ -541,12 +654,15 @@ carbonara-station — cliente de coleta CARBONARA (Windows)
 uso (PowerShell):
   .\carbonara-station.ps1 setup         configuração guiada (1ª vez ou reconfigurar)
   .\carbonara-station.ps1 test          testa a conexão com o servidor (dry-run)
-  .\carbonara-station.ps1 send          envia agora os arquivos pendentes
+  .\carbonara-station.ps1 send          sincroniza agora (só o que é novo/alterado)
   .\carbonara-station.ps1 schedule      agenda o envio periódico
   .\carbonara-station.ps1 unschedule    remove o agendamento
   .\carbonara-station.ps1 status        configuração, pendências e últimos envios
+  .\carbonara-station.ps1 reset         limpa o estado de envio (força reenvio de tudo)
   .\carbonara-station.ps1               menu interativo
 
+a pasta local NUNCA é alterada (nada é movido nem apagado); o controle do que já
+foi enviado fica em $StateFile
 transporte: cwRsync (instalado automaticamente pelo setup em $CwRsyncDir;
 a primeira instalação pede PowerShell como administrador).
 configuração em $ConfFile
@@ -562,6 +678,7 @@ try {
         'schedule'   { Invoke-Schedule }
         'unschedule' { Invoke-Unschedule }
         'status'     { Invoke-Status }
+        'reset'      { Invoke-Reset }
         'menu'       { Show-Menu }
         'help'       { Show-Help }
     }
