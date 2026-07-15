@@ -90,10 +90,14 @@ modo write-only (não baixa nem alcança as outras). Para revogar: `sudo rsync-h
 ### A3. Acompanhar as conexões
 
 ```bash
-rsync-hub monitor      # tabela ao vivo (pendentes/última atividade) + últimas conexões; Ctrl-C sai
+rsync-hub monitor      # tabela ao vivo com status colorido por estação + últimas conexões; Ctrl-C sai
 rsync-hub status       # uma leitura só
 rsync-hub              # menu interativo com todas as opções acima
 ```
+
+Status de cada estação (bolinha colorida): ● **roxo** = *Recebendo dados* (sessão aberta
+agora ou arquivos chegando); ● **verde** = *Online* (atividade na última hora — ajuste
+com `RSYNC_HUB_STALE`); ● **vermelho** = *Offline* (sem atividade além da janela).
 
 ---
 

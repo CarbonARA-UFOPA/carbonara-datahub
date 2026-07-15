@@ -623,16 +623,24 @@ EOF
 }
 
 # --- Papel 3: status / monitor -----------------------------------------------------
+# Estados (bolinha colorida por estação):
+#   ● roxo    "Recebendo dados" — sessão SSH aberta agora OU arquivos chegando (<60s)
+#   ● verde   "Online"          — atividade dentro da janela RSYNC_HUB_STALE (padrão 1h)
+#   ● vermelho"Offline"         — sem atividade além da janela (ou nunca conectou)
 print_status() {
     now="$(date +%s)"
-    printf '%-16s %-22s %9s  %s\n' "ESTAÇÃO" "ÚLTIMA ATIVIDADE(UTC)" "PENDENTES" "ESTADO"
+    if [ -t 1 ]; then
+        C_ON=$'\033[32m'; C_OFF=$'\033[31m'; C_RX=$'\033[35m'; C_0=$'\033[0m'
+    else
+        C_ON=""; C_OFF=""; C_RX=""; C_0=""
+    fi
+    printf '  %-16s %-18s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMA ATIVIDADE (UTC)"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
     found=0
     for d in "$INCOMING"/*/; do
         [ -d "$d" ] || continue
         found=1
         id="$(basename "$d")"
-        pend="$(find "$d" -type f ! -name '.*' -not -path '*/.*' 2>/dev/null | wc -l | tr -d ' ')"
         lastfile="$(find "$d" -type f ! -name '.*' -not -path '*/.*' -printf '%T@\n' 2>/dev/null | sort -nr | head -1)"
         lastfile="${lastfile%.*}"
         lastconn="$(grep " CONNECT $id " "$LOG" 2>/dev/null | tail -1 | awk '{print $1}')"
@@ -641,18 +649,23 @@ print_status() {
         act="0"
         [ -n "$lastfile" ] && [ "$lastfile" -gt "$act" ] 2>/dev/null && act="$lastfile"
         [ -n "$lastconn_epoch" ] && [ "$lastconn_epoch" -gt "$act" ] 2>/dev/null && act="$lastconn_epoch"
-        if [ "$act" = 0 ]; then
-            when="-"; state="MUDA"
+        # Recebendo agora? último evento SSH é um CONNECT sem DISCONNECT depois,
+        # ou houve atividade (arquivo/conexão) nos últimos 60s.
+        lastev="$(grep -E " (CONNECT|DISCONNECT) $id " "$LOG" 2>/dev/null | tail -1 | awk '{print $2}')"
+        receiving=0
+        [ "$lastev" = "CONNECT" ] && receiving=1
+        [ "$act" != 0 ] && [ "$((now - act))" -le 60 ] && receiving=1
+        if [ "$act" = 0 ]; then when="-"; else when="$(date -u -d "@$act" +%FT%TZ 2>/dev/null || echo "$act")"; fi
+        if [ "$receiving" = 1 ]; then
+            dot="${C_RX}●${C_0}"; txt="Recebendo dados"
+        elif [ "$act" != 0 ] && [ "$((now - act))" -le "$STALE_AFTER" ]; then
+            dot="${C_ON}●${C_0}"; txt="Online"
         else
-            when="$(date -u -d "@$act" +%FT%TZ 2>/dev/null || echo "$act")"
-            [ "$((now - act))" -gt "$STALE_AFTER" ] && state="MUDA" || state="ok"
+            dot="${C_OFF}●${C_0}"; txt="Offline"
         fi
-        printf '%-16s %-22s %9s  %s\n' "$id" "$when" "$pend" "$state"
+        printf '%s %-16s %-18s %s\n' "$dot" "$id" "$txt" "$when"
     done
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
-    echo
-    echo "PENDENTES = arquivos JÁ RECEBIDOS aguardando a ingestão mover para archive/"
-    echo "(se não baixar: docker compose logs -f ingestion · confira CARBONARA_ROOT no .env)"
 }
 
 monitor() {

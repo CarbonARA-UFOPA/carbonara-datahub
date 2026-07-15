@@ -100,7 +100,13 @@ All collection is **one bash script** at repo root, `rsync-hub`, running nativel
   **data is unencrypted** — key mode stays the recommendation for public networks.
   `remove <id>` revokes both modes.
 - **Monitor** — `rsync-hub monitor` (stays running, live table + recent connections),
-  `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`.
+  `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`. Each
+  station gets a colored dot + state: purple "Recebendo dados" (last SSH log event is a
+  CONNECT with no DISCONNECT after it, or activity in the last 60s), green "Online"
+  (activity within `RSYNC_HUB_STALE`, default 1h), red "Offline" (beyond it / never).
+  ANSI colors only when stdout is a TTY. Deliberately NO pending-files column or
+  ingestion-lag legend in this view (user request) — ingestion backlog is diagnosed via
+  `docker compose logs -f ingestion`, not the monitor.
 - **Forced command** — `rsync-hub serve <id>` is what each station's `authorized_keys` line
   invokes (`command="…/rsync-hub serve flona01",restrict`). It logs CONNECT/DISCONNECT/REJECT
   to `log/connections.log`, then runs `rrsync -wo /srv/carbonara/incoming/<id>`.
