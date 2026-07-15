@@ -625,8 +625,15 @@ EOF
 # --- Papel 3: status / monitor -----------------------------------------------------
 # Estados (bolinha colorida por estação):
 #   ● roxo    "Recebendo dados" — sessão SSH aberta agora OU arquivos chegando (<60s)
-#   ● verde   "Online"          — atividade dentro da janela RSYNC_HUB_STALE (padrão 1h)
-#   ● vermelho"Offline"         — sem atividade além da janela (ou nunca conectou)
+#   ● verde   "Online"          — sinal de vida/atividade dentro da janela da estação
+#   ● vermelho"Offline"         — sem sinal além da janela (ou nunca conectou)
+#
+# A janela é POR ESTAÇÃO: o cliente envia a cada ciclo o arquivo oculto
+# .carbonara-status (sinal de vida) declarando o seu tempo de reciclagem
+# (interval_min); consideramos Offline após 2 ciclos + 2 min sem sinal. O horário
+# usado é o mtime de CHEGADA do arquivo (o envio não preserva o mtime da origem),
+# imune a fuso/relógio da estação. Estações sem sinal de vida (clientes antigos)
+# caem no limite global RSYNC_HUB_STALE (padrão 1h).
 print_status() {
     now="$(date +%s)"
     if [ -t 1 ]; then
@@ -634,7 +641,7 @@ print_status() {
     else
         C_ON=""; C_OFF=""; C_RX=""; C_0=""
     fi
-    printf '  %-16s %-18s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMA ATIVIDADE (UTC)"
+    printf '  %-16s %-18s %-22s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (UTC)" "CICLO"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
     found=0
     for d in "$INCOMING"/*/; do
@@ -646,24 +653,36 @@ print_status() {
         lastconn="$(grep " CONNECT $id " "$LOG" 2>/dev/null | tail -1 | awk '{print $1}')"
         lastconn_epoch=""
         [ -n "$lastconn" ] && lastconn_epoch="$(date -u -d "$lastconn" +%s 2>/dev/null || echo '')"
+        # Sinal de vida da estação: chegada do .carbonara-status + ciclo declarado.
+        hb="$d/.carbonara-status"
+        hb_epoch=""; interval=""
+        if [ -f "$hb" ]; then
+            hb_epoch="$(stat -c %Y "$hb" 2>/dev/null || stat -f %m "$hb" 2>/dev/null || echo '')"
+            interval="$(sed -n 's/^interval_min=//p' "$hb" 2>/dev/null | head -1)"
+            echo "$interval" | grep -Eq '^[0-9]+$' || interval=""
+        fi
         act="0"
         [ -n "$lastfile" ] && [ "$lastfile" -gt "$act" ] 2>/dev/null && act="$lastfile"
         [ -n "$lastconn_epoch" ] && [ "$lastconn_epoch" -gt "$act" ] 2>/dev/null && act="$lastconn_epoch"
+        [ -n "$hb_epoch" ] && [ "$hb_epoch" -gt "$act" ] 2>/dev/null && act="$hb_epoch"
+        # Janela por estação: 2 ciclos + 2 min de folga; sem sinal de vida, o global.
+        if [ -n "$interval" ]; then limit=$(( interval * 120 + 120 )); else limit="$STALE_AFTER"; fi
         # Recebendo agora? último evento SSH é um CONNECT sem DISCONNECT depois,
-        # ou houve atividade (arquivo/conexão) nos últimos 60s.
+        # ou houve atividade (arquivo/conexão/sinal) nos últimos 60s.
         lastev="$(grep -E " (CONNECT|DISCONNECT) $id " "$LOG" 2>/dev/null | tail -1 | awk '{print $2}')"
         receiving=0
         [ "$lastev" = "CONNECT" ] && receiving=1
         [ "$act" != 0 ] && [ "$((now - act))" -le 60 ] && receiving=1
         if [ "$act" = 0 ]; then when="-"; else when="$(date -u -d "@$act" +%FT%TZ 2>/dev/null || echo "$act")"; fi
+        if [ -n "$interval" ]; then cyc="${interval} min"; else cyc="-"; fi
         if [ "$receiving" = 1 ]; then
             dot="${C_RX}●${C_0}"; txt="Recebendo dados"
-        elif [ "$act" != 0 ] && [ "$((now - act))" -le "$STALE_AFTER" ]; then
+        elif [ "$act" != 0 ] && [ "$((now - act))" -le "$limit" ]; then
             dot="${C_ON}●${C_0}"; txt="Online"
         else
             dot="${C_OFF}●${C_0}"; txt="Offline"
         fi
-        printf '%s %-16s %-18s %s\n' "$dot" "$id" "$txt" "$when"
+        printf '%s %-16s %-18s %-22s %s\n' "$dot" "$id" "$txt" "$when" "$cyc"
     done
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
 }

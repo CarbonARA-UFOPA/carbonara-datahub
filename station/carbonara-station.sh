@@ -90,6 +90,24 @@ scan_all() { # gera $1: inventário completo da pasta — caminho<TAB>assinatura
 
 ssh_cmd() { echo "ssh -i $KEY_FILE -p $HUB_PORT -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"; }
 
+# Sinal de vida: a cada ciclo de envio (mesmo sem dados novos) sobe um arquivinho
+# OCULTO (.carbonara-status) para a pasta da estação no servidor, declarando o tempo
+# de reciclagem — é com ele que o monitor marca Online/Offline por estação. Sem -t:
+# o mtime no servidor é o horário de CHEGADA (imune a fuso/relógio da estação).
+send_heartbeat() {
+    hb="$CONF_DIR/.carbonara-status"
+    { echo "station=$STATION_ID"
+      echo "interval_min=$SEND_EVERY"
+      echo "ts=$(date -u +%FT%TZ)"; } > "$hb"
+    if [ "$AUTH_MODE" = senha ]; then
+        RSYNC_PASSWORD="$PASSWORD" rsync -z --chmod=F644 --timeout=30 "$hb" \
+            "rsync://$STATION_ID@$HUB_HOST:$HUB_PORT/$STATION_ID/.carbonara-status" >/dev/null 2>&1
+    else
+        rsync -z --chmod=F644 --timeout=30 -e "$(ssh_cmd)" "$hb" \
+            "$HUB_USER@$HUB_HOST:/.carbonara-status" >/dev/null 2>&1
+    fi
+}
+
 # Teste de conexão que NÃO depende da pasta de dados: dry-run a partir de uma pasta
 # vazia — valida rede, porta, credencial e o confinamento no servidor, sem enviar nada.
 probe_conn() {
@@ -302,6 +320,11 @@ send() {
         return 0
     fi
     [ -f "$STATE" ] || : > "$STATE"
+    # Sinal de vida ANTES de tudo: mesmo sem dados novos o servidor sabe que a
+    # estação está viva (e qual é o seu ciclo). Falha aqui não interrompe o envio.
+    if ! send_heartbeat; then
+        echo "aviso: não consegui enviar o sinal de vida ao servidor (sem rede?)." >&2
+    fi
     all="$(mktemp)"; elig="$(mktemp)"; tosend="$(mktemp)"; lista="$(mktemp)"
     scan_all "$all"
     # Elegíveis: já "assentados" (mais velhos que MIN_AGE), fora de pastas/arquivos

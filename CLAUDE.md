@@ -102,11 +102,20 @@ All collection is **one bash script** at repo root, `rsync-hub`, running nativel
 - **Monitor** — `rsync-hub monitor` (stays running, live table + recent connections),
   `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`. Each
   station gets a colored dot + state: purple "Recebendo dados" (last SSH log event is a
-  CONNECT with no DISCONNECT after it, or activity in the last 60s), green "Online"
-  (activity within `RSYNC_HUB_STALE`, default 1h), red "Offline" (beyond it / never).
-  ANSI colors only when stdout is a TTY. Deliberately NO pending-files column or
-  ingestion-lag legend in this view (user request) — ingestion backlog is diagnosed via
-  `docker compose logs -f ingestion`, not the monitor.
+  CONNECT with no DISCONNECT after it, or activity in the last 60s), green "Online",
+  red "Offline". ANSI colors only when stdout is a TTY. Deliberately NO pending-files
+  column or ingestion-lag legend in this view (user request) — ingestion backlog is
+  diagnosed via `docker compose logs -f ingestion`, not the monitor.
+
+  **Heartbeat protocol (per-station offline detection):** every client send cycle —
+  even with nothing to sync — uploads the hidden dotfile `.carbonara-status` into
+  `incoming/<id>/` declaring `interval_min` (the station's recycle interval). It is sent
+  WITHOUT `-t`, so its server-side mtime = arrival time (immune to station clock/tz);
+  ingestion never sees it (hidden). The monitor computes a per-station window of
+  `2 × interval_min + 2 min` — beyond that, Offline. Stations without a heartbeat
+  (older clients) fall back to the global `RSYNC_HUB_STALE` (default 1h). Keep the
+  heartbeat FIRST in the clients' send flow (liveness even when there is no data) and
+  non-fatal on failure.
 - **Forced command** — `rsync-hub serve <id>` is what each station's `authorized_keys` line
   invokes (`command="…/rsync-hub serve flona01",restrict`). It logs CONNECT/DISCONNECT/REJECT
   to `log/connections.log`, then runs `rrsync -wo /srv/carbonara/incoming/<id>`.

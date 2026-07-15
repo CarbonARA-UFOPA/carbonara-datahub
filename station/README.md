@@ -111,6 +111,17 @@ arquivo por período) reduz ainda mais a janela de colisão — mas não é nece
 - No servidor, a estação só consegue **escrever na própria pasta** (`rrsync -wo` +
   `restrict` na chave): não lê, não baixa e não alcança as outras estações.
 
+### Como o servidor sabe que a estação está Online/Offline?
+
+Pelo **sinal de vida**: a cada ciclo de envio (mesmo sem dados novos), o cliente sobe um
+arquivinho oculto `.carbonara-status` para a pasta da estação no servidor, declarando o
+**tempo de reciclagem** configurado. O monitor (`rsync-hub monitor`) usa o horário de
+**chegada** desse arquivo (imune a fuso/relógio da estação) e marca **Offline** quem
+ficar **2 ciclos + 2 minutos** sem dar sinal — ou seja, o limite é individual: uma
+estação com ciclo de 15 min fica vermelha após ~32 min de silêncio. A ingestão ignora o
+arquivo (é oculto). Estações sem sinal de vida (clientes antigos) caem na janela global
+de 1 hora do servidor.
+
 ### Posso fechar a janela? (Windows)
 
 Pode. Quem executa o envio periódico é o **Agendador de Tarefas** do Windows, não a

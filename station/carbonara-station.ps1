@@ -237,6 +237,37 @@ function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [strin
     return @{ Exe = $Cfg.Rsync; Args = $argv }
 }
 
+# Sinal de vida: a cada ciclo de envio (mesmo sem dados novos) sobe um arquivinho
+# OCULTO (.carbonara-status) para a pasta da estação no servidor, declarando o tempo
+# de reciclagem — é com ele que o monitor marca Online/Offline por estação. Sem -t:
+# o mtime no servidor é o horário de CHEGADA (imune a fuso/relógio da estação).
+function Send-Heartbeat($Cfg) {
+    New-Item -ItemType Directory -Force -Path $ConfDir | Out-Null
+    $hb = Join-Path $ConfDir '.carbonara-status'
+    $lines = @(
+        "station=$($Cfg.StationId)",
+        "interval_min=$($Cfg.SendEveryMin)",
+        ('ts={0:yyyy-MM-ddTHH:mm:ssZ}' -f (Get-Date).ToUniversalTime())
+    )
+    [IO.File]::WriteAllLines($hb, [string[]]$lines, (New-Object System.Text.UTF8Encoding($false)))
+    $rsyncDir = Split-Path $Cfg.Rsync
+    if ($env:PATH -notlike "$rsyncDir*") { $env:PATH = "$rsyncDir;$env:PATH" }
+    if (-not $env:HOME) { $env:HOME = $env:USERPROFILE }
+    $src = ConvertTo-UnixPath $hb
+    if ($Cfg.AuthMode -eq 'senha') {
+        $dest = 'rsync://{0}@{1}:{2}/{0}/.carbonara-status' -f $Cfg.StationId, $Cfg.HubHost, $Cfg.HubPort
+        $env:RSYNC_PASSWORD = $Cfg.Password
+        try { $r = Invoke-NativeQuiet $Cfg.Rsync @('-z', '--chmod=F644', '--timeout=30', $src, $dest) 60 }
+        finally { Remove-Item Env:RSYNC_PASSWORD -ErrorAction SilentlyContinue }
+    } else {
+        $keyArg = ConvertTo-UnixPath $Cfg.KeyPath
+        $ssh = "ssh -i $keyArg -p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
+        $dest = '{0}@{1}:/.carbonara-status' -f $Cfg.HubUser, $Cfg.HubHost
+        $r = Invoke-NativeQuiet $Cfg.Rsync @('-z', '--chmod=F644', '--timeout=30', '-e', $ssh, $src, $dest) 60
+    }
+    return ($r.Code -eq 0)
+}
+
 # Teste de conexão que NÃO depende da pasta de dados: dry-run a partir de uma pasta
 # vazia — valida rede, porta, chave e o confinamento no servidor, sem enviar nada.
 function Invoke-Probe($Cfg) {
@@ -512,6 +543,11 @@ function Invoke-Send {
     catch { $mtx = New-Object System.Threading.Mutex($false, 'CarbonaraStationSend') }
     if (-not $mtx.WaitOne(0)) { Write-Host 'outro envio já está em andamento — saindo.'; return }
     try {
+        # Sinal de vida ANTES de tudo: mesmo sem dados novos o servidor sabe que a
+        # estação está viva (e qual é o seu ciclo). Falha aqui não interrompe o envio.
+        if (-not (Send-Heartbeat $cfg)) {
+            Write-Host 'aviso: não consegui enviar o sinal de vida ao servidor (sem rede?).'
+        }
         $state  = Get-SentState
         $files  = @(Get-LocalFiles $cfg)
         $tosend = @($files | Where-Object { $_.Settled -and $state[$_.Rel] -ne $_.Sig })
