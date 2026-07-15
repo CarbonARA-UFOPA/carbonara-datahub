@@ -522,6 +522,9 @@ function Invoke-Test {
             Write-Host ("  - porta {0} liberada no firewall? o serviço carbonara-rsyncd está no ar?" -f $cfg.HubPort)
         } else {
             Write-Host ("  - 'Permission denied' → a conta de serviço está certa? (a sua: '{0}'; o padrão é 'carbonara' — não é o id da estação)" -f $cfg.HubUser)
+            Write-Host "  - saiu 'rsync-hub: Permission denied'? o problema é NO SERVIDOR (o script"
+            Write-Host '    saiu do lugar/não é executável pela conta de serviço) — lá, rode de novo:'
+            Write-Host ("    sudo rsync-hub add {0}   (regrava a chave apontando p/ /usr/local/bin)" -f $cfg.StationId)
             Write-Host ("  - a estação foi autorizada no servidor? (lá: sudo rsync-hub add {0} …)" -f $cfg.StationId)
             Write-Host ("  - a chave é a recebida do servidor? ({0})" -f $cfg.KeyPath)
         }

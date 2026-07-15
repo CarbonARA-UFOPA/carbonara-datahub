@@ -484,6 +484,15 @@ add_station() {
     ssh-keygen -l -f "$pub" >/dev/null 2>&1 || die "não parece uma chave pública SSH: $pub"
 
     install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$INCOMING/$id"
+    # O comando forçado do authorized_keys precisa de um caminho que a conta de
+    # serviço consiga EXECUTAR para sempre — um script dentro de /home/<admin>/ falha
+    # com "Permission denied" (homes são 750). Garante a cópia estável em
+    # /usr/local/bin e aponta a chave para ela.
+    if [ "$(self_path)" != /usr/local/bin/rsync-hub ]; then
+        install -m 755 "$(self_path)" /usr/local/bin/rsync-hub
+        SELF=/usr/local/bin/rsync-hub
+        echo "script instalado/atualizado em /usr/local/bin/rsync-hub (a chave aponta para lá)."
+    fi
     # Remove entrada antiga da mesma estação (se houver) e adiciona a nova.
     grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" 2>/dev/null || true
     printf 'command="%s serve %s",restrict %s\n' "$(self_path)" "$id" "$(cat "$pub")" >> "$AUTHKEYS.tmp"

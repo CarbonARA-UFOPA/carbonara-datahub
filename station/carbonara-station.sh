@@ -298,6 +298,9 @@ test_conn() {
         else
             echo "  - 'Permission denied' → a conta de serviço está certa? (a sua: '$HUB_USER';"
             echo "    o padrão é 'carbonara' — não é o id da estação)"
+            echo "  - saiu 'rsync-hub: Permission denied'? o problema é NO SERVIDOR (o script"
+            echo "    saiu do lugar/não é executável pela conta de serviço) — lá, rode de novo:"
+            echo "    sudo rsync-hub add $STATION_ID   (regrava a chave apontando p/ /usr/local/bin)"
             echo "  - a estação foi autorizada no servidor? (lá: sudo rsync-hub add $STATION_ID …)"
             echo "  - a chave é a recebida do servidor? ($KEY_FILE)"
         fi

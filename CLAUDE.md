@@ -74,6 +74,11 @@ TimescaleDB`, with processed files moved to `archive/<station_id>/<date>/` and f
 All collection is **one bash script** at repo root, `rsync-hub`, running natively on the host
 (not in Compose). It has three roles, dispatched by its first arg:
 
+- **Stable path invariant** — the `command=` line in authorized_keys embeds an absolute
+  path to this script that the *service account* must be able to execute forever. A path
+  inside `/home/<admin>/` breaks with `sh: ... rsync-hub: Permission denied` at the
+  station (homes are 750). `add_station` therefore self-installs the running copy to
+  `/usr/local/bin/rsync-hub` and always points keys there — keep that behavior.
 - **Management** — `rsync-hub install` is a **guided wizard** on a TTY (root dir → service
   account → add stations; persists choices to `/etc/rsync-hub.conf`, env vars still win);
   `install --defaults` (or no TTY) skips the questions. `add <id>` **without** a pubkey
