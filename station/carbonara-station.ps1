@@ -42,11 +42,15 @@ Configuração gravada em %LOCALAPPDATA%\carbonara-station\config.json.
 param(
     [Parameter(Position = 0)]
     [ValidateSet('menu', 'setup', 'test', 'send', 'schedule', 'unschedule', 'status', 'reset', 'help')]
-    [string]$Command = 'menu'
+    [string]$Command = 'menu',
+
+    # Caminho da pasta de configuração. Usado pela tarefa agendada como SYSTEM, que tem
+    # outro perfil de usuário e precisa apontar para a configuração de quem fez o setup.
+    [string]$ConfigDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
-$ConfDir    = Join-Path $env:LOCALAPPDATA 'carbonara-station'
+$ConfDir    = if ($ConfigDir) { $ConfigDir } else { Join-Path $env:LOCALAPPDATA 'carbonara-station' }
 $ConfFile   = Join-Path $ConfDir 'config.json'
 $LogFile    = Join-Path $ConfDir 'envios.log'
 $StateFile  = Join-Path $ConfDir 'sent.state'   # o que já foi enviado: caminho<TAB>tamanho:mtime
@@ -501,7 +505,11 @@ function Invoke-Test {
 # reenviados por inteiro e o servidor não duplica medições (ingestão idempotente).
 function Invoke-Send {
     $cfg = Get-Config
-    $mtx = New-Object System.Threading.Mutex($false, 'CarbonaraStationSend')
+    # Global\: vale entre sessões (tarefa como SYSTEM × janela do usuário); se o
+    # sistema negar o namespace global, cai no local — sobreposição rara e inofensiva
+    # (o servidor é idempotente).
+    try { $mtx = New-Object System.Threading.Mutex($false, 'Global\CarbonaraStationSend') }
+    catch { $mtx = New-Object System.Threading.Mutex($false, 'CarbonaraStationSend') }
     if (-not $mtx.WaitOne(0)) { Write-Host 'outro envio já está em andamento — saindo.'; return }
     try {
         $state  = Get-SentState
@@ -559,13 +567,28 @@ function Invoke-Reset {  # força reenvio completo no próximo send (o servidor 
 
 # --- Agendamento (Agendador de Tarefas) --------------------------------------------------
 function Install-Schedule([string]$Every) {  # instala/substitui a tarefa de envio periódico
-    $tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" send"
+    # -ConfigDir fixa a configuração desta instalação (necessário quando a tarefa roda
+    # como SYSTEM, cujo perfil/%LOCALAPPDATA% é outro).
+    $tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" send -ConfigDir `"$ConfDir`""
     # Invoke-NativeQuiet monta a linha de comando escapando as aspas internas do /TR
     # como \" — obrigatório quando o caminho do script tem espaços (ex.: C:\Users\Km67
     # Eddy System\...); com o operador & do PowerShell o schtasks quebraria no espaço.
-    $r = Invoke-NativeQuiet 'schtasks.exe' @('/Create', '/F', '/SC', 'MINUTE', '/MO', $Every, '/TN', $TaskName, '/TR', $tr) 30
+    $argv = @('/Create', '/F', '/SC', 'MINUTE', '/MO', $Every, '/TN', $TaskName)
+    $asSystem = Test-IsAdmin
+    if ($asSystem) { $argv += @('/RU', 'SYSTEM') }   # roda mesmo sem ninguém logado
+    $argv += @('/TR', $tr)
+    $r = Invoke-NativeQuiet 'schtasks.exe' $argv 30
     if ($r.Code -eq 0) {
         Write-Host ("ok: envio automático ativo a cada {0} min (Agendador de Tarefas, tarefa '{1}')." -f $Every, $TaskName)
+        if ($asSystem) {
+            Write-Host 'a tarefa roda como SYSTEM: continua sincronizando com a janela fechada,'
+            Write-Host 'sem ninguém logado e após reiniciar — e sem piscar janelas.'
+        } else {
+            Write-Host 'pode fechar esta janela: a tarefa continua rodando enquanto o usuário'
+            Write-Host 'estiver LOGADO no Windows. Para sincronizar também sem login/após'
+            Write-Host 'reiniciar, rode o schedule uma vez em um PowerShell como ADMINISTRADOR'
+            Write-Host '(a tarefa então é recriada como SYSTEM).'
+        }
         Write-Host 'para remover: .\carbonara-station.ps1 unschedule'
     } else {
         $r.Out | ForEach-Object { Write-Host "  $_" }
@@ -582,8 +605,13 @@ function Invoke-Schedule {
 }
 
 function Invoke-Unschedule {
-    Invoke-Native 'schtasks.exe' @('/Delete', '/F', '/TN', $TaskName) | Out-Null
-    Write-Host 'ok: agendamento removido (se existia).'
+    $r = Invoke-NativeQuiet 'schtasks.exe' @('/Delete', '/F', '/TN', $TaskName) 30
+    if ($r.Code -eq 0) {
+        Write-Host 'ok: agendamento removido.'
+    } else {
+        Write-Host 'não removi: ou não havia agendamento, ou a tarefa foi criada como SYSTEM —'
+        Write-Host 'nesse caso rode o unschedule em um PowerShell como ADMINISTRADOR.'
+    }
 }
 
 # --- Status ------------------------------------------------------------------------------

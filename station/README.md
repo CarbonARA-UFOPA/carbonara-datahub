@@ -111,6 +111,20 @@ arquivo por período) reduz ainda mais a janela de colisão — mas não é nece
 - No servidor, a estação só consegue **escrever na própria pasta** (`rrsync -wo` +
   `restrict` na chave): não lê, não baixa e não alcança as outras estações.
 
+### Posso fechar a janela? (Windows)
+
+Pode. Quem executa o envio periódico é o **Agendador de Tarefas** do Windows, não a
+janela — depois do `schedule` (ou do "ativar envio automático" no `setup`), feche o
+`cmd`/PowerShell à vontade. Detalhe importante:
+
+- `schedule` rodado em PowerShell **comum**: a tarefa executa enquanto o usuário
+  estiver **logado** no Windows (após reiniciar, é preciso logar de novo).
+- `schedule` rodado em PowerShell **como administrador**: a tarefa é criada como
+  **SYSTEM** — sincroniza com a janela fechada, **sem ninguém logado e após
+  reiniciar**, sem piscar janelas. Recomendado para estações de campo.
+
+Confira com `status` (mostra se a tarefa está ativa) e pelos carimbos em `envios.log`.
+
 ## Configuração gravada
 
 - Linux: `~/.config/carbonara-station/config` (+ `envios.log` ao lado).

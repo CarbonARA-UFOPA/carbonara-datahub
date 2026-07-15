@@ -180,6 +180,15 @@ older than the configured min age are eligible; dotfiles/dot-dirs are skipped (m
 the hub's ingestion rule); on failure the state is untouched. Config lives per user
 (`~/.config/carbonara-station/config` / `%LOCALAPPDATA%\carbonara-station\config.json`).
 
+Windows scheduling: `Install-Schedule` embeds `-ConfigDir "<user's conf dir>"` in the
+task action (the `.ps1` accepts `-ConfigDir` to override its config paths) and, when the
+shell is elevated, creates the task with `/RU SYSTEM` — it then runs with no user logged
+on, survives reboots, and shows no console flashes; SYSTEM has a different
+%LOCALAPPDATA%, which is why -ConfigDir is mandatory in the action. Non-elevated
+schedule = task runs only while the user is logged on. The send mutex is
+`Global\CarbonaraStationSend` (cross-session, SYSTEM task vs user window) with a
+local-namespace fallback.
+
 Concurrent-append safety (why reading live datalogger files is fine): clients only READ
 sources — a reader never blocks the datalogger's writes; if the writer holds an
 exclusive lock, it is the *send* that fails (rc 23 → distinct warning, state untouched,
