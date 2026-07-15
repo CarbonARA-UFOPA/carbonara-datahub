@@ -632,8 +632,8 @@ print_status() {
         [ -d "$d" ] || continue
         found=1
         id="$(basename "$d")"
-        pend="$(find "$d" -type f ! -name '.*' 2>/dev/null | wc -l | tr -d ' ')"
-        lastfile="$(find "$d" -type f ! -name '.*' -printf '%T@\n' 2>/dev/null | sort -nr | head -1)"
+        pend="$(find "$d" -type f ! -name '.*' -not -path '*/.*' 2>/dev/null | wc -l | tr -d ' ')"
+        lastfile="$(find "$d" -type f ! -name '.*' -not -path '*/.*' -printf '%T@\n' 2>/dev/null | sort -nr | head -1)"
         lastfile="${lastfile%.*}"
         lastconn="$(grep " CONNECT $id " "$LOG" 2>/dev/null | tail -1 | awk '{print $1}')"
         lastconn_epoch=""
@@ -650,6 +650,9 @@ print_status() {
         printf '%-16s %-22s %9s  %s\n' "$id" "$when" "$pend" "$state"
     done
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
+    echo
+    echo "PENDENTES = arquivos JÁ RECEBIDOS aguardando a ingestão mover para archive/"
+    echo "(se não baixar: docker compose logs -f ingestion · confira CARBONARA_ROOT no .env)"
 }
 
 monitor() {

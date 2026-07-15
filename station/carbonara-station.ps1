@@ -519,7 +519,9 @@ function Invoke-Send {
         Write-Host ("sincronizando {0} arquivo(s) novo(s)/alterado(s) com {1}…" -f $tosend.Count, $cfg.HubHost)
         # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
         # legíveis pelos usuários locais do host, independentemente das permissões aqui.
-        $plan = Get-RsyncPlan $cfg @('-rltz', '--chmod=D755,F644', '--partial', '--timeout=120') $list
+        # --partial-dir: transferência cancelada deixa o pedaço num diretório OCULTO no
+        # servidor (a ingestão nunca o vê) e o próximo envio retoma dali.
+        $plan = Get-RsyncPlan $cfg @('-rltz', '--chmod=D755,F644', '--partial-dir=.rsync-parcial', '--timeout=120') $list
         if ($cfg.AuthMode -eq 'senha') { $env:RSYNC_PASSWORD = $cfg.Password }
         try { $r = Invoke-Native $plan.Exe $plan.Args }
         finally { Remove-Item Env:RSYNC_PASSWORD -ErrorAction SilentlyContinue }

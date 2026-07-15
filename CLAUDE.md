@@ -193,8 +193,10 @@ guarantee and risk the collection.
 ## Ingestion service (`ingestion/`)
 
 Single polling loop in `ingest.py` — no watchers, no queue. `main()` loops every
-`INGEST_POLL_SECONDS`, calls `discover_files()` (skips dotfiles and files modified within
-`settle_seconds`, to avoid picking up partial uploads), then `process_file()` per file.
+`INGEST_POLL_SECONDS`, calls `discover_files()` (skips hidden entries at ANY path level —
+covers dotfiles and dot-dirs like `.rsync-parcial/`, where clients park interrupted
+uploads via `--partial-dir` — and files modified within `settle_seconds`, to avoid
+picking up partial uploads), then `process_file()` per file.
 
 Key invariants when editing:
 - The **first path component** under `landing/` is the `station_id` (`data/landing/flona01/…`

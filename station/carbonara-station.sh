@@ -324,12 +324,16 @@ send() {
     rc=0
     # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
     # legíveis pelos usuários locais do host, independentemente das permissões aqui.
+    # --partial-dir: uma transferência cancelada/interrompida deixa o pedaço num
+    # diretório OCULTO no servidor (a ingestão nunca o vê) e o próximo envio retoma
+    # dali — nunca fica um arquivo truncado com nome real no incoming/.
     if [ "$AUTH_MODE" = senha ]; then
         ( cd "$DATA_DIR" && RSYNC_PASSWORD="$PASSWORD" rsync -rltz --chmod=D755,F644 \
-            --partial --timeout=120 --files-from="$lista" ./ "$(rsync_dest)" ) || rc=$?
+            --partial-dir=.rsync-parcial --timeout=120 --files-from="$lista" \
+            ./ "$(rsync_dest)" ) || rc=$?
     else
-        ( cd "$DATA_DIR" && rsync -rltz --chmod=D755,F644 --partial --timeout=120 \
-            --files-from="$lista" -e "$(ssh_cmd)" ./ "$(rsync_dest)" ) || rc=$?
+        ( cd "$DATA_DIR" && rsync -rltz --chmod=D755,F644 --partial-dir=.rsync-parcial \
+            --timeout=120 --files-from="$lista" -e "$(ssh_cmd)" ./ "$(rsync_dest)" ) || rc=$?
     fi
     if [ "$rc" = 0 ]; then
         # Registra no estado — a pasta local permanece intocada.

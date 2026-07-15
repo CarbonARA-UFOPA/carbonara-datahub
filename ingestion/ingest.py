@@ -118,7 +118,11 @@ def discover_files(landing: Path, settle_seconds: int) -> list[Path]:
     now = time.time()
     for station_dir in sorted(p for p in landing.iterdir() if p.is_dir()):
         for f in sorted(station_dir.rglob("*")):
-            if not f.is_file() or f.name.startswith("."):
+            if not f.is_file():
+                continue
+            # Ignora ocultos em QUALQUER nível do caminho — inclui o arquivo em si e
+            # pastas como .rsync-parcial/ (uploads interrompidos guardados pelo rsync).
+            if any(part.startswith(".") for part in f.relative_to(station_dir).parts):
                 continue
             # Evita pegar arquivo no meio de um upload: exige inatividade mínima.
             if now - f.stat().st_mtime < settle_seconds:
