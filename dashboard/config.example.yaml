@@ -1,0 +1,43 @@
+# config.example.yaml — copie para config.yaml e ajuste.
+# Este arquivo é a fonte de verdade do dashboard e é EDITADO PELA PRÓPRIA UI
+# (cadastro de estações e arquivos). Pode também ser editado à mão.
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  refresh_seconds: 60        # auto-atualização das páginas e gráficos
+
+# Raiz de dados do hub — /srv/carbonara em produção. Caminho RELATIVO é resolvido
+# contra a pasta deste config (../data = ./data na raiz do repositório, em dev).
+data_root: ../data
+# Log de conexões do rsync-hub (enriquece o status "Recebendo dados").
+# null = <data_root>/log/connections.log
+connections_log: null
+# Janela de offline (s) para estações SEM heartbeat válido (espelha RSYNC_HUB_STALE).
+stale_fallback_seconds: 3600
+
+stations:
+  - id: flona01
+    name: "FLONA Tapajós 01"
+    # Watchdog: arquivo de heartbeat do rsync-hub. O status usa o mtime dele +
+    # o interval_min do conteúdo (janela = 2×intervalo + 2 min).
+    # null = <data_root>/incoming/flona01/.carbonara-status (padrão)
+    heartbeat_file: null
+    files:
+      - id: dados30min
+        path: incoming/flona01/flona01.dat   # relativo a data_root, ou absoluto
+        tail_lines: 288                       # 288 × 30min = últimos ~6 dias
+        separator: ","
+        quotechar: '"'                        # TOA5 (Campbell) usa aspas
+        decimal: "."
+        skip_header_lines: 1                  # TOA5 = 4 · CSV com cabeçalho = 1
+        header_line: 1                        # linha (1-based) com nomes; TOA5 = 2; null = sem nomes
+        timestamp:
+          column: 0                           # índice OU nome de coluna
+          format: "%Y-%m-%d %H:%M:%S"
+        variables:                            # um gráfico por variável
+          # min/max (opcionais) = limites FÍSICOS plausíveis: viram linhas de marcação
+          # no gráfico e os trechos fora deles ficam vermelhos (dado bom vs. ruim).
+          - { column: 1,         label: "Temperatura do ar", unit: "°C",  min: -10, max: 50 }
+          - { column: "RH",      label: "Umidade relativa",  unit: "%",   min: 0,   max: 100 }
+          - { column: "CO2_Avg", label: "CO2",               unit: "ppm", min: 250, max: 1000 }

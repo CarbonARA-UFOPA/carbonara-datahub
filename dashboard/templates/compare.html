@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Comparar · CARBONARA{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<h1>Comparar variáveis entre estações</h1>
+
+<details class="card picker" {{ 'open' if not selected }}>
+  <summary>
+    <strong>{{ 'Alterar seleção' if selected else 'Selecionar variáveis' }}</strong>
+    <span class="meta">{{ selected | length }} variável(is) selecionada(s) —
+      marque de quantas estações quiser; a combinação fica na URL (dá para favoritar).</span>
+  </summary>
+  <form method="get" action="{{ url_for('pages.compare') }}">
+    <div class="pick-grid">
+      {% for s in cfg.stations %}
+        <fieldset class="pick-station">
+          <legend>{{ s.name or s.id }} <small>({{ s.id }})</small></legend>
+          {% if not s.files %}
+            <p class="empty"><small>sem arquivos configurados</small></p>
+          {% endif %}
+          {% for f in s.files %}
+            <div class="pick-file">
+              <small class="meta">{{ f.id }}</small>
+              {% for v in f.variables %}
+                {% set token = s.id ~ ':' ~ f.id ~ ':' ~ loop.index0 %}
+                <label class="pick-var">
+                  <input type="checkbox" name="sel" value="{{ token }}"
+                         {{ 'checked' if token in sel_set }}>
+                  {{ v.label }}{% if v.unit %} <small>({{ v.unit }})</small>{% endif %}
+                </label>
+              {% endfor %}
+            </div>
+          {% endfor %}
+        </fieldset>
+      {% endfor %}
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">Visualizar</button>
+      {% if selected %}<a class="btn" href="{{ url_for('pages.compare') }}">Limpar seleção</a>{% endif %}
+    </div>
+  </form>
+</details>
+
+{% if selected %}
+<div class="charts cmp-grid">
+  {% for s in selected %}
+    <section class="card cmp-block">
+      <h2>
+        <span class="cmp-station">📡 {{ s.sname }}</span><br>
+        <span class="cmp-var">{{ s.label }}{% if s.unit %} <small>({{ s.unit }})</small>{% endif %}</span>
+        <small class="cmp-file">· {{ s.fid }}</small>
+      </h2>
+      <p class="series-error warn"></p>
+      <div class="chart-box">
+        <canvas class="cmp-canvas" height="110"
+                data-series-url="{{ url_for('api.file_series', station_id=s.sid, file_id=s.fid) }}"
+                data-var="{{ s.idx }}" data-color="{{ loop.index0 }}"></canvas>
+      </div>
+    </section>
+  {% endfor %}
+</div>
+{% elif cfg.stations %}
+<p class="empty">Nenhuma variável selecionada ainda.</p>
+{% else %}
+<p class="empty">Nenhuma estação configurada. <a href="{{ url_for('pages.station_new') }}">Cadastre a primeira</a>.</p>
+{% endif %}
+{% endblock %}

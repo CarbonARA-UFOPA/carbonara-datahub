@@ -293,6 +293,27 @@ inserted into `measurements.quality`. Key invariants when editing:
   `processing/config.yaml` under `checks:`, then rebuild the ingestion image.
   `pipeline.py` and `ingest.py` do not change.
 
+## Acquisition dashboard (`dashboard/`)
+
+Preliminary admin dashboard (Flask + Chart.js, **runs natively on the host** — not in
+Compose): registers stations, tails configured `.dat` files for per-variable charts and
+computes live station status. Key points when editing:
+
+- **Status logic is a Python port of `rsync-hub monitor`** (`app/status.py` mirrors
+  `print_status` in `collection/rsync-hub`): last signal = max(heartbeat mtime, newest
+  non-hidden file mtime in `incoming/<id>/`, last CONNECT in `connections.log`); window
+  = `interval_min*120 + 120`s (interval from heartbeat CONTENT, liveness from its
+  MTIME), fallback `stale_fallback_seconds` (1h). If the shell logic changes, change
+  `status.py` with it.
+- **Config-driven** (`dashboard/config.yaml`, gitignored; example versioned): the UI
+  itself edits it via `ConfigStore` (atomic write: tempfile + `os.replace`, under a
+  lock). Relative `data_root` resolves against the **config file's directory**, not cwd.
+- **Never loads whole data files** — `app/tailer.py` seeks from the end; keep it that
+  way (datalogger `.dat`s grow unbounded). Campbell `NAN`/`±7999` become `None` (gaps).
+- Chart.js is **vendored** in `dashboard/static/` (no CDN — the host may be offline).
+- Read-only over the data: removing stations/files from the dashboard never touches disk.
+- This is the admin slice of a future full dashboard that will read from TimescaleDB.
+
 ## Data model (TimescaleDB)
 
 Long/EAV model so new measured quantities need **no `ALTER TABLE`** — just an `INSERT` into

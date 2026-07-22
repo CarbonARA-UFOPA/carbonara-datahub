@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% set editing = station is not none and station.get('files') is not none %}
+{% block content %}
+<h1>{{ 'Editar estação' if editing else 'Nova estação' }}</h1>
+
+<form method="post" class="card form"
+      action="{{ url_for('pages.station_update', station_id=station['id']) if editing else url_for('pages.station_create') }}">
+  <label>Identificador (station_id)
+    <input name="id" value="{{ station['id'] if station else '' }}" {{ 'readonly' if editing }}
+           placeholder="ex.: flona01" pattern="[a-z0-9_-]+" required>
+    <small>Igual ao usado no rsync-hub (nome da pasta em <code>incoming/</code>). Minúsculas, números, <code>-</code> e <code>_</code>.</small>
+  </label>
+
+  <label>Nome de exibição
+    <input name="name" value="{{ station['name'] if station and station.get('name') else '' }}"
+           placeholder="ex.: FLONA Tapajós 01">
+  </label>
+
+  <label>Arquivo de watchdog (heartbeat do rsync-hub)
+    <input name="heartbeat_file" value="{{ station['heartbeat_file'] if station and station.get('heartbeat_file') else '' }}"
+           placeholder="vazio = incoming/&lt;id&gt;/.carbonara-status (padrão)">
+    <small>Caminho relativo à raiz de dados ou absoluto. O status Online/Offline usa a
+    data de modificação deste arquivo e o <code>interval_min</code> escrito nele —
+    a mesma regra do <code>rsync-hub monitor</code> (2×intervalo + 2 min).</small>
+  </label>
+
+  <div class="form-actions">
+    <button class="btn btn-primary" type="submit">Salvar</button>
+    <a class="btn" href="{{ url_for('pages.index') }}">Cancelar</a>
+  </div>
+</form>
+
+{% if editing %}
+<section class="card">
+  <div class="page-head">
+    <h2>Arquivos monitorados desta estação</h2>
+    <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station['id']) }}">+ Adicionar arquivo</a>
+  </div>
+  {% if not station.get('files') %}
+    <p class="empty">Nenhum arquivo ainda. É no cadastro do <strong>arquivo</strong> que se configura o
+    separador de colunas, o cabeçalho, o timestamp e as variáveis a plotar.</p>
+  {% else %}
+    <table class="table">
+      <thead><tr><th>Arquivo · caminho (.dat)</th><th>Separador</th><th>Linhas do final</th><th>Variáveis</th><th></th></tr></thead>
+      <tbody>
+      {% for f in station['files'] %}
+        <tr>
+          <td class="path-cell">
+            <strong>{{ f.id }}</strong>
+            <form method="post" class="path-form"
+                  action="{{ url_for('pages.file_update_path', station_id=station['id'], file_id=f.id) }}">
+              <input name="path" value="{{ f.path }}" required
+                     placeholder="caminho relativo à raiz de dados ou absoluto">
+              <button class="btn" type="submit">Salvar caminho</button>
+            </form>
+          </td>
+          <td><code>{{ '\\t' if f.separator == '\t' else f.separator }}</code></td>
+          <td>{{ f.tail_lines }}</td>
+          <td><small>{{ f.variables | map(attribute='label') | join(' · ') }}</small></td>
+          <td class="actions">
+            <a class="btn" href="{{ url_for('pages.file_edit', station_id=station['id'], file_id=f.id) }}">
+              Editar (separador, variáveis…)</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

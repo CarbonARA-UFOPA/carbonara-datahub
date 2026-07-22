@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ station.id }} · CARBONARA{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ station.name or station.id }} <small>({{ station.id }})</small></h1>
+  <div>
+    <a class="btn" href="{{ url_for('pages.station_edit', station_id=station.id) }}">Editar estação</a>
+    <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station.id) }}">+ Adicionar arquivo</a>
+  </div>
+</div>
+
+<section class="card status-card">
+  <span class="dot dot-{{ st.status }}"></span>
+  <strong>
+    {% if st.status == 'receiving' %}Recebendo dados agora
+    {% elif st.status == 'online' %}Online
+    {% elif st.status == 'offline' %}Offline
+    {% else %}Sem sinal (heartbeat/logs não encontrados){% endif %}
+  </strong>
+  <dl>
+    <dt>Último sinal</dt><dd>{{ st.last_signal or '—' }}</dd>
+    <dt>Intervalo declarado</dt><dd>{{ st.interval_min ~ ' min' if st.interval_min else '— (sem heartbeat)' }}</dd>
+    <dt>Janela de offline</dt><dd>{{ st.limit_seconds // 60 }} min</dd>
+    <dt>Watchdog (heartbeat)</dt>
+    <dd><code>{{ st.heartbeat_file }}</code> {% if not st.heartbeat_found %}<span class="warn">— não encontrado</span>{% endif %}</dd>
+  </dl>
+</section>
+
+{% if not station.files %}
+  <p class="empty">Nenhum arquivo em monitoramento.
+     <a href="{{ url_for('pages.file_new', station_id=station.id) }}">Adicione o primeiro</a>.</p>
+{% endif %}
+
+{% for f in station.files %}
+<section class="card file-block"
+         data-series-url="{{ url_for('api.file_series', station_id=station.id, file_id=f.id) }}">
+  <div class="page-head">
+    <h2>{{ f.id }} <small><code>{{ f.path }}</code></small></h2>
+    <div>
+      <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar</a>
+      <form method="post" style="display:inline"
+            action="{{ url_for('pages.file_delete', station_id=station.id, file_id=f.id) }}"
+            onsubmit="return confirm('Remover {{ f.id }} do monitoramento?');">
+        <button class="btn btn-danger" type="submit">Remover</button>
+      </form>
+    </div>
+  </div>
+  <p class="meta">
+    últimas <strong>{{ f.tail_lines }}</strong> linhas ·
+    separador <code>{{ '\\t' if f.separator == '\t' else f.separator }}</code> ·
+    {{ f.variables | length }} variável(is)
+    <span class="series-info"></span>
+  </p>
+  <p class="series-error warn"></p>
+  <div class="charts">
+    {% for v in f.variables %}
+      <div class="chart-box">
+        <canvas data-var="{{ loop.index0 }}" height="110"></canvas>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

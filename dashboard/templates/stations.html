@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block head %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endblock %}
+{% block content %}
+<h1>Estações</h1>
+
+{% if not stations %}
+  <p class="empty">Nenhuma estação cadastrada ainda.
+     <a href="{{ url_for('pages.station_new') }}">Cadastre a primeira</a>.</p>
+{% else %}
+<table class="table">
+  <thead>
+    <tr><th>Status</th><th>Estação</th><th>Último sinal</th><th>Janela</th><th>Arquivos</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for s in stations %}
+    <tr>
+      <td>
+        <span class="dot dot-{{ s.status }}"></span>
+        {% if s.status == 'receiving' %}Recebendo dados
+        {% elif s.status == 'online' %}Online
+        {% elif s.status == 'offline' %}Offline
+        {% else %}Sem sinal{% endif %}
+      </td>
+      <td><a href="{{ url_for('pages.station_detail', station_id=s.id) }}"><strong>{{ s.id }}</strong></a><br><small>{{ s.name }}</small></td>
+      <td>{{ s.last_signal or '—' }}</td>
+      <td><small>{% if s.interval_min %}{{ s.interval_min }} min (limite {{ s.limit_seconds // 60 }} min){% else %}fallback {{ s.limit_seconds // 60 }} min{% endif %}</small></td>
+      <td>{{ s.files }}</td>
+      <td class="actions">
+        <a class="btn" href="{{ url_for('pages.station_detail', station_id=s.id) }}">Ver</a>
+        <a class="btn" href="{{ url_for('pages.station_edit', station_id=s.id) }}">Editar</a>
+        <form method="post" action="{{ url_for('pages.station_delete', station_id=s.id) }}"
+              onsubmit="return confirm('Remover a estação {{ s.id }} do dashboard? (dados em disco não são apagados)');">
+          <button class="btn btn-danger" type="submit">Remover</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ 'Editar arquivo — ' ~ fcfg.id if fcfg else 'Novo arquivo em monitoramento' }}
+    <small>estação {{ station.id }}</small></h1>
+
+<section class="card help-card">
+  <strong>Como o dashboard lê este arquivo:</strong> ele pega as <em>últimas N linhas</em>,
+  divide cada linha em colunas usando o <em>separador</em>, encontra o horário na
+  <em>coluna do timestamp</em> e plota <em>um gráfico por linha da tabela de variáveis</em>.
+  Use o botão <em>Pré-visualizar parse</em> para conferir se a divisão em colunas ficou
+  certa antes de salvar.
+  <br><small>Receita para <code>.dat</code> TOA5 (Campbell/LoggerNet): separador <code>,</code> ·
+  aspas <code>"</code> · pular <code>4</code> linhas de cabeçalho · nomes das colunas na linha
+  <code>2</code> · timestamp na coluna <code>0</code> com formato <code>%Y-%m-%d %H:%M:%S</code>.</small>
+</section>
+
+<form method="post" class="card form" id="file-form"
+      action="{{ url_for('pages.file_update', station_id=station.id, file_id=fcfg.id) if fcfg else url_for('pages.file_create', station_id=station.id) }}">
+
+  <label>Caminho do arquivo (.dat, .csv, ...)
+    <input name="path" required value="{{ fcfg.path if fcfg else '' }}"
+           placeholder="ex.: incoming/{{ station.id }}/{{ station.id }}.dat (relativo à raiz de dados) ou /caminho/absoluto">
+  </label>
+
+  <div class="grid-3">
+    <label>Linhas do final a plotar
+      <input name="tail_lines" type="number" min="1" max="10000"
+             value="{{ fcfg.tail_lines if fcfg else 100 }}">
+    </label>
+    <label>Separador de colunas
+      <input name="separator" value="{{ '\\t' if fcfg and fcfg.separator == '\t' else (fcfg.separator if fcfg else ',') }}">
+      <small>Use <code>\t</code> para tabulação.</small>
+    </label>
+    <label>Caractere de aspas
+      <input name="quotechar" value="{{ fcfg.quotechar if fcfg else '"' }}">
+      <small>TOA5 (Campbell) usa <code>"</code>.</small>
+    </label>
+  </div>
+
+  <div class="grid-3">
+    <label>Separador decimal
+      <input name="decimal" value="{{ fcfg.decimal if fcfg else '.' }}">
+    </label>
+    <label>Linhas de cabeçalho a pular
+      <input name="skip_header_lines" type="number" min="0" max="100"
+             value="{{ fcfg.skip_header_lines if fcfg else 0 }}">
+      <small>TOA5 = 4 · CSV com cabeçalho = 1.</small>
+    </label>
+    <label>Linha com os nomes das colunas (opcional)
+      <input name="header_line" type="number" min="1" max="100"
+             value="{{ fcfg.header_line if fcfg and fcfg.header_line else '' }}">
+      <small>TOA5 = 2. Permite referenciar colunas por nome.</small>
+    </label>
+  </div>
+
+  <div class="grid-3">
+    <label>Coluna do timestamp
+      <input name="ts_column" value="{{ fcfg.timestamp.column if fcfg else 0 }}">
+      <small>Índice (0 = primeira) ou nome da coluna.</small>
+    </label>
+    <label>Formato do timestamp
+      <input name="ts_format" value="{{ fcfg.timestamp.format if fcfg else '%Y-%m-%d %H:%M:%S' }}">
+      <small>Formato Python, ex.: <code>%Y-%m-%d %H:%M:%S</code>.</small>
+    </label>
+  </div>
+
+  <h2>Variáveis a plotar</h2>
+  <div class="help-card">
+    <strong>Cada linha desta tabela = uma variável = um gráfico.</strong>
+    <ul class="help-list">
+      <li><em>Coluna</em> — onde o valor está em cada linha do arquivo: um índice
+          (<code>0</code> = primeira coluna, <code>1</code> = segunda, …) <strong>ou</strong> o
+          nome exato da coluna (ex.: <code>PanelDgC</code>), se a "linha com os nomes das
+          colunas" foi indicada acima.</li>
+      <li><em>Rótulo</em> — o título que aparece no gráfico (ex.: "Temperatura do painel").</li>
+      <li><em>Unidade</em> — só para exibição na legenda (ex.: <code>°C</code>, <code>V</code>, <code>%</code>).</li>
+      <li><em>Mín / Máx físicos</em> (opcionais) — limites plausíveis da variável: viram
+          <strong>linhas tracejadas de marcação</strong> no gráfico e os trechos fora deles
+          ficam <strong style="color:#d64545">vermelhos</strong> — dado bom vs. dado ruim à
+          primeira vista (mesma ideia do range_check da camada de processamento).</li>
+    </ul>
+    <small>Use <em>+ Variável</em> para acrescentar linhas e <em>×</em> para remover.
+    Valores não numéricos (<code>NAN</code> etc.) viram lacunas no gráfico.</small>
+  </div>
+  <table class="table" id="vars-table">
+    <thead><tr><th>Coluna</th><th>Rótulo</th><th>Unidade</th><th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
+    <tbody>
+    {% for v in (fcfg.variables if fcfg else [{'column': '', 'label': '', 'unit': ''}]) %}
+      <tr>
+        <td><input name="var_column" value="{{ v.column }}"></td>
+        <td><input name="var_label" value="{{ v.label }}"></td>
+        <td><input name="var_unit" value="{{ v.unit or '' }}"></td>
+        <td><input name="var_min" value="{{ v.min if v.min is not none else '' }}" placeholder="—" class="num-input"></td>
+        <td><input name="var_max" value="{{ v.max if v.max is not none else '' }}" placeholder="—" class="num-input"></td>
+        <td><button type="button" class="btn btn-danger btn-remove-var">×</button></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <button type="button" class="btn" id="btn-add-var">+ Variável</button>
+
+  <div class="form-actions">
+    <button type="button" class="btn" id="btn-preview">👁 Pré-visualizar parse</button>
+    <button class="btn btn-primary" type="submit">Salvar</button>
+    <a class="btn" href="{{ url_for('pages.station_detail', station_id=station.id) }}">Cancelar</a>
+  </div>
+
+  <div id="preview-area"></div>
+</form>
+{% endblock %}
