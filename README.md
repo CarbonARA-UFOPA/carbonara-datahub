@@ -16,41 +16,46 @@ flowchart TB
     subgraph field["Field stations (Linux / Windows)"]
         direction TB
         ST["Datalogger files<br/>(e.g. Campbell LoggerNet)"]
-        CL["Station client<br/>collection/station/"]
+        CL["Station client<br/>(collection/station/)"]
         ST --> CL
     end
 
     subgraph hub["Central server (this repo)"]
         direction TB
-        RH["rsync-hub<br/>forced command + rrsync -wo<br/>(native on host)"]
+        RH["rsync-hub — receives the uploads<br/>(each station confined, write-only,<br/>to its own folder)"]
         INC[("incoming/&lt;station_id&gt;/")]
-        ING["ingestion<br/>parse (pluggable parsers)"]
-        PROC["processing<br/>QA/QC checks → quality flag"]
+        PARSE["1 · parse &amp; format<br/>(pluggable parsers)"]
+        QC["2 · quality control<br/>(processing/ checks set the quality flag)"]
+        LOAD["3 · load into the database<br/>(idempotent insert, rows already flagged)"]
+        DB[("TimescaleDB<br/>measurements")]
         QUA[("quarantine/<br/>invalid files")]
         ARC[("archive/<br/>processed files")]
-        DB[("TimescaleDB<br/>measurements hypertable")]
         FTP["FTP / FTPS<br/>read-only distribution"]
 
         RH --> INC
-        INC --> ING
-        ING -- "parsed measurements" --> PROC
-        PROC -- "insert with flag<br/>(idempotent)" --> DB
-        ING -- "ok" --> ARC
-        ING -- "error" --> QUA
+        INC --> PARSE
+        PARSE --> QC
+        QC --> LOAD
+        LOAD --> DB
+        PARSE -- "invalid file" --> QUA
+        LOAD -- "file archived" --> ARC
         ARC --> FTP
     end
 
     CONS["Downstream consumers<br/>(analysis, dashboards)"]
 
-    CL -- "rsync over SSH · port 22 (key)<br/>or rsync daemon · port 873 (password)" --> RH
+    CL -- "rsync · SSH key (port 22)<br/>or password (port 873)" --> RH
     FTP --> CONS
     DB --> CONS
 ```
 
 Each station only ever *pushes*: its SSH key (or rsync-daemon account) is confined,
-write-only, to its own `incoming/<station_id>/` directory. Everything to the right of
-the landing directory is transport-agnostic — it does not know or care how a file
-arrived. `rsync-hub monitor` shows connections and per-station liveness in real time.
+write-only, to its own `incoming/<station_id>/` directory. Everything below the landing
+directory is transport-agnostic — it does not know or care how a file arrived. Steps
+1–3 run inside the `ingestion` service: parsers format the raw files, the QC checks
+from `processing/` qualify every measurement **before** it reaches the database, and
+rows are inserted already carrying their quality flag. `rsync-hub monitor` shows
+connections and per-station liveness in real time.
 
 ## Components
 
