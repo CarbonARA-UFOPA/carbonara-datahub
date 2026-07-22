@@ -1,0 +1,12 @@
+# O build context da ingestão é a raiz do repo (para incluir processing/).
+# Mantenha fora do context tudo que não entra na imagem — em especial data/,
+# que em dev pode ser grande.
+.git
+data
+collection
+database
+docs
+examples
+ftp
+*.md
+.env

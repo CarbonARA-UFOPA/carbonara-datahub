@@ -1,6 +1,6 @@
 # docker-compose.yml — serviços centrais do CARBONARA na workstation.
-# Sobe: (1) TimescaleDB, (2) ingestão, (3) processamento QA/QC, (4) FTP de distribuição
-# (read-only).
+# Sobe: (1) TimescaleDB, (2) ingestão (com QA/QC embutido, biblioteca processing/),
+# (3) FTP de distribuição (read-only).
 # A COLETA das estações NÃO é feita aqui: é rsync-over-SSH nativo no host, pelo script
 # `rsync-hub` (que também monitora as conexões). O FTP virou só ponto de saída.
 # Uso: cp .env.example .env && docker compose up -d
@@ -63,12 +63,16 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------------------
-  # Serviço de ingestão — observa incoming/, faz parse e carrega no TimescaleDB.
-  # Só conhece o diretório onde os arquivos pousam; é independente de COMO chegaram
-  # (rsync-over-SSH hoje). incoming/ é mapeado para /data/landing dentro do container.
+  # Serviço de ingestão — observa incoming/, faz parse, aplica o QA/QC em memória
+  # (biblioteca processing/, flag calculado ANTES do insert) e carrega no
+  # TimescaleDB. Só conhece o diretório onde os arquivos pousam; é independente de
+  # COMO chegaram (rsync-over-SSH hoje). incoming/ vira /data/landing no container.
+  # Build context = raiz do repo, para a imagem incluir processing/.
   # ---------------------------------------------------------------------------
   ingestion:
-    build: ./ingestion
+    build:
+      context: .
+      dockerfile: ingestion/Dockerfile
     container_name: carbonara-ingestion
     restart: unless-stopped
     depends_on:
@@ -86,28 +90,7 @@ services:
       - ${CARBONARA_ROOT:-./data}/archive:/data/archive
       - ${CARBONARA_ROOT:-./data}/quarantine:/data/quarantine
       - ./ingestion/config.yaml:/app/config.yaml:ro
-
-  # ---------------------------------------------------------------------------
-  # Serviço de processamento (QA/QC) — avalia as medições recém-inseridas e marca
-  # a coluna quality com flags (ver processing/README.md). Só fala com o banco:
-  # não monta diretórios de dados nem conhece o transporte.
-  # ---------------------------------------------------------------------------
-  processing:
-    build: ./processing
-    container_name: carbonara-processing
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: "${DB_USER}"
-      DB_PASSWORD: "${DB_PASSWORD}"
-      DB_NAME: "${DB_NAME:-carbonara}"
-      PROCESSING_POLL_SECONDS: "${PROCESSING_POLL_SECONDS:-60}"
-    volumes:
-      - ./processing/config.yaml:/app/config.yaml:ro
+      - ./processing/config.yaml:/app/processing/config.yaml:ro
 
 # A coleta (rsync-over-SSH) e o monitor rodam NATIVOS no host, pelo script
 # `collection/rsync-hub` (não são serviços do compose). Ver o README.

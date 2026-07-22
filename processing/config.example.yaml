@@ -1,9 +1,8 @@
 # config.example.yaml — copie para config.yaml e ajuste.
-# Define as regras de QA/QC aplicadas às medições recém-inseridas.
-# Convenção de flags em measurements.quality: 0=ok/não avaliado, 1=parse inválido
-# (ingestão), 2=fora da faixa, 3+ reservado (ver processing/checks/base.py).
-
-poll_seconds: 60      # de quanto em quanto tempo avaliar as medições novas
+# Regras de QA/QC aplicadas pela INGESTÃO a cada medição parseada, ANTES do insert:
+# o flag calculado aqui entra junto com a linha em measurements.quality.
+# Convenção de flags: 0=ok, 1=parse inválido (parser), 2=fora da faixa, 3+ reservado
+# (ver processing/checks/base.py). O primeiro check violado decide o flag.
 
 checks:
   - check: range_check

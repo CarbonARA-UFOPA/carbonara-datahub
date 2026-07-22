@@ -127,7 +127,8 @@ cp ingestion/config.example.yaml ingestion/config.yaml
 # Ajuste o mapa coluna->variável (bloco `columns:`) conforme os dataloggers reais.
 
 cp processing/config.example.yaml processing/config.yaml
-# Ajuste as faixas físicas válidas por variável (ver processing/README.md).
+# Faixas físicas válidas por variável — o QC roda DENTRO da ingestão, antes do
+# insert (ver processing/README.md).
 ```
 
 ### B3. Gerar o certificado TLS do FTP (FTPS)
@@ -144,7 +145,7 @@ chmod 600 ftp/tls/pure-ftpd.pem
 
 ```bash
 docker compose up -d
-docker compose ps          # db, ingestion, processing e ftp devem ficar "healthy"/"running"
+docker compose ps          # db, ingestion e ftp devem ficar "healthy"/"running"
 docker compose logs -f ingestion
 ```
 

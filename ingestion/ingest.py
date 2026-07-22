@@ -7,7 +7,9 @@ se o arquivo chegou via FTP, SFTP ou rsync — só vê o diretório.
 
 Fluxo por arquivo:
     landing/<station_id>/arquivo.csv
-        -> escolhe o parser (config) -> parse -> INSERT em measurements (idempotente)
+        -> escolhe o parser (config) -> parse
+        -> QA/QC em memória (processing.QualityPipeline calcula o flag `quality`)
+        -> INSERT em measurements (idempotente, já com o flag)
         -> move para archive/<station_id>/<YYYY-MM-DD>/   (sucesso)
         -> move para quarantine/<station_id>/             (erro)
 
@@ -27,6 +29,7 @@ import yaml
 from psycopg2.extras import execute_values
 
 import parsers  # registra os parsers via __init__
+from processing import QualityPipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -131,18 +134,22 @@ def discover_files(landing: Path, settle_seconds: int) -> list[Path]:
     return ready
 
 
-def process_file(conn, f: Path, landing: Path, cfg: dict, paths: dict) -> None:
+def process_file(conn, f: Path, landing: Path, cfg: dict, paths: dict, qc: QualityPipeline) -> None:
     station_id = f.relative_to(landing).parts[0]
     try:
         parser = parser_for(station_id, cfg)
         ensure_station(conn, station_id)
         rows = [
-            (m.time, m.station_id, m.variable_id, m.value, m.quality, f.name)
+            (m.time, m.station_id, m.variable_id, m.value, qc.evaluate(m), f.name)
             for m in parser.parse(str(f), station_id)
         ]
+        flagged = sum(1 for r in rows if r[4] != 0)
         inserted = insert_measurements(conn, rows)
         archive(f, paths["archive"], station_id)
-        log.info("%s: %d medições lidas, %d novas inseridas", f.name, len(rows), inserted)
+        log.info(
+            "%s: %d medições lidas, %d novas inseridas, %d com flag de qualidade",
+            f.name, len(rows), inserted, flagged,
+        )
     except Exception:  # noqa: BLE001 — qualquer falha isola o arquivo, não derruba o serviço
         conn.rollback()
         log.exception("falha ao processar %s; movendo para quarantine", f)
@@ -162,12 +169,19 @@ def main() -> int:
     for p in paths.values():
         p.mkdir(parents=True, exist_ok=True)
 
+    qc_path = os.environ.get("PROCESSING_CONFIG", "processing/config.yaml")
+    qc = QualityPipeline.from_file(qc_path)
+    if qc.checks:
+        log.info("QA/QC ativo: %d checks (%s)", len(qc.checks), qc_path)
+    else:
+        log.warning("QA/QC desativado: config %s ausente ou sem checks", qc_path)
+
     log.info("ingestão iniciada (poll=%ss, landing=%s)", poll, paths["landing"])
     conn = psycopg2.connect(**db_dsn())
     try:
         while True:
             for f in discover_files(paths["landing"], settle):
-                process_file(conn, f, paths["landing"], cfg, paths)
+                process_file(conn, f, paths["landing"], cfg, paths, qc)
             time.sleep(poll)
     except KeyboardInterrupt:
         log.info("encerrando ingestão")

@@ -26,8 +26,8 @@ docker compose ps                                 # all should be healthy/runnin
 docker compose logs -f ingestion
 ```
 
-Compose services: `db`, `ingestion`, `processing` (QA/QC), and `ftp` (now read-only
-distribution). Collection is
+Compose services: `db`, `ingestion` (with the QA/QC library from `processing/` built in),
+and `ftp` (now read-only distribution). Collection is
 **not** a Compose service — it's the `rsync-hub` script running natively on the host (see the
 collection layer below); prep the host with `sudo ./collection/rsync-hub install`.
 
@@ -37,7 +37,9 @@ Notes:
 - `CARBONARA_ROOT` sets the data-volume root: defaults to `./data` for local dev, set it to
   `/srv/carbonara` in production (where the native sshd writes `incoming/`). Subdirs are
   `incoming/`, `archive/`, `quarantine/`, `log/`.
-- Rebuild a service after code changes: `docker compose up -d --build ingestion` (or `processing`).
+- Rebuild after code changes: `docker compose up -d --build ingestion` (also required after
+  editing `processing/` — the QC library is baked into the ingestion image, whose build
+  context is the **repo root**; keep `.dockerignore` excluding `data/`).
 - DB init SQL (`database/init/0{1,2,3}_*.sql`) runs **only on first start** with an empty
   `db_data` volume. To re-run schema changes during dev, `docker compose down -v` wipes the
   volume (destroys all data) then `up -d`.
@@ -66,9 +68,9 @@ Full rationale in `docs/architecture.md`.
 2. **Ingestion/parsing** (`ingestion/`) — turns files into DB rows. It is **deliberately blind
    to transport**: it only watches the landing directory and does not know how a file arrived.
    Untouched by the FTP→rsync migration.
-3. **Processing/QA-QC** (`processing/`) — flags freshly ingested rows in
-   `measurements.quality` via pluggable checks. Talks **only to the DB** — knows nothing
-   about files or transport; never modifies `value`, only `quality`.
+3. **Processing/QA-QC** (`processing/`) — a **library** the ingestion service runs
+   between parse and insert: pluggable checks compute each measurement's `quality` flag
+   in memory, so rows land in the DB already qualified. Never modifies or drops values.
 4. **Storage** (TimescaleDB) — persists the time series.
 
 Data flow: `station → rsync/ssh → /srv/carbonara/incoming/<station_id>/ → ingestion (parse) →
@@ -263,27 +265,33 @@ Parsers are a plugin registry (`ingestion/parsers/base.py`). To add one:
 routes the file to quarantine. The included `csv_generic` parser is config-driven: `columns:`
 maps CSV column → `variable_id`, non-numeric values become `NULL` with `quality=1`.
 
-## Processing service (`processing/`)
+## Processing library (`processing/`)
 
-Periodic QA/QC pass over freshly ingested rows (`process.py`), mirroring the ingestion
-conventions. Key invariants when editing:
+QA/QC applied **in memory, between parse and insert** — not a standalone service: the
+ingestion container imports `processing.QualityPipeline`, builds it once at startup from
+`processing/config.yaml` (mounted read-only; env `PROCESSING_CONFIG` overrides the path)
+and calls `evaluate(measurement)` per parsed measurement; the returned int is what gets
+inserted into `measurements.quality`. Key invariants when editing:
 
-- **Watermark-driven**: `processing_state.qc_watermark` (table self-created by the service,
-  independent of `database/init/`) holds the highest `ingested_at` already evaluated. Each
-  pass evaluates only the new window and advances the watermark **only if every check
-  succeeded** — a failed check means the whole window is re-evaluated next pass.
-- **Checks are idempotent**: they must only touch rows with `quality = 0` (never overwrite a
-  flag set by ingestion or another check), so re-running a window is always safe. Keep them
-  set-based (SQL `UPDATE`), never row-by-row in Python.
-- **Never modify `value`** — raw data stays auditable; this layer writes `quality` only.
+- **Parse flags win**: `evaluate()` returns the parser's flag untouched when
+  `quality != 0`; the **first** violated check decides otherwise (order checks in the
+  config from most to least severe).
+- **Never modify or drop a measurement** — every row still enters the DB; rejection is
+  only ever `quality != 0`, keeping raw data auditable.
+- **Missing/empty config = QC disabled**, with a warning at ingestion startup — never a
+  crash. Checks must be cheap (they run per measurement per file).
+- **No retroactive re-evaluation**: inserts are `ON CONFLICT DO NOTHING`, so rule changes
+  apply to new rows only; history is re-evaluated by re-dropping archived files into
+  `incoming/` (idempotent inserts make this safe for values, but note conflicting rows
+  keep their original flag).
 - **Flag convention** (documented in `checks/base.py` and `processing/README.md`):
-  `0` ok/unevaluated, `1` parse-invalid (set by ingestion), `2` out of physical range
-  (`range_check`), `3+` reserved. New rules claim the next free flag and document it.
+  `0` ok, `1` parse-invalid (parser), `2` out of physical range (`range_check`),
+  `3+` reserved. New rules claim the next free flag via `default_flag` and document it.
 - **Adding a check = plugin registry** (same pattern as parsers): subclass `Check` in
-  `processing/checks/`, decorate with `@register("name")`, import it in
-  `checks/__init__.py`, reference it in `processing/config.yaml` under `checks:`.
-  `process.py` itself does not change. A check failure is isolated (rollback + log), never
-  crashes the loop.
+  `processing/checks/` implementing `violates(measurement) -> bool`, decorate with
+  `@register("name")`, import it in `checks/__init__.py`, reference it in
+  `processing/config.yaml` under `checks:`, then rebuild the ingestion image.
+  `pipeline.py` and `ingest.py` do not change.
 
 ## Data model (TimescaleDB)
 

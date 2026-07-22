@@ -11,6 +11,7 @@ the processed files downstream via read-only FTP.
 ## How it all works
 
 ```mermaid
+%%{init: {"flowchart": {"useMaxWidth": false}}}%%
 flowchart TB
     subgraph field["Field stations (Linux / Windows)"]
         direction TB
@@ -24,18 +25,18 @@ flowchart TB
         RH["rsync-hub<br/>forced command + rrsync -wo<br/>(native on host)"]
         INC[("incoming/&lt;station_id&gt;/")]
         ING["ingestion<br/>parse (pluggable parsers)"]
+        PROC["processing<br/>QA/QC checks → quality flag"]
         QUA[("quarantine/<br/>invalid files")]
         ARC[("archive/<br/>processed files")]
         DB[("TimescaleDB<br/>measurements hypertable")]
-        PROC["processing<br/>QA/QC checks → quality flags"]
         FTP["FTP / FTPS<br/>read-only distribution"]
 
         RH --> INC
         INC --> ING
-        ING -- "insert (idempotent)" --> DB
+        ING -- "parsed measurements" --> PROC
+        PROC -- "insert with flag<br/>(idempotent)" --> DB
         ING -- "ok" --> ARC
         ING -- "error" --> QUA
-        DB <--> PROC
         ARC --> FTP
     end
 
@@ -60,8 +61,8 @@ runs in **Docker Compose**:
 |-----------|------------|
 | `rsync-hub` (host) | **One script** that does all of collection: authorizes/removes/lists stations, monitors connections (live mode) and acts as the SSH forced command that confines each station (write-only) to its `incoming/<station_id>/` folder. |
 | `db` (compose) | PostgreSQL + **TimescaleDB** — stores the measurements (`measurements` as a hypertable, long/EAV model: new variables need no `ALTER TABLE`). |
-| `ingestion` (compose) | Python service that watches `incoming/`, parses files (pluggable parsers) and loads them into the database; moves processed files to `archive/` and failures to `quarantine/`. Inserts are idempotent — reprocessing never duplicates. |
-| `processing` (compose) | QA/QC service: periodically evaluates freshly ingested measurements with pluggable checks and marks `measurements.quality` flags. Never modifies raw values. |
+| `ingestion` (compose) | Python service that watches `incoming/`, parses files (pluggable parsers), runs the QC pipeline and loads the flagged measurements into the database; moves processed files to `archive/` and failures to `quarantine/`. Inserts are idempotent — reprocessing never duplicates. |
+| `processing/` (library) | QA/QC pipeline applied **in memory, between parse and insert**: pluggable checks compute the `quality` flag each measurement carries into the database. Raw values are never modified or dropped. Runs inside the ingestion container. |
 | `ftp` (compose) | **Read-only distribution**: serves `archive/` to downstream consumers. It no longer receives data (collection migrated from FTP to rsync-over-SSH). |
 
 ## Collection (`collection/`): guided host (`rsync-hub`) + station clients
@@ -105,7 +106,7 @@ cp ingestion/config.example.yaml ingestion/config.yaml   # CSV column → variab
 cp processing/config.example.yaml processing/config.yaml # valid physical ranges per variable
 # generate the FTP TLS certificate (see ftp/README.md)
 docker compose up -d
-docker compose ps                                        # db, ingestion, processing, ftp
+docker compose ps                                        # db, ingestion, ftp
 ```
 
 End-to-end test without a real station: drop a sample CSV into the landing directory
@@ -123,13 +124,13 @@ Full walkthrough in [`docs/installation.md`](docs/installation.md).
 
 ```
 carbonara-datahub/
-├── docker-compose.yml        # db + ingestion + processing + ftp (distribution)
+├── docker-compose.yml        # db + ingestion (QC embedded) + ftp (distribution)
 ├── .env.example
 ├── collection/               # COLLECTION layer (rsync transport)
 │   ├── rsync-hub             #   HOST side: guided install + management + monitor + forced command
 │   └── station/              #   CLIENT side: guided assistants for Linux and Windows stations
 ├── ingestion/                # ingest.py + pluggable parsers + Dockerfile
-├── processing/               # QA/QC: pluggable checks flag measurements.quality
+├── processing/               # QA/QC library: pluggable checks flag quality before insert
 ├── database/init/            # idempotent SQL run on first start (schema + hypertable)
 ├── ftp/                      # FTP/FTPS config (distribution only) + operational docs in ftp/docs/
 ├── examples/                 # sample CSV for the end-to-end test
@@ -146,9 +147,10 @@ Long/EAV time-series model — adding a new measured quantity is an `INSERT` int
 - `measurements` — fact hypertable, natural key `(time, station_id, variable_id)`,
   auto-compression after 30 days, hourly continuous aggregate (`measurements_hourly`).
 
-`measurements.quality` convention: `0` ok/unevaluated · `1` parse-invalid (set by
-ingestion) · `2` out of physical range (set by processing) · `3+` reserved for future
-rules. Raw values are never altered — filter `quality = 0` for approved data.
+`measurements.quality` convention: `0` ok · `1` parse-invalid (set by the parser) ·
+`2` out of physical range (set by the QC pipeline) · `3+` reserved for future rules.
+Every row enters the database already flagged; raw values are never altered or
+dropped — filter `quality = 0` for approved data.
 
 ## Decoupled layers
 
@@ -157,9 +159,9 @@ connected only through the landing directory and the database:
 
 ```
 collection/  → transport      (file arrives)
-ingestion/   → parse + insert (file becomes raw rows)
-processing/  → QA/QC          (rows get quality flags)
-database/    → storage        (time series)
+ingestion/   → parse          (file becomes measurements)
+processing/  → QA/QC          (each measurement gets its quality flag, in memory)
+database/    → storage        (rows land already qualified)
 ```
 
 Ingestion depends **only** on the `incoming/` directory — it does not know how a file
