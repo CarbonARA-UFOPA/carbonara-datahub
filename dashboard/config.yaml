@@ -13,9 +13,9 @@ stations:
   name: FLONA Tapajós K67
   latitude: -3.5780411851564313
   longitude: -55.07432993308608
-  heartbeat_file: /Users/helvecioneto/pesquisa/flonak67/flonak67/.carbonara-status
+  heartbeat_file: /srv/carbonara/incoming/flonak67/.carbonara-status
   files:
-  - path: /Users/helvecioneto/pesquisa/flonak67/flonak67/CR1000_Proc3K.dat
+  - path: /srv/carbonara/incoming/flonak67/CR1000_Proc3K.dat
     tail_lines: 360
     separator: ','
     quotechar: '"'
