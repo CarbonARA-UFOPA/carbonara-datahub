@@ -16,6 +16,14 @@ connections_log: null
 # Janela de offline (s) para estações SEM heartbeat válido (espelha RSYNC_HUB_STALE).
 stale_fallback_seconds: 3600
 
+# Login de administração: a VISUALIZAÇÃO é aberta; EDITAR (cadastrar/remover) exige
+# login. Sem este bloco, a edição fica liberada (modo desenvolvimento).
+# Gere o hash com:
+#   python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('SUA-SENHA'))"
+# auth:
+#   username: carbonara
+#   password_hash: "scrypt:...cole o hash aqui..."
+
 stations:
   - id: flona01
     name: "FLONA Tapajós 01"

@@ -295,9 +295,12 @@ inserted into `measurements.quality`. Key invariants when editing:
 
 ## Acquisition dashboard (`dashboard/`)
 
-Preliminary admin dashboard (Flask + Chart.js, **runs natively on the host** — not in
-Compose): registers stations, tails configured `.dat` files for per-variable charts and
-computes live station status. Key points when editing:
+Data-acquisition monitoring dashboard ("Dashboard de Monitoramento de Aquisição de
+Dados", credited to Helvecio Neto in the UI footer — keep the credit). Flask +
+Chart.js, **runs natively on the host** — not in Compose: registers stations, tails
+configured `.dat` files for per-variable charts (with physical min/max limit lines) and
+computes live station status. Viewing is open; edits require the admin login
+(`auth:` block in config.yaml, hashed password). Key points when editing:
 
 - **Status logic is a Python port of `rsync-hub monitor`** (`app/status.py` mirrors
   `print_status` in `collection/rsync-hub`): last signal = max(heartbeat mtime, newest

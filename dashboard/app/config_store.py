@@ -22,6 +22,9 @@ DEFAULT_CONFIG: dict = {
     "data_root": "./data",           # /srv/carbonara em produção
     "connections_log": None,          # default: <data_root>/log/connections.log
     "stale_fallback_seconds": 3600,   # espelha RSYNC_HUB_STALE
+    # Login de administração (edições). null = edição liberada (dev).
+    # {username: ..., password_hash: <gerado com werkzeug generate_password_hash>}
+    "auth": None,
     "stations": [],
 }
 
@@ -38,7 +41,7 @@ class ConfigStore:
                 raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         cfg["server"].update(raw.get("server") or {})
-        for key in ("data_root", "connections_log", "stale_fallback_seconds"):
+        for key in ("data_root", "connections_log", "stale_fallback_seconds", "auth"):
             if raw.get(key) is not None:
                 cfg[key] = raw[key]
         cfg["stations"] = raw.get("stations") or []

@@ -4,8 +4,10 @@
 <div class="page-head">
   <h1>{{ station.name or station.id }} <small>({{ station.id }})</small></h1>
   <div>
-    <a class="btn" href="{{ url_for('pages.station_edit', station_id=station.id) }}">Editar estação</a>
-    <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station.id) }}">+ Adicionar arquivo</a>
+    {% if is_admin %}
+      <a class="btn" href="{{ url_for('pages.station_edit', station_id=station.id) }}">Editar estação</a>
+      <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station.id) }}">+ Adicionar arquivo</a>
+    {% endif %}
   </div>
 </div>
 
@@ -37,12 +39,14 @@
   <div class="page-head">
     <h2>{{ f.id }} <small><code>{{ f.path }}</code></small></h2>
     <div>
-      <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar</a>
-      <form method="post" style="display:inline"
-            action="{{ url_for('pages.file_delete', station_id=station.id, file_id=f.id) }}"
-            onsubmit="return confirm('Remover {{ f.id }} do monitoramento?');">
-        <button class="btn btn-danger" type="submit">Remover</button>
-      </form>
+      {% if is_admin %}
+        <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar</a>
+        <form method="post" style="display:inline"
+              action="{{ url_for('pages.file_delete', station_id=station.id, file_id=f.id) }}"
+              onsubmit="return confirm('Remover {{ f.id }} do monitoramento?');">
+          <button class="btn btn-danger" type="submit">Remover</button>
+        </form>
+      {% endif %}
     </div>
   </div>
   <p class="meta">

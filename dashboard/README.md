@@ -1,10 +1,12 @@
-# Dashboard de monitoramento de aquisição — `dashboard/`
+# Dashboard de Monitoramento de Aquisição de Dados — `dashboard/`
 
-Dashboard **preliminar** de administração da aquisição: cadastra estações, monitora
-arquivos de dados em tempo quase-real (tail dos `.dat`) e mostra o status de cada
-estação a partir do watchdog do `rsync-hub`. **Não lê o banco** — a dashboard completa
-virá depois, sobre os dados já ingeridos/qualificados; esta parte de administração fará
-parte dela.
+*by Helvecio Neto (2026)*
+
+Dashboard de **monitoramento de aquisição de dados** do CARBONARA: cadastra estações,
+monitora arquivos de dados em tempo quase-real (tail dos `.dat`) e mostra o status de
+cada estação a partir do watchdog do `rsync-hub`. **Não lê o banco** — a dashboard
+completa virá depois, sobre os dados já ingeridos/qualificados; esta parte de
+administração fará parte dela.
 
 Tecnologia deliberadamente simples: **Flask + Chart.js** (vendorado em `static/` —
 funciona sem internet), rodando **nativo no host**. Config em YAML, editada pela
@@ -61,6 +63,11 @@ Valores `NAN`/`±7999` viram lacunas no gráfico.
 
 - Somente leitura sobre os dados: remover estação/arquivo do dashboard **não** apaga
   nada em disco.
-- Sem autenticação — pensado para rede interna da workstation. Não exponha na internet.
+- **Login de administração** (bloco `auth:` do config.yaml): a visualização é aberta,
+  mas cadastrar/editar/remover exige login. A senha fica como **hash** (nunca texto
+  puro); para trocar: gere um hash novo com
+  `python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('NOVA-SENHA'))"`
+  e cole em `auth.password_hash`. Sem o bloco `auth:`, a edição fica liberada (dev).
+  Ainda assim, é pensado para rede interna — não exponha na internet (sem HTTPS aqui).
 - O status replica a lógica do `rsync-hub monitor`; se ela mudar lá
   (collection/rsync-hub, `print_status`), atualize `app/status.py` junto.

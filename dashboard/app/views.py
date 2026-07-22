@@ -1,5 +1,14 @@
-"""Páginas HTML (Jinja) — lista de estações, detalhe e formulários de cadastro."""
+"""Páginas HTML (Jinja) — lista de estações, detalhe, formulários e login de admin.
+
+Modelo de acesso: VISUALIZAR é aberto (monitor de rede interna); qualquer EDIÇÃO
+(cadastros, remoções, troca de caminho) exige login de administração, definido no
+bloco ``auth:`` do config.yaml (hash de senha — nunca texto puro). Sem bloco
+``auth:``, a edição fica liberada (modo desenvolvimento).
+"""
 from __future__ import annotations
+
+import secrets
+from functools import wraps
 
 from flask import (
     Blueprint,
@@ -9,12 +18,67 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
+from werkzeug.security import check_password_hash
 
 from . import config_store, status
 
 pages = Blueprint("pages", __name__)
+
+
+# --- Autenticação de administração -------------------------------------------------
+def auth_enabled(cfg) -> bool:
+    return bool(cfg.get("auth"))
+
+
+def _check_login(cfg, username: str, password: str) -> bool:
+    auth = cfg.get("auth") or {}
+    if not secrets.compare_digest(username, str(auth.get("username") or "")):
+        return False
+    if auth.get("password_hash"):
+        return check_password_hash(auth["password_hash"], password)
+    # fallback: senha em texto no config (desaconselhado; prefira password_hash)
+    return bool(auth.get("password")) and secrets.compare_digest(str(auth["password"]), password)
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        cfg = _load()
+        if auth_enabled(cfg) and not session.get("admin"):
+            if request.path.startswith("/api"):
+                from flask import jsonify
+                return jsonify({"error": "Login de administração necessário."}), 401
+            flash("Faça login para editar.", "error")
+            return redirect(url_for("pages.login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@pages.get("/login")
+def login():
+    return render_template("login.html")
+
+
+@pages.post("/login")
+def login_post():
+    cfg = _load()
+    if _check_login(cfg, request.form.get("username", ""), request.form.get("password", "")):
+        session["admin"] = True
+        flash("Login de administração efetuado.", "ok")
+        nxt = request.form.get("next") or ""
+        return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("pages.index"))
+    flash("Usuário ou senha incorretos.", "error")
+    return render_template("login.html"), 401
+
+
+@pages.post("/logout")
+def logout():
+    session.pop("admin", None)
+    flash("Sessão de administração encerrada.", "ok")
+    return redirect(url_for("pages.index"))
 
 
 def _load():
@@ -72,11 +136,13 @@ def compare():
 
 # --- Estações ---------------------------------------------------------------------
 @pages.get("/stations/new")
+@admin_required
 def station_new():
     return render_template("station_form.html", station=None)
 
 
 @pages.post("/stations")
+@admin_required
 def station_create():
     cfg = _load()
     station, errors = config_store.validate_station(request.form, is_new=True, cfg=cfg)
@@ -102,6 +168,7 @@ def station_detail(station_id):
 
 
 @pages.get("/stations/<station_id>/edit")
+@admin_required
 def station_edit(station_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
@@ -109,6 +176,7 @@ def station_edit(station_id):
 
 
 @pages.post("/stations/<station_id>/edit")
+@admin_required
 def station_update(station_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
@@ -125,6 +193,7 @@ def station_update(station_id):
 
 
 @pages.post("/stations/<station_id>/delete")
+@admin_required
 def station_delete(station_id):
     cfg = _load()
     _station_or_404(cfg, station_id)
@@ -136,6 +205,7 @@ def station_delete(station_id):
 
 # --- Arquivos monitorados ---------------------------------------------------------
 @pages.get("/stations/<station_id>/files/new")
+@admin_required
 def file_new(station_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
@@ -143,6 +213,7 @@ def file_new(station_id):
 
 
 @pages.post("/stations/<station_id>/files")
+@admin_required
 def file_create(station_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
@@ -159,6 +230,7 @@ def file_create(station_id):
 
 
 @pages.get("/stations/<station_id>/files/<file_id>/edit")
+@admin_required
 def file_edit(station_id, file_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
@@ -169,6 +241,7 @@ def file_edit(station_id, file_id):
 
 
 @pages.post("/stations/<station_id>/files/<file_id>/edit")
+@admin_required
 def file_update(station_id, file_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
@@ -188,6 +261,7 @@ def file_update(station_id, file_id):
 
 
 @pages.post("/stations/<station_id>/files/<file_id>/path")
+@admin_required
 def file_update_path(station_id, file_id):
     """Atalho da tela 'Editar estação': troca só o caminho do arquivo monitorado."""
     cfg = _load()
@@ -216,6 +290,7 @@ def file_update_path(station_id, file_id):
 
 
 @pages.post("/stations/<station_id>/files/<file_id>/delete")
+@admin_required
 def file_delete(station_id, file_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)

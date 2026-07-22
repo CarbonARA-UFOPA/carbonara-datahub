@@ -25,7 +25,13 @@ def create_app(config_path: str) -> Flask:
 
     @app.context_processor
     def _globals():
+        from flask import session
+
         cfg = app.store.load()
-        return {"refresh_seconds": cfg["server"].get("refresh_seconds", 60)}
+        return {
+            "refresh_seconds": cfg["server"].get("refresh_seconds", 60),
+            "auth_enabled": bool(cfg.get("auth")),
+            "is_admin": bool(session.get("admin")) or not cfg.get("auth"),
+        }
 
     return app

@@ -69,7 +69,7 @@ runs in **Docker Compose**:
 | `ingestion` (compose) | Python service that watches `incoming/`, parses files (pluggable parsers), runs the QC pipeline and loads the flagged measurements into the database; moves processed files to `archive/` and failures to `quarantine/`. Inserts are idempotent — reprocessing never duplicates. |
 | `processing/` (library) | QA/QC pipeline applied **in memory, between parse and insert**: pluggable checks compute the `quality` flag each measurement carries into the database. Raw values are never modified or dropped. Runs inside the ingestion container. |
 | `ftp` (compose) | **Read-only distribution**: serves `archive/` to downstream consumers. It no longer receives data (collection migrated from FTP to rsync-over-SSH). |
-| `dashboard/` (native) | **Preliminary acquisition-monitoring dashboard** (Flask + Chart.js, no Docker): register stations, watch `.dat` files (tail + per-variable charts) and show live station status from the rsync-hub heartbeat. Everything configurable via the UI. The full dashboard (reading the DB) comes later. |
+| `dashboard/` (native) | **Data-acquisition monitoring dashboard** (Flask + Chart.js, no Docker; by Helvecio Neto): register stations, watch `.dat` files (tail + per-variable charts with physical limits) and show live station status from the rsync-hub heartbeat. Viewing is open; editing requires the admin login. The full dashboard (reading the DB) comes later. |
 
 ## Collection (`collection/`): guided host (`rsync-hub`) + station clients
 

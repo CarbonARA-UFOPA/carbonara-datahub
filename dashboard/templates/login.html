@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Entrar · CARBONARA{% endblock %}
+{% block content %}
+<h1>Login de administração</h1>
+<form method="post" action="{{ url_for('pages.login_post') }}" class="card form login-card">
+  <p class="meta">A visualização é aberta — o login é necessário apenas para
+     <strong>editar</strong> (cadastrar/remover estações e arquivos).</p>
+  <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
+  <label>Usuário
+    <input name="username" autocomplete="username" required autofocus>
+  </label>
+  <label>Senha
+    <input name="password" type="password" autocomplete="current-password" required>
+  </label>
+  <div class="form-actions">
+    <button class="btn btn-primary" type="submit">Entrar</button>
+    <a class="btn" href="{{ url_for('pages.index') }}">Voltar</a>
+  </div>
+</form>
+{% endblock %}

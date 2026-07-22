@@ -27,11 +27,13 @@
       <td>{{ s.files }}</td>
       <td class="actions">
         <a class="btn" href="{{ url_for('pages.station_detail', station_id=s.id) }}">Ver</a>
-        <a class="btn" href="{{ url_for('pages.station_edit', station_id=s.id) }}">Editar</a>
-        <form method="post" action="{{ url_for('pages.station_delete', station_id=s.id) }}"
-              onsubmit="return confirm('Remover a estação {{ s.id }} do dashboard? (dados em disco não são apagados)');">
-          <button class="btn btn-danger" type="submit">Remover</button>
-        </form>
+        {% if is_admin %}
+          <a class="btn" href="{{ url_for('pages.station_edit', station_id=s.id) }}">Editar</a>
+          <form method="post" action="{{ url_for('pages.station_delete', station_id=s.id) }}"
+                onsubmit="return confirm('Remover a estação {{ s.id }} do dashboard? (dados em disco não são apagados)');">
+            <button class="btn btn-danger" type="submit">Remover</button>
+          </form>
+        {% endif %}
       </td>
     </tr>
   {% endfor %}

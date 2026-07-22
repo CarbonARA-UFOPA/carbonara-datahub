@@ -4,6 +4,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, jsonify, request
 
 from . import config_store, series, status
+from .views import admin_required
 
 api = Blueprint("api", __name__)
 
@@ -30,6 +31,7 @@ def file_series(station_id: str, file_id: str):
 
 
 @api.post("/preview")
+@admin_required
 def preview():
     cfg = current_app.store.load()
     entry, errors = config_store.validate_file_entry(request.form)

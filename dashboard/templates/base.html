@@ -3,16 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}CARBONARA · Monitoramento{% endblock %}</title>
+  <title>{% block title %}CARBONARA · Monitoramento de Aquisição de Dados{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {% block head %}{% endblock %}
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="{{ url_for('pages.index') }}">🌳 CARBONARA · Monitoramento de aquisição</a>
+    <a class="brand" href="{{ url_for('pages.index') }}">🌳 CARBONARA · Monitoramento de Aquisição de Dados</a>
     <nav>
       <a href="{{ url_for('pages.compare') }}" class="btn nav-btn">📊 Comparar</a>
-      <a href="{{ url_for('pages.station_new') }}" class="btn btn-primary">+ Nova estação</a>
+      {% if is_admin %}
+        <a href="{{ url_for('pages.station_new') }}" class="btn btn-primary">+ Nova estação</a>
+      {% endif %}
+      {% if auth_enabled %}
+        {% if is_admin %}
+          <form method="post" action="{{ url_for('pages.logout') }}" class="nav-form">
+            <button class="btn nav-btn" type="submit">Sair 🔓</button>
+          </form>
+        {% else %}
+          <a href="{{ url_for('pages.login') }}" class="btn nav-btn">🔒 Entrar</a>
+        {% endif %}
+      {% endif %}
     </nav>
   </header>
   <main class="{% block main_class %}{% endblock %}">
@@ -24,8 +35,8 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="foot">
-    Dashboard preliminar de administração da aquisição — os dados definitivos vêm do
-    fluxo de ingestão/QC. Atualização automática a cada {{ refresh_seconds }} s.
+    <strong>Dashboard de Monitoramento de Aquisição de Dados</strong> · CARBONARA —
+    by Helvecio Neto (2026). Atualização automática a cada {{ refresh_seconds }} s.
   </footer>
   <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
   <script>window.REFRESH_SECONDS = {{ refresh_seconds }};</script>
