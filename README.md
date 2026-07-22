@@ -11,35 +11,37 @@ the processed files downstream via read-only FTP.
 ## How it all works
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph field["Field stations (Linux / Windows)"]
+        direction TB
         ST["Datalogger files<br/>(e.g. Campbell LoggerNet)"]
         CL["Station client<br/>collection/station/"]
         ST --> CL
     end
 
     subgraph hub["Central server (this repo)"]
+        direction TB
         RH["rsync-hub<br/>forced command + rrsync -wo<br/>(native on host)"]
         INC[("incoming/&lt;station_id&gt;/")]
         ING["ingestion<br/>parse (pluggable parsers)"]
-        ARC[("archive/")]
-        QUA[("quarantine/")]
+        QUA[("quarantine/<br/>invalid files")]
+        ARC[("archive/<br/>processed files")]
         DB[("TimescaleDB<br/>measurements hypertable")]
         PROC["processing<br/>QA/QC checks → quality flags"]
         FTP["FTP / FTPS<br/>read-only distribution"]
+
+        RH --> INC
+        INC --> ING
+        ING -- "insert (idempotent)" --> DB
+        ING -- "ok" --> ARC
+        ING -- "error" --> QUA
+        DB <--> PROC
+        ARC --> FTP
     end
 
     CONS["Downstream consumers<br/>(analysis, dashboards)"]
 
-    CL -- "rsync over SSH · port 22 (key)" --> RH
-    CL -- "rsync daemon · port 873 (password)" --> RH
-    RH --> INC
-    INC --> ING
-    ING -- "parsed OK → insert (idempotent)" --> DB
-    ING -- "file processed" --> ARC
-    ING -- "invalid file" --> QUA
-    DB <--> PROC
-    ARC --> FTP
+    CL -- "rsync over SSH · port 22 (key)<br/>or rsync daemon · port 873 (password)" --> RH
     FTP --> CONS
     DB --> CONS
 ```
