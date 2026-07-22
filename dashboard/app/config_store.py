@@ -16,6 +16,7 @@ from pathlib import Path
 import yaml
 
 ID_RE = re.compile(r"^[a-z0-9_-]+$")
+INT_RE = re.compile(r"^-?\d+$")  # '--1'.lstrip('-').isdigit() é True; int('--1') lança
 
 DEFAULT_CONFIG: dict = {
     "server": {"host": "0.0.0.0", "port": 8080, "refresh_seconds": 60},
@@ -125,6 +126,13 @@ def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list
     sid = (form.get("id") or "").strip().lower()
     name = (form.get("name") or "").strip()
     heartbeat = (form.get("heartbeat_file") or "").strip() or None
+    if heartbeat:
+        try:
+            resolve_data_path(cfg, heartbeat)
+        except (ValueError, KeyError):
+            errors.append("Arquivo de watchdog: caminho inválido "
+                          "('../' não pode escapar da raiz de dados).")
+            heartbeat = None
 
     if not ID_RE.match(sid):
         errors.append("Identificador inválido: use apenas letras minúsculas, números, '-' e '_'.")
@@ -132,14 +140,52 @@ def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list
         errors.append(f"Já existe uma estação com o id '{sid}'.")
     if not name:
         name = sid
-    return {"id": sid, "name": name, "heartbeat_file": heartbeat, "files": []}, errors
+
+    def _coord(field: str, label: str, lo: float, hi: float) -> float | None:
+        raw = (form.get(field) or "").strip().replace(",", ".")
+        if raw == "":
+            return None
+        try:
+            v = float(raw)
+        except ValueError:
+            errors.append(f"{label}: valor inválido ('{raw}').")
+            return None
+        if not (lo <= v <= hi):
+            errors.append(f"{label}: fora do intervalo permitido ({lo} a {hi}).")
+            return None
+        return v
+
+    errors_before = len(errors)
+    latitude = _coord("latitude", "Latitude", -90.0, 90.0)
+    longitude = _coord("longitude", "Longitude", -180.0, 180.0)
+    if len(errors) == errors_before and (latitude is None) != (longitude is None):
+        errors.append("Coordenadas: informe latitude E longitude (ou deixe ambas vazias).")
+        latitude = longitude = None
+
+    # Override opcional da janela de offline (min). Vazio = automática (heartbeat).
+    offline_window_min = None
+    raw = (form.get("offline_window_min") or "").strip()
+    if raw:
+        try:
+            offline_window_min = int(raw)
+            if not (1 <= offline_window_min <= 10080):
+                raise ValueError
+        except ValueError:
+            errors.append(f"Janela de offline: valor inválido ('{raw}') — use minutos entre 1 e 10080.")
+            offline_window_min = None
+
+    return {"id": sid, "name": name, "heartbeat_file": heartbeat,
+            "latitude": latitude, "longitude": longitude,
+            "offline_window_min": offline_window_min, "files": []}, errors
 
 
 def _parse_separator(raw: str) -> str:
     raw = raw or ","
     if raw in ("\\t", "tab", "TAB"):
         return "\t"
-    return raw
+    if raw.strip() == "" and " " in raw:
+        return " "  # separador espaço é válido (alguns .dat) — não pode virar ','
+    return raw.strip() or ","
 
 
 def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
@@ -162,15 +208,21 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
             return default
 
     tail_lines = _int("tail_lines", 100, 1, 10000, "Linhas do final")
+    window_hours = _int("window_hours", None, 1, 8760, "Período a plotar (horas)")
     skip_header = _int("skip_header_lines", 0, 0, 100, "Linhas de cabeçalho a pular")
     header_line = _int("header_line", None, 1, 100, "Linha com nomes das colunas")
 
-    separator = _parse_separator((form.get("separator") or ",").strip() or ",")
+    separator = _parse_separator(form.get("separator") or ",")
+    if len(separator) != 1:
+        errors.append(f"Separador de colunas deve ter exatamente 1 caractere (recebi '{separator}').")
+        separator = ","
     quotechar = (form.get("quotechar") or '"').strip() or '"'
     decimal = (form.get("decimal") or ".").strip() or "."
+    if decimal == separator:
+        errors.append("Separador decimal não pode ser igual ao separador de colunas.")
 
     ts_col_raw = (form.get("ts_column") or "0").strip()
-    ts_column: int | str = int(ts_col_raw) if ts_col_raw.lstrip("-").isdigit() else ts_col_raw
+    ts_column: int | str = int(ts_col_raw) if INT_RE.match(ts_col_raw) else ts_col_raw
     ts_format = (form.get("ts_format") or "%Y-%m-%d %H:%M:%S").strip()
 
     def _getlist(field: str) -> list:
@@ -196,7 +248,14 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
         col = (col or "").strip()
         if not col:
             continue
-        column: int | str = int(col) if col.lstrip("-").isdigit() else col
+        column: int | str = int(col) if INT_RE.match(col) else col
+        # Índices únicos e distintos da coluna do timestamp (uma variável por coluna).
+        if str(column) == str(ts_column):
+            errors.append(f"A coluna {column} é a do timestamp — remova-a das variáveis.")
+            continue
+        if any(str(column) == str(v["column"]) for v in variables):
+            errors.append(f"Índice de coluna repetido: {column} — cada variável deve ter um índice único.")
+            continue
         label = (labels[i] if i < len(labels) else "").strip() or str(column)
         unit = (units[i] if i < len(units) else "").strip() or None
         vmin = _float_or_none(mins[i] if i < len(mins) else "", f"Limite mínimo de '{label}'")
@@ -211,6 +270,7 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
     entry = {
         "path": path,
         "tail_lines": tail_lines,
+        "window_hours": window_hours,
         "separator": separator,
         "quotechar": quotechar,
         "decimal": decimal,

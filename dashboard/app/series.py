@@ -1,7 +1,7 @@
 """Monta as séries dos gráficos (e o preview do formulário) a partir do tail do arquivo."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import config_store, tailer
 
@@ -25,7 +25,7 @@ def _read_header(path, fcfg) -> list[str] | None:
     lines = tailer.head_lines(path, hl)
     if len(lines) < hl:
         return None
-    rows = tailer.parse_rows([lines[hl - 1]], fcfg["separator"], fcfg["quotechar"])
+    rows = tailer.parse_rows([lines[hl - 1]], fcfg.get("separator", ","), fcfg.get("quotechar", '"'))
     return rows[0] if rows else None
 
 
@@ -41,8 +41,10 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
     if not path.is_file():
         return {"error": f"Arquivo não encontrado: {path}"}
 
-    lines = tailer.tail_data_lines(path, fcfg["tail_lines"], fcfg.get("skip_header_lines", 0))
-    rows = tailer.parse_rows(lines, fcfg["separator"], fcfg["quotechar"])
+    # .get com defaults: entradas escritas à mão no YAML podem omitir chaves
+    tail_lines = fcfg.get("tail_lines", 100)
+    lines = tailer.tail_data_lines(path, tail_lines, fcfg.get("skip_header_lines", 0))
+    rows = tailer.parse_rows(lines, fcfg.get("separator", ","), fcfg.get("quotechar", '"'))
     if not rows:
         return {"error": "Nenhuma linha de dados encontrada no final do arquivo."}
 
@@ -54,15 +56,40 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
     ts_format = ts_cfg.get("format") or "%Y-%m-%d %H:%M:%S"
 
     timestamps: list[str] = []
+    dts: list[datetime | None] = []
     for row in rows:
         raw = row[ts_idx].strip().strip('"') if ts_idx is not None and ts_idx < len(row) else ""
         try:
-            timestamps.append(datetime.strptime(raw, ts_format).strftime("%d/%m %H:%M"))
+            dt = datetime.strptime(raw, ts_format)
+            dts.append(dt)
+            timestamps.append(dt.strftime("%d/%m %H:%M"))
         except ValueError:
+            dts.append(None)
             timestamps.append(raw)
 
-    variables = []
     problems: list[str] = []
+
+    # Período em TEMPO (opcional): recorta as linhas lidas para as últimas N horas,
+    # contadas a partir do timestamp mais recente. A leitura continua limitada por
+    # tail_lines (nunca lemos o arquivo inteiro) — se o tail não cobrir o período,
+    # avisamos em vez de ler mais.
+    window_hours = fcfg.get("window_hours")
+    if window_hours:
+        newest = next((d for d in reversed(dts) if d is not None), None)
+        if newest is not None:
+            cutoff = newest - timedelta(hours=window_hours)
+            start = next(
+                (i for i, d in enumerate(dts) if d is not None and d >= cutoff), 0
+            )
+            if start == 0 and len(rows) >= tail_lines:
+                problems.append(
+                    f"as {tail_lines} linhas lidas podem não cobrir o período de "
+                    f"{window_hours} h — aumente 'Linhas do final a plotar'"
+                )
+            rows = rows[start:]
+            timestamps = timestamps[start:]
+
+    variables = []
     for var in fcfg.get("variables", []):
         idx = _column_index(var["column"], header, row_len)
         if idx is None:

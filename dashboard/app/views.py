@@ -69,7 +69,8 @@ def login_post():
         session["admin"] = True
         flash("Login de administração efetuado.", "ok")
         nxt = request.form.get("next") or ""
-        return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("pages.index"))
+        safe = nxt.startswith("/") and not nxt.startswith("//") and "\\" not in nxt
+        return redirect(nxt if safe else url_for("pages.index"))
     flash("Usuário ou senha incorretos.", "error")
     return render_template("login.html"), 401
 
@@ -129,9 +130,55 @@ def compare():
             "idx": idx,
             "label": var["label"],
             "unit": var.get("unit"),
+            "color": len(selected),  # índice global de cor, estável entre grupos
         })
         sel_set.add(token)
-    return render_template("compare.html", cfg=cfg, selected=selected, sel_set=sel_set)
+    # Agrupa por estação+arquivo: cada arquivo .dat pode ser um sensor/equipamento
+    # diferente — os gráficos saem em seções separadas para não misturar as fontes.
+    groups, by_key = [], {}
+    for item in selected:
+        key = (item["sid"], item["fid"])
+        g = by_key.get(key)
+        if g is None:
+            g = {"sid": item["sid"], "sname": item["sname"], "fid": item["fid"], "items": []}
+            by_key[key] = g
+            groups.append(g)
+        g["items"].append(item)
+    return render_template("compare.html", cfg=cfg, selected=selected,
+                           sel_set=sel_set, groups=groups)
+
+
+@pages.get("/map")
+def map_view():
+    """Mapa das estações (somente visualização): status ao vivo + gráficos ao clicar.
+
+    As camadas base (OSM padrão, satélite, relevo) vêm de servidores públicos de
+    tiles — o mapa precisa de internet; a biblioteca Leaflet é vendorada em static/.
+    """
+    cfg = _load()
+    stations = []
+    for s in cfg["stations"]:
+        st = status.station_status(cfg, s)
+        stations.append({
+            "id": s["id"],
+            "name": s.get("name") or s["id"],
+            "latitude": s.get("latitude"),
+            "longitude": s.get("longitude"),
+            "status": st["status"],
+            "last_signal": st["last_signal"],
+            "files": [
+                {
+                    "id": f["id"],
+                    "series_url": url_for("api.file_series", station_id=s["id"], file_id=f["id"]),
+                    "variables": [
+                        {"label": v["label"], "unit": v.get("unit")}
+                        for v in f.get("variables", [])
+                    ],
+                }
+                for f in s.get("files", [])
+            ],
+        })
+    return render_template("map.html", stations=stations)
 
 
 # --- Estações ---------------------------------------------------------------------
@@ -187,6 +234,9 @@ def station_update(station_id):
         return render_template("station_form.html", station=station), 400
     station["name"] = updated["name"]
     station["heartbeat_file"] = updated["heartbeat_file"]
+    station["latitude"] = updated["latitude"]
+    station["longitude"] = updated["longitude"]
+    station["offline_window_min"] = updated["offline_window_min"]
     _save(cfg)
     flash("Estação atualizada.", "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))
@@ -253,8 +303,11 @@ def file_update(station_id, file_id):
         for e in errors:
             flash(e, "error")
         return render_template("file_form.html", station=station, fcfg=fcfg), 400
-    entry["id"] = file_id
-    station["files"] = [entry if f["id"] == file_id else f for f in station["files"]]
+    # merge sobre a entry existente: chaves adicionadas à mão no YAML sobrevivem à UI
+    station["files"] = [
+        {**f, **entry, "id": file_id} if f["id"] == file_id else f
+        for f in station["files"]
+    ]
     _save(cfg)
     flash("Configuração do arquivo atualizada.", "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))

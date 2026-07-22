@@ -9,19 +9,27 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="{{ url_for('pages.index') }}">🌳 CARBONARA · Monitoramento de Aquisição de Dados</a>
+    <a class="brand" href="{{ url_for('pages.index') }}">
+      <img class="brand-logo" src="{{ url_for('static', filename='logo.jpg') }}" alt="CARBONARA">
+      <span class="brand-text">
+        <span class="brand-name">CARBONARA</span>
+        <span class="brand-sub">Monitoramento de Aquisição de Dados</span>
+      </span>
+    </a>
     <nav>
-      <a href="{{ url_for('pages.compare') }}" class="btn nav-btn">📊 Comparar</a>
+      <a href="{{ url_for('pages.index') }}" class="nav-link{{ ' active' if request.path == '/' }}">Estações</a>
+      <a href="{{ url_for('pages.compare') }}" class="nav-link{{ ' active' if request.path.startswith('/compare') }}">Comparar</a>
+      <a href="{{ url_for('pages.map_view') }}" class="nav-link{{ ' active' if request.path.startswith('/map') }}">Mapa</a>
       {% if is_admin %}
-        <a href="{{ url_for('pages.station_new') }}" class="btn btn-primary">+ Nova estação</a>
+        <a href="{{ url_for('pages.station_new') }}" class="btn nav-cta">+ Nova estação</a>
       {% endif %}
       {% if auth_enabled %}
         {% if is_admin %}
           <form method="post" action="{{ url_for('pages.logout') }}" class="nav-form">
-            <button class="btn nav-btn" type="submit">Sair 🔓</button>
+            <button class="nav-link" type="submit">Sair</button>
           </form>
         {% else %}
-          <a href="{{ url_for('pages.login') }}" class="btn nav-btn">🔒 Entrar</a>
+          <a href="{{ url_for('pages.login') }}" class="nav-link{{ ' active' if request.path.startswith('/login') }}">Entrar</a>
         {% endif %}
       {% endif %}
     </nav>

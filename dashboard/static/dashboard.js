@@ -58,12 +58,15 @@ function makeOrUpdateChart(canvas, labels, v, color, opts = {}) {
       datasets: [{
         label, data: v.values, borderColor: color, backgroundColor: color + "22",
         borderWidth: 1.5, pointRadius: 0, spanGaps: false, fill: true, tension: 0.15,
-        // trechos fora dos limites físicos ficam vermelhos (dado ruim à primeira vista)
+        // trechos fora dos limites físicos ficam vermelhos (dado ruim à primeira vista).
+        // Fallback para o closure `limits`: no primeiro render (dentro do construtor)
+        // canvas._chart ainda não foi atribuído.
         segment: {
-          borderColor: (s) =>
-            outOfLimits(canvas._chart && canvas._chart.$limits, s.p1.parsed.y) ||
-            outOfLimits(canvas._chart && canvas._chart.$limits, s.p0.parsed.y)
-              ? LIMIT_COLOR : undefined,
+          borderColor: (s) => {
+            const lim = (canvas._chart && canvas._chart.$limits) || limits;
+            return outOfLimits(lim, s.p1.parsed.y) || outOfLimits(lim, s.p0.parsed.y)
+              ? LIMIT_COLOR : undefined;
+          },
         },
       }],
     },
@@ -86,6 +89,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initCharts();
   initCompare();
   initFileForm();
+  initMapPage();
 });
 
 /* --- Gráficos (página de detalhe da estação) ---------------------------------- */
@@ -160,16 +164,399 @@ function setCmpError(canvas, msg) {
 }
 
 
+/* --- Página Mapa: estações georreferenciadas + gráficos ao clicar --------------- */
+const STATUS_LABEL = {
+  receiving: "Recebendo dados", online: "Online",
+  offline: "Offline", unknown: "Sem sinal",
+};
+
+function statusColor(status) {
+  const vars = { receiving: "--purple", online: "--green", offline: "--red" };
+  const name = vars[status] || "--gray";
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#8a938e";
+}
+
+function initMapPage() {
+  const mapEl = document.getElementById("station-map");
+  const dataEl = document.getElementById("map-data");
+  if (!mapEl || !dataEl || typeof L === "undefined") return;
+  const stations = JSON.parse(dataEl.textContent);
+
+  // Camadas base: padrão (OSM), satélite (Esri World Imagery) e relevo (OpenTopoMap).
+  const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  });
+  const satelite = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      maxZoom: 19,
+      attribution: "Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics",
+    });
+  const relevo = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+    maxZoom: 17,
+    attribution: 'Map data: &copy; OpenStreetMap · SRTM | Style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
+  });
+
+  const map = L.map(mapEl, { layers: [relevo] }); // relevo é a camada inicial
+  // Controle recolhido (ícone padrão do Leaflet): expande ao passar o mouse.
+  L.control.layers(
+    { "Relevo": relevo, "Satélite": satelite, "Padrão (OpenStreetMap)": osm },
+    null, { collapsed: true }
+  ).addTo(map);
+
+  const located = stations.filter((s) => s.latitude != null && s.longitude != null);
+  if (!located.length) {
+    map.setView([-3.5, -55.0], 5); // Amazônia central como enquadramento padrão
+  }
+
+  // Tooltip do marcador: cabeçalho (nome + status) e rodapé (última leitura)
+  // sempre visíveis; a lista de valores mostra ~10 linhas e rola para o restante.
+  const lastVals = new Map(); // station.id -> { values, ts, at }
+
+  function fmtVal(v) {
+    if (v == null || !Number.isFinite(v)) return "—";
+    return (Math.round(v * 100) / 100).toLocaleString("pt-BR");
+  }
+
+  function markerTooltip(s, cached, loading) {
+    const head =
+      `<div class="station-tip-head"><strong>${esc(s.name)}</strong>` +
+      `<span class="station-tip-status">${STATUS_LABEL[s.status] || esc(s.status)}</span></div>`;
+    let mid = "";
+    if (cached) mid = `<div class="station-tip-values">${cached.values}</div>`;
+    else if (loading) mid = '<div class="station-tip-values"><em>carregando últimos valores…</em></div>';
+    const foot = (cached || loading)
+      ? `<div class="station-tip-foot">última leitura: <strong>${esc((cached && cached.ts) || "—")}</strong></div>`
+      : "";
+    return `<div class="station-tip">${head}${mid}${foot}</div>`;
+  }
+
+  async function fetchLastValues(s) {
+    const lines = [];
+    let lastTs = null;
+    const results = await Promise.all(s.files.map((f) =>
+      fetch(f.series_url).then((r) => r.json()).catch(() => null)));
+    results.forEach((data, fi) => {
+      if (!data || data.error) return;
+      const rows = [];
+      data.variables.forEach((v) => {
+        let val = null;
+        for (let i = v.values.length - 1; i >= 0; i--) {
+          if (v.values[i] != null) {
+            val = v.values[i];
+            if (data.timestamps[i]) lastTs = data.timestamps[i];
+            break;
+          }
+        }
+        rows.push(
+          `<div class="station-tip-row"><span>${esc(v.label)}</span>` +
+          `<strong>${fmtVal(val)}${v.unit ? " " + esc(v.unit) : ""}</strong></div>`);
+      });
+      // cada arquivo .dat (sensor/equipamento) é um bloco recolhível no balão
+      lines.push(
+        `<details class="station-tip-group" open>` +
+        `<summary class="station-tip-file">${esc(s.files[fi].id)}` +
+        `<span class="station-tip-count">${rows.length}</span></summary>` +
+        rows.join("") + `</details>`);
+    });
+    if (!lines.length) return { values: "<em>sem dados disponíveis</em>", ts: null };
+    return { values: lines.join(""), ts: lastTs };
+  }
+
+  const markers = new Map();
+  located.forEach((s) => {
+    const marker = L.circleMarker([s.latitude, s.longitude], {
+      radius: 9, weight: 2, color: "#ffffff",
+      fillColor: statusColor(s.status), fillOpacity: 0.95,
+    }).addTo(map);
+    // Tooltip com abertura/fechamento MANUAL (permanent) e uma tolerância de
+    // 300 ms no mouseout: cruzar o vão entre o marcador e o balão não o fecha,
+    // então dá para alcançar a área de rolagem. Como o tooltip é interactive,
+    // o mouse sobre ele conta como mouseover do marcador (cancela o timer).
+    marker.bindTooltip(markerTooltip(s, null, false),
+                       { permanent: true, opacity: 0.97, interactive: true,
+                         direction: "top", offset: [0, -2] });
+    marker.closeTooltip();
+    let closeTimer = null;
+    let valsShown = false;  // o balão aberto já exibe valores?
+    let fetching = false;   // busca em voo (evita fetches duplicados)
+    marker.on("tooltipopen", (ev) => {
+      const el = ev.tooltip.getElement();
+      L.DomEvent.disableScrollPropagation(el);
+      L.DomEvent.disableClickPropagation(el);
+    });
+    marker.on("tooltipclose", () => { valsShown = false; });
+    marker.on("mouseover", async () => {
+      clearTimeout(closeTimer);
+      marker.openTooltip();
+      const cached = lastVals.get(s.id);
+      const fresh = cached && Date.now() - cached.at < (window.REFRESH_SECONDS || 60) * 1000;
+      // Entrar no balão re-dispara mouseover (tooltip é interactive): se o conteúdo
+      // já está na tela, NÃO reconstruir — senão a rolagem volta ao topo.
+      if (valsShown && (fresh || fetching)) return;
+      marker.setTooltipContent(markerTooltip(s, cached || null, !cached));
+      valsShown = !!cached;
+      if (fresh || fetching) return;
+      fetching = true;
+      try {
+        const res = await fetchLastValues(s);
+        lastVals.set(s.id, { ...res, at: Date.now() });
+        if (marker.isTooltipOpen()) {
+          marker.setTooltipContent(markerTooltip(s, lastVals.get(s.id), false));
+          valsShown = true;
+        }
+      } finally {
+        fetching = false;
+      }
+    });
+    marker.on("mouseout", () => {
+      clearTimeout(closeTimer);
+      closeTimer = setTimeout(() => marker.closeTooltip(), 300);
+    });
+    marker.on("click", (ev) => {
+      // clique DENTRO do balão (ex.: recolher um arquivo) não abre a subjanela
+      const tip = marker.getTooltip();
+      const tipEl = tip && tip.getElement();
+      if (tipEl && ev.originalEvent && tipEl.contains(ev.originalEvent.target)) return;
+      marker.closeTooltip();
+      openMapPanel(s);
+    });
+    markers.set(s.id, marker);
+  });
+  if (located.length) {
+    const bounds = L.latLngBounds(located.map((s) => [s.latitude, s.longitude]));
+    map.fitBounds(bounds.pad(0.3), { maxZoom: 9 });
+  }
+
+  // Subjanela (modal) com os gráficos da estação clicada (mesma API de séries do detalhe).
+  const modal = document.getElementById("map-modal");
+  const panel = document.getElementById("map-panel");
+  const closeBtn = document.getElementById("map-panel-close");
+  let currentStation = null;
+
+  function openMapPanel(s) {
+    currentStation = s;
+    document.getElementById("map-panel-title").textContent = `${s.name} (${s.id})`;
+    document.getElementById("map-panel-link").href = `/stations/${encodeURIComponent(s.id)}`;
+    renderPanelStatus(s.status, s.last_signal);
+    const filesEl = document.getElementById("map-panel-files");
+    // destrói as instâncias Chart.js antigas antes de descartar os canvases
+    filesEl.querySelectorAll("canvas").forEach((c) => c._chart && c._chart.destroy());
+    filesEl.innerHTML = "";
+    if (!s.files.length) {
+      filesEl.innerHTML = "<p class='empty'>Nenhum arquivo em monitoramento nesta estação.</p>";
+    }
+    s.files.forEach((f) => {
+      // <details>: cada arquivo .dat (sensor/equipamento) pode ser recolhido
+      const block = document.createElement("details");
+      block.className = "file-block map-file-block";
+      block.open = true;
+      block.dataset.seriesUrl = f.series_url;
+      block.innerHTML =
+        `<summary><span class="file-chip">${esc(f.id)}</span>` +
+        `<span class="meta">${f.variables.length} variável(is)</span>` +
+        `<span class="series-info meta"></span></summary>` +
+        `<p class="series-error warn"></p>` +
+        `<div class="charts">` +
+        f.variables.map((_, i) =>
+          `<div class="chart-box"><canvas data-var="${i}" height="110"></canvas></div>`).join("") +
+        `</div>`;
+      filesEl.appendChild(block);
+      loadSeries(block);
+    });
+    modal.hidden = false;
+    document.body.classList.add("map-modal-open"); // trava o scroll da página
+  }
+
+  function renderPanelStatus(status, lastSignal) {
+    document.getElementById("map-panel-status").innerHTML =
+      `<span class="dot dot-${esc(status)}"></span>${STATUS_LABEL[status] || esc(status)}` +
+      ` · último sinal: ${esc(lastSignal || "—")}`;
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    document.body.classList.remove("map-modal-open");
+    currentStation = null;
+  }
+  closeBtn.addEventListener("click", closeModal);
+  document.getElementById("map-modal-backdrop").addEventListener("click", closeModal);
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !modal.hidden) closeModal();
+  });
+
+  // Baixa uma imagem PNG com o retrato dos gráficos exibidos no instante do clique.
+  function downloadPanelImage() {
+    if (!currentStation) return;
+    const canvases = Array.from(panel.querySelectorAll(".charts canvas"))
+      .filter((c) => c._chart);
+    if (!canvases.length) return;
+    const scale = window.devicePixelRatio || 1;
+    const pad = Math.round(16 * scale);
+    const lineH = Math.round(20 * scale);
+    const width = Math.max(...canvases.map((c) => c.width)) + pad * 2;
+    const headerH = lineH * 2 + pad;
+    const height = headerH + pad + canvases.reduce((a, c) => a + c.height + pad, 0);
+
+    const out = document.createElement("canvas");
+    out.width = width;
+    out.height = height;
+    const ctx = out.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+
+    const now = new Date();
+    ctx.fillStyle = "#1e2a24";
+    ctx.font = `bold ${Math.round(14 * scale)}px sans-serif`;
+    ctx.fillText(`${currentStation.name} (${currentStation.id})`, pad, pad + lineH / 2);
+    ctx.font = `${Math.round(11 * scale)}px sans-serif`;
+    ctx.fillStyle = "#6b7a72";
+    const statusTxt = STATUS_LABEL[currentStation.status] || currentStation.status;
+    ctx.fillText(`${statusTxt} · imagem gerada em ${now.toLocaleString("pt-BR")}`,
+                 pad, pad + lineH / 2 + lineH);
+
+    let y = headerH + pad;
+    canvases.forEach((c) => {
+      ctx.drawImage(c, pad, y);
+      y += c.height + pad;
+    });
+
+    const p2 = (n) => String(n).padStart(2, "0");  // hora LOCAL, igual à do cabeçalho
+    const stamp = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}` +
+                  `-${p2(now.getHours())}-${p2(now.getMinutes())}-${p2(now.getSeconds())}`;
+    const a = document.createElement("a");
+    a.download = `carbonara_${currentStation.id}_${stamp}.png`;
+    a.href = out.toDataURL("image/png");
+    a.click();
+  }
+  document.getElementById("map-panel-save").addEventListener("click", downloadPanelImage);
+
+  // Estações georreferenciadas renderizadas nesta carga da página; se o conjunto
+  // mudar (estação nova, removida ou coordenada alterada), a página recarrega e o
+  // fitBounds refaz o enquadramento centrado em todas.
+  const coordsKey = (list) => list
+    .filter((s) => s.latitude != null && s.longitude != null)
+    .map((s) => `${s.id}@${s.latitude},${s.longitude}`)
+    .sort().join("|");
+  const renderedKey = coordsKey(located);
+
+  // Atualização periódica: cor dos marcadores via /api/status + séries do painel aberto.
+  async function refresh() {
+    try {
+      const all = await (await fetch("/api/status")).json();
+      if (coordsKey(all) !== renderedKey && modal.hidden) {
+        location.reload(); // não interrompe uma subjanela aberta
+        return;
+      }
+      all.forEach((st) => {
+        const marker = markers.get(st.id);
+        const s = located.find((x) => x.id === st.id);
+        if (marker && s) {
+          s.status = st.status;
+          s.last_signal = st.last_signal;
+          marker.setStyle({ fillColor: statusColor(st.status) });
+          // balão aberto: não reconstruir o conteúdo (resetaria a rolagem do usuário)
+          if (!marker.isTooltipOpen()) {
+            marker.setTooltipContent(markerTooltip(s, lastVals.get(st.id) || null, false));
+          }
+        }
+        if (currentStation && st.id === currentStation.id) {
+          renderPanelStatus(st.status, st.last_signal);
+        }
+      });
+    } catch (e) { /* rede indisponível: mantém o último estado */ }
+    if (currentStation && !modal.hidden) {
+      panel.querySelectorAll(".map-file-block[data-series-url]").forEach(loadSeries);
+    }
+  }
+  setInterval(refresh, (window.REFRESH_SECONDS || 60) * 1000);
+}
+
+
 /* --- Formulário de arquivo: variáveis dinâmicas + preview ---------------------- */
 function initFileForm() {
   const form = document.getElementById("file-form");
   if (!form) return;
 
+  const tbody = document.querySelector("#vars-table tbody");
+
+  /* Próximo índice livre: máximo dos existentes + 1, pulando a coluna do timestamp. */
+  function nextIndex() {
+    const cols = Array.from(tbody.querySelectorAll('input[name="var_column"]'))
+      .map((inp) => parseInt(inp.value, 10)).filter(Number.isFinite);
+    let next = cols.length ? Math.max(...cols) + 1 : 0;
+    const ts = parseInt(form.elements.ts_column.value, 10);
+    if (Number.isFinite(ts) && next === ts) next++;
+    return next;
+  }
+
+  function makeVarRow(col, label = "", unit = "", min = "", max = "") {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td><input name="var_column" readonly class="num-input"></td>' +
+      '<td><input name="var_label"></td>' +
+      '<td><input name="var_unit"></td>' +
+      '<td><input name="var_min" placeholder="—" class="num-input"></td>' +
+      '<td><input name="var_max" placeholder="—" class="num-input"></td>' +
+      '<td><button type="button" class="btn btn-danger btn-remove-var">×</button></td>';
+    tr.querySelector('[name="var_column"]').value = col;
+    tr.querySelector('[name="var_label"]').value = label;
+    tr.querySelector('[name="var_unit"]').value = unit;
+    tr.querySelector('[name="var_min"]').value = min;
+    tr.querySelector('[name="var_max"]').value = max;
+    return tr;
+  }
+
   document.getElementById("btn-add-var").addEventListener("click", () => {
-    const tbody = document.querySelector("#vars-table tbody");
-    const row = tbody.rows[0].cloneNode(true);
-    row.querySelectorAll("input").forEach((inp) => (inp.value = ""));
-    tbody.appendChild(row);
+    tbody.appendChild(makeVarRow(nextIndex()));
+  });
+
+  /* Lista TODAS as colunas do arquivo (via preview), preservando as já configuradas
+     — casa por índice ou pelo nome da coluna (configs antigas por nome). */
+  document.getElementById("btn-fill-cols").addEventListener("click", async () => {
+    const area = document.getElementById("preview-area");
+    area.innerHTML = "<p class='meta'>Lendo as colunas do arquivo…</p>";
+    try {
+      const resp = await fetch("/api/preview", { method: "POST", body: new FormData(form) });
+      const data = await resp.json();
+      if (data.error) { area.innerHTML = `<p class="warn">${esc(data.error)}</p>`; return; }
+      const header = data.header;
+      const ncols = Math.max(...(data.rows || []).map((r) => r.length),
+                             (header || []).length);
+      if (!Number.isFinite(ncols) || ncols < 1) {
+        area.innerHTML = "<p class='warn'>Não foi possível determinar as colunas do arquivo.</p>";
+        return;
+      }
+      const clean = (h) => (h || "").trim().replace(/^"|"$/g, "");
+      const tsRaw = (form.elements.ts_column.value || "0").trim();
+      let tsIdx = /^-?\d+$/.test(tsRaw) ? parseInt(tsRaw, 10) : -1;
+      if (tsIdx < 0 && header) tsIdx = header.findIndex((h) => clean(h) === tsRaw);
+      const existing = new Map();
+      Array.from(tbody.rows).forEach((tr) => {
+        const key = tr.querySelector('[name="var_column"]').value.trim();
+        if (key === "") return;
+        existing.set(key, {
+          label: tr.querySelector('[name="var_label"]').value,
+          unit: tr.querySelector('[name="var_unit"]').value,
+          min: tr.querySelector('[name="var_min"]').value,
+          max: tr.querySelector('[name="var_max"]').value,
+        });
+      });
+      tbody.innerHTML = "";
+      for (let i = 0; i < ncols; i++) {
+        if (i === tsIdx) continue;
+        const name = header ? clean(header[i]) : "";
+        const prev = existing.get(String(i)) || (name && existing.get(name)) || null;
+        tbody.appendChild(makeVarRow(i,
+          prev ? prev.label : (name || `coluna ${i}`),
+          prev ? prev.unit : "", prev ? prev.min : "", prev ? prev.max : ""));
+      }
+      area.innerHTML = `<p class="diag" style="color:var(--green)">✓ ${tbody.rows.length} ` +
+        "colunas listadas (a do timestamp ficou de fora). Ajuste rótulos, unidades e " +
+        "limites e clique em Salvar.</p>";
+    } catch (e) {
+      area.innerHTML = `<p class="warn">Falha ao listar as colunas: ${esc(String(e))}</p>`;
+    }
   });
 
   document.getElementById("vars-table").addEventListener("click", (ev) => {
@@ -186,16 +573,17 @@ function initFileForm() {
       const data = await resp.json();
       if (data.error) { area.innerHTML = `<p class="warn">${esc(data.error)}</p>`; return; }
       let html = "";
-      (data.diagnostics || []).forEach((d) => (html += `<p class="warn diag">⚠ ${esc(d)}</p>`));
-      if (!data.diagnostics.length) html += `<p class="diag" style="color:var(--green)">✓ Parse OK.</p>`;
+      const diags = data.diagnostics || [], rows = data.rows || [];
+      diags.forEach((d) => (html += `<p class="warn diag">⚠ ${esc(d)}</p>`));
+      if (!diags.length) html += `<p class="diag" style="color:var(--green)">✓ Parse OK.</p>`;
       html += "<table class='table'><thead><tr>";
-      const ncols = Math.max(...data.rows.map((r) => r.length), (data.header || []).length);
+      const ncols = Math.max(...rows.map((r) => r.length), (data.header || []).length);
       for (let c = 0; c < ncols; c++) {
         const name = data.header && data.header[c] ? ` · ${esc(data.header[c])}` : "";
         html += `<th>${c}${name}</th>`;
       }
       html += "</tr></thead><tbody>";
-      data.rows.forEach((r) => {
+      rows.forEach((r) => {
         html += "<tr>" + Array.from({ length: ncols }, (_, c) => `<td>${esc(r[c] ?? "")}</td>`).join("") + "</tr>";
       });
       html += "</tbody></table>";

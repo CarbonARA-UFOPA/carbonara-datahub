@@ -7,10 +7,26 @@
 body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
        background: var(--bg); color: var(--ink); }
 main { max-width: 1080px; margin: 0 auto; padding: 1rem 1.2rem 3rem; }
-.topbar { display: flex; justify-content: space-between; align-items: center;
-          background: var(--accent); color: #fff; padding: .7rem 1.2rem; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: .5rem 1rem;
+          flex-wrap: wrap; background: var(--accent); color: #fff; padding: .5rem 1.2rem; }
 .topbar a { color: #fff; text-decoration: none; }
-.brand { font-weight: 700; }
+.brand { display: flex; align-items: center; gap: .7rem; min-width: 0; }
+.brand-logo { width: 34px; height: 34px; border-radius: 50%; display: block; flex: none;
+              box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+.brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.brand-name { font-weight: 700; font-size: .95rem; letter-spacing: .09em; }
+.brand-sub { font-size: .72rem; font-weight: 400; color: rgba(255,255,255,.75);
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar nav { display: flex; align-items: center; gap: .15rem; }
+.nav-link { display: inline-block; padding: .45rem .75rem; border: 0; border-radius: 6px;
+            background: transparent; color: rgba(255,255,255,.88); font: inherit;
+            font-size: .88rem; cursor: pointer; text-decoration: none; }
+.nav-link:hover { background: rgba(255,255,255,.12); color: #fff; }
+.nav-link.active { background: rgba(0,0,0,.18); color: #fff; font-weight: 600; }
+.nav-cta { margin-left: .5rem; background: #fff; border-color: #fff; color: var(--accent);
+           font-weight: 600; }
+.topbar .nav-cta { color: var(--accent); }
+.nav-cta:hover { background: rgba(255,255,255,.88); }
 .foot { text-align: center; color: var(--muted); font-size: .8rem; padding: 1rem; }
 
 h1 { font-size: 1.4rem; } h1 small, h2 small { color: var(--muted); font-weight: 400; }
@@ -63,8 +79,7 @@ main.wide { max-width: 97vw; }
 .charts.cmp-grid { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: .8rem; }
 .cmp-block { margin: 0; padding: .7rem .9rem; }
 .cmp-block h2 { margin: 0 0 .4rem; font-size: .92rem; line-height: 1.35; }
-.cmp-station { display: inline-block; font-size: 1.02rem; font-weight: 700; color: var(--accent);
-               border-bottom: 2px solid var(--accent); padding-bottom: .1rem; margin-bottom: .15rem; }
+.cmp-station { font-size: 1.05rem; font-weight: 700; color: var(--accent); }
 .cmp-var { font-weight: 500; }
 .cmp-file { color: var(--muted); font-weight: 400; }
 .cmp-block .chart-box { height: 180px; }
@@ -75,6 +90,17 @@ main.wide { max-width: 97vw; }
 .path-form input { flex: 1; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px;
                    font: .8rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
+/* Chip do arquivo .dat: identifica o sensor/equipamento de origem dos dados. */
+.file-chip { display: inline-block; background: #eef2f0; border: 1px solid var(--line);
+             border-radius: 5px; padding: .02rem .5rem; font-size: .8rem; font-weight: 600;
+             color: var(--accent);
+             font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Comparar: uma seção por estação+arquivo, com cabeçalho divisor. */
+.cmp-group { margin: 1.2rem 0; }
+.cmp-group-head { display: flex; align-items: baseline; gap: .6rem; margin: 0 0 .6rem;
+                  padding-bottom: .35rem; border-bottom: 2px solid var(--accent); }
+
 .picker summary { cursor: pointer; }
 .picker summary .meta { margin-left: .5rem; }
 .picker form { margin-top: .8rem; }
@@ -83,11 +109,84 @@ main.wide { max-width: 97vw; }
 .pick-station { border: 1px solid var(--line); border-radius: 8px; padding: .5rem .8rem; margin: 0; }
 .pick-station legend { font-weight: 600; padding: 0 .3rem; }
 .pick-file { margin: .3rem 0 .6rem; }
+.pick-file + .pick-file { border-top: 1px dashed var(--line); margin-top: .7rem; padding-top: .6rem; }
 .pick-var { display: block; margin: .15rem 0; cursor: pointer; }
 .pick-var input { margin-right: .4rem; }
-.nav-btn { margin-right: .5rem; background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.35); }
-.nav-form { display: inline; margin: 0 0 0 .5rem; }
+/* Arquivo com >15 variáveis: lista em múltiplas colunas (todas visíveis, sem rolagem);
+   a estação ocupa a linha inteira do grid para ter largura. */
+.pick-station-wide { grid-column: 1 / -1; }
+.pick-vars-cols { columns: 230px; column-gap: 1.6rem; column-rule: 1px solid var(--line); }
+.pick-vars-cols .pick-var { break-inside: avoid; }
+.nav-form { display: inline; margin: 0; }
 .login-card { max-width: 420px; }
+
+/* Página Mapa: mapa Leaflet + subjanela (modal) de gráficos da estação clicada. */
+#station-map { height: 72vh; min-height: 420px; border: 1px solid var(--line);
+               border-radius: 10px; background: var(--card); }
+/* Tela cheia: o mapa ocupa tudo abaixo da barra superior (rodapé oculto). */
+body:has(main.fullmap) { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+body:has(main.fullmap) .foot { display: none; }
+main.fullmap { flex: 1; min-height: 0; max-width: none; margin: 0; padding: 0;
+               display: flex; flex-direction: column; }
+main.fullmap .flash { margin: .4rem .6rem; }
+main.fullmap #map-page { flex: 1; min-height: 0; }
+main.fullmap #station-map { height: 100%; min-height: 0; border: none; border-radius: 0; }
+/* Seletor de camadas: ícone padrão do Leaflet, porém mais discreto. */
+#station-map .leaflet-control-layers-toggle { width: 30px; height: 30px;
+                                              background-size: 18px 18px; }
+#station-map .leaflet-control-layers { border: 1px solid var(--line); border-radius: 8px;
+                                       box-shadow: 0 1px 4px rgba(0, 0, 0, .15);
+                                       opacity: .8; transition: opacity .15s; }
+#station-map .leaflet-control-layers:hover,
+#station-map .leaflet-control-layers-expanded { opacity: 1; }
+/* Tooltip da estação: cabeçalho e rodapé fixos; lista de valores com rolagem (~10 linhas). */
+.station-tip { font-size: 12px; line-height: 1.45; min-width: 230px; max-width: 320px; }
+.station-tip-head { display: flex; justify-content: space-between; align-items: baseline;
+                    gap: .8rem; padding-bottom: .25rem; margin-bottom: .25rem;
+                    border-bottom: 1px solid var(--line); }
+.station-tip-head strong { font-size: 12.5px; }
+.station-tip-status { color: var(--muted); white-space: nowrap; }
+.station-tip-values { max-height: 200px; overflow-y: auto; overscroll-behavior: contain;
+                      padding-right: .35rem; }
+.station-tip-row { display: flex; justify-content: space-between; gap: .8rem; padding: .1rem 0; }
+.station-tip-row span { color: var(--ink); }
+.station-tip-row strong { white-space: nowrap; }
+.station-tip-foot { border-top: 1px solid var(--line); margin-top: .25rem; padding-top: .25rem;
+                    color: var(--muted); }
+/* Grupo recolhível por arquivo .dat dentro do balão (details/summary). */
+.station-tip-group { border-top: 1px dashed var(--line); margin-top: .3rem; padding-top: .25rem; }
+.station-tip-group:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.station-tip-file { display: flex; align-items: baseline; gap: .4rem; cursor: pointer;
+                    list-style: none; user-select: none; margin-bottom: .1rem;
+                    color: var(--accent); font-weight: 700; font-size: 11px;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.station-tip-file::-webkit-details-marker { display: none; }
+.station-tip-file::before { content: "▾"; color: var(--muted); font-size: 10px; }
+.station-tip-group:not([open]) .station-tip-file::before { content: "▸"; }
+.station-tip-count { margin-left: auto; color: var(--muted); font-weight: 400;
+                     font-family: inherit; }
+.map-modal { position: fixed; inset: 0; z-index: 2000; display: flex;
+             align-items: center; justify-content: center; padding: 2rem 1.2rem; }
+.map-modal[hidden] { display: none; } /* display:flex acima venceria o [hidden] do UA */
+.map-modal-backdrop { position: absolute; inset: 0; background: rgba(20, 30, 25, .55); }
+.map-modal-dialog { position: relative; margin: 0; width: min(920px, 100%);
+                    max-height: calc(100vh - 4rem); display: flex; flex-direction: column;
+                    box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
+.map-modal-head { border-bottom: 1px solid var(--line); padding-bottom: .5rem; }
+.map-modal-body { overflow-y: auto; flex: 1; min-height: 0; padding-right: .3rem; }
+body.map-modal-open { overflow: hidden; }
+.map-file-block { border-top: 1px solid var(--line); padding-top: .6rem; margin-top: .8rem; }
+/* Cabeçalho recolhível do arquivo (details/summary): seta custom + chip + resumo. */
+.map-file-block summary { cursor: pointer; display: flex; align-items: baseline; gap: .6rem;
+                          list-style: none; margin-bottom: .3rem; user-select: none; }
+.map-file-block summary::-webkit-details-marker { display: none; }
+.map-file-block summary::before { content: "▾"; color: var(--muted); font-size: .8rem; }
+.map-file-block:not([open]) summary::before { content: "▸"; }
+.map-file-block:not([open]) summary { margin-bottom: 0; }
+.map-file-block summary:hover .file-chip { border-color: var(--accent); }
+.map-file-block .series-error:empty { display: none; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
+.coords-hint { color: var(--muted); display: block; margin: -.3rem 0 .5rem; }
 
 .help-card { background: #f3f8f5; border: 1px solid #d5e6dc; border-radius: 8px;
              padding: .7rem 1rem; margin: .6rem 0 1rem; font-size: .9rem; }

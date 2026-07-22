@@ -16,12 +16,36 @@
            placeholder="ex.: FLONA Tapajós 01">
   </label>
 
+  <div class="form-row">
+    <label>Latitude
+      <input name="latitude" inputmode="decimal"
+             value="{{ station['latitude'] if station and station.get('latitude') is not none else '' }}"
+             placeholder="ex.: -3.578041 (graus decimais)">
+    </label>
+    <label>Longitude
+      <input name="longitude" inputmode="decimal"
+             value="{{ station['longitude'] if station and station.get('longitude') is not none else '' }}"
+             placeholder="ex.: -55.074330 (graus decimais)">
+    </label>
+  </div>
+  <small class="coords-hint">Coordenadas geográficas (WGS84, graus decimais; sul e oeste são negativos).
+  Necessárias para a estação aparecer na página <strong>Mapa</strong> — opcionais no restante do dashboard.</small>
+
   <label>Arquivo de watchdog (heartbeat do rsync-hub)
     <input name="heartbeat_file" value="{{ station['heartbeat_file'] if station and station.get('heartbeat_file') else '' }}"
            placeholder="vazio = incoming/&lt;id&gt;/.carbonara-status (padrão)">
     <small>Caminho relativo à raiz de dados ou absoluto. O status Online/Offline usa a
     data de modificação deste arquivo e o <code>interval_min</code> escrito nele —
     a mesma regra do <code>rsync-hub monitor</code> (2×intervalo + 2 min).</small>
+  </label>
+
+  <label>Janela de offline personalizada (minutos, opcional)
+    <input name="offline_window_min" type="number" min="1" max="10080"
+           value="{{ station['offline_window_min'] if station and station.get('offline_window_min') else '' }}"
+           placeholder="vazio = automática (2×intervalo do heartbeat + 2 min)">
+    <small>Atenção: definir um valor fixa a janela SÓ no dashboard e faz o status daqui
+    divergir do <code>rsync-hub monitor</code>. Deixe vazio para a janela automática,
+    que acompanha o intervalo de envio declarado pela estação.</small>
   </label>
 
   <div class="form-actions">

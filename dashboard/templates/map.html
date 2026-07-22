@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Mapa · CARBONARA{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='leaflet/leaflet.css') }}">
+<script src="{{ url_for('static', filename='leaflet/leaflet.js') }}"></script>
+{% endblock %}
+{% block main_class %}fullmap{% endblock %}
+{% block content %}
+<div id="map-page">
+  <div id="station-map"></div>
+
+  <!-- Subjanela (modal) com os gráficos da estação clicada -->
+  <div id="map-modal" class="map-modal" hidden>
+    <div class="map-modal-backdrop" id="map-modal-backdrop"></div>
+    <section class="card map-modal-dialog" id="map-panel" role="dialog" aria-modal="true"
+             aria-labelledby="map-panel-title">
+      <div class="page-head map-modal-head">
+        <h2 id="map-panel-title"></h2>
+        <div>
+          <button class="btn" type="button" id="map-panel-save">Salvar imagem</button>
+          <a class="btn" id="map-panel-link" href="#">Ver página da estação</a>
+          <button class="btn" type="button" id="map-panel-close" aria-label="Fechar">✕ Fechar</button>
+        </div>
+      </div>
+      <p class="meta" id="map-panel-status"></p>
+      <div class="map-modal-body" id="map-panel-files"></div>
+    </section>
+  </div>
+</div>
+
+<script type="application/json" id="map-data">{{ stations | tojson }}</script>
+{% endblock %}

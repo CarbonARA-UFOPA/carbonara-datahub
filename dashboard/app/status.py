@@ -56,31 +56,52 @@ def _latest_data_mtime(incoming_dir: Path) -> float | None:
         rel = f.relative_to(incoming_dir)
         if any(part.startswith(".") for part in rel.parts):
             continue
-        if f.is_file():
-            m = f.stat().st_mtime
-            latest = m if latest is None or m > latest else latest
+        try:
+            if f.is_file():
+                m = f.stat().st_mtime
+                latest = m if latest is None or m > latest else latest
+        except OSError:
+            continue  # a ingestão move arquivos para archive/ a qualquer momento
     return latest
 
 
 def station_status(cfg: dict, station: dict) -> dict:
     now = time.time()
-    hb = config_store.heartbeat_path(cfg, station)
-
+    # Caminhos configurados à mão podem ser inválidos (ex.: '../' escapando a raiz);
+    # um cadastro ruim nunca pode derrubar a página inteira — vira "não encontrado".
+    hb_display, hb_found = station.get("heartbeat_file") or "", False
     hb_mtime, interval_min = None, None
-    if hb.is_file():
-        hb_mtime = hb.stat().st_mtime
-        m = _INTERVAL_RE.search(hb.read_text(encoding="utf-8", errors="replace"))
-        if m:
-            interval_min = int(m.group(1))
+    try:
+        hb = config_store.heartbeat_path(cfg, station)
+        hb_display = str(hb)
+        if hb.is_file():
+            hb_found = True
+            hb_mtime = hb.stat().st_mtime
+            m = _INTERVAL_RE.search(hb.read_text(encoding="utf-8", errors="replace"))
+            if m:
+                interval_min = int(m.group(1))
+    except (ValueError, OSError):
+        pass
 
     incoming_dir = config_store.resolve_data_path(cfg, f"incoming/{station['id']}")
     data_mtime = _latest_data_mtime(incoming_dir)
-    last_event, last_connect = _last_events(config_store.connections_log_path(cfg), station["id"])
+    try:
+        log_path = config_store.connections_log_path(cfg)
+    except ValueError:
+        log_path = Path("/nonexistent")
+    last_event, last_connect = _last_events(log_path, station["id"])
 
     candidates = [t for t in (hb_mtime, data_mtime, last_connect) if t is not None]
     act = max(candidates) if candidates else None
 
-    limit = interval_min * 120 + 120 if interval_min else int(cfg["stale_fallback_seconds"])
+    # Override manual por estação (dashboard-only — diverge do rsync-hub monitor);
+    # sem ele, a janela automática: 2×intervalo do heartbeat + 2 min, ou o fallback.
+    if station.get("offline_window_min"):
+        limit = int(station["offline_window_min"]) * 60
+    elif interval_min:
+        limit = interval_min * 120 + 120
+    else:
+        limit = int(cfg["stale_fallback_seconds"])
 
     receiving = last_event == "CONNECT" or (act is not None and now - act <= 60)
     if act is None:
@@ -103,7 +124,9 @@ def station_status(cfg: dict, station: dict) -> dict:
         "seconds_since_signal": int(now - act) if act else None,
         "interval_min": interval_min,
         "limit_seconds": limit,
-        "heartbeat_file": str(hb),
-        "heartbeat_found": hb.is_file(),
+        "heartbeat_file": hb_display,
+        "heartbeat_found": hb_found,
         "files": len(station.get("files", [])),
+        "latitude": station.get("latitude"),
+        "longitude": station.get("longitude"),
     }

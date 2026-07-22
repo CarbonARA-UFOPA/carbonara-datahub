@@ -13,14 +13,17 @@
   <form method="get" action="{{ url_for('pages.compare') }}">
     <div class="pick-grid">
       {% for s in cfg.stations %}
-        <fieldset class="pick-station">
-          <legend>{{ s.name or s.id }} <small>({{ s.id }})</small></legend>
+        {% set total_vars = s.files | map(attribute='variables') | map('length') | sum %}
+        <fieldset class="pick-station{{ ' pick-station-wide' if total_vars > 15 }}">
+          <legend>{{ s.name or s.id }} <small>({{ s.id }} · {{ total_vars }} variáveis)</small></legend>
           {% if not s.files %}
             <p class="empty"><small>sem arquivos configurados</small></p>
           {% endif %}
           {% for f in s.files %}
             <div class="pick-file">
-              <small class="meta">{{ f.id }}</small>
+              <span class="file-chip">{{ f.id }}</span>
+              {# > 15 variáveis: lista em múltiplas colunas para caberem todas à vista #}
+              <div class="pick-vars{{ ' pick-vars-cols' if f.variables | length > 15 }}">
               {% for v in f.variables %}
                 {% set token = s.id ~ ':' ~ f.id ~ ':' ~ loop.index0 %}
                 <label class="pick-var">
@@ -29,6 +32,7 @@
                   {{ v.label }}{% if v.unit %} <small>({{ v.unit }})</small>{% endif %}
                 </label>
               {% endfor %}
+              </div>
             </div>
           {% endfor %}
         </fieldset>
@@ -42,23 +46,31 @@
 </details>
 
 {% if selected %}
-<div class="charts cmp-grid">
-  {% for s in selected %}
-    <section class="card cmp-block">
-      <h2>
-        <span class="cmp-station">📡 {{ s.sname }}</span><br>
-        <span class="cmp-var">{{ s.label }}{% if s.unit %} <small>({{ s.unit }})</small>{% endif %}</span>
-        <small class="cmp-file">· {{ s.fid }}</small>
-      </h2>
-      <p class="series-error warn"></p>
-      <div class="chart-box">
-        <canvas class="cmp-canvas" height="110"
-                data-series-url="{{ url_for('api.file_series', station_id=s.sid, file_id=s.fid) }}"
-                data-var="{{ s.idx }}" data-color="{{ loop.index0 }}"></canvas>
-      </div>
-    </section>
-  {% endfor %}
-</div>
+{# uma seção por estação+arquivo: cada .dat pode ser um equipamento diferente #}
+{% for g in groups %}
+<section class="cmp-group">
+  <h2 class="cmp-group-head">
+    <span class="cmp-station">{{ g.sname }}</span>
+    <span class="file-chip">{{ g.fid }}</span>
+    <small class="meta">{{ g['items'] | length }} variável(is)</small>
+  </h2>
+  <div class="charts cmp-grid">
+    {% for s in g['items'] %}
+      <section class="card cmp-block">
+        <h2>
+          <span class="cmp-var">{{ s.label }}{% if s.unit %} <small>({{ s.unit }})</small>{% endif %}</span>
+        </h2>
+        <p class="series-error warn"></p>
+        <div class="chart-box">
+          <canvas class="cmp-canvas" height="110"
+                  data-series-url="{{ url_for('api.file_series', station_id=s.sid, file_id=s.fid) }}"
+                  data-var="{{ s.idx }}" data-color="{{ s.color }}"></canvas>
+        </div>
+      </section>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
 {% elif cfg.stations %}
 <p class="empty">Nenhuma variável selecionada ainda.</p>
 {% else %}

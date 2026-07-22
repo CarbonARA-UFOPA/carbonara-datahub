@@ -37,13 +37,29 @@ python run.py                          # http://localhost:8080
   configurados (checkboxes) e veja os gráficos lado a lado, com auto-atualização. A
   seleção fica na querystring (`?sel=<estação>:<arquivo>:<índice>`), então uma
   combinação pode ser favoritada/compartilhada como URL.
+- **Tela Mapa** (`/map`, somente visualização): estações com coordenadas cadastradas
+  aparecem como marcadores coloridos pelo status (mesmas cores da lista); clicar em uma
+  abre uma **subjanela (modal)** sobre o mapa com os gráficos dos arquivos cadastrados
+  (fecha no ✕, clicando fora ou com Esc). Camadas base à escolha — **relevo
+  (OpenTopoMap) é a padrão** —, além de satélite (Esri World Imagery) e OpenStreetMap. A
+  biblioteca **Leaflet é vendorada** em `static/leaflet/` (como o Chart.js), mas os
+  *tiles* vêm de servidores públicos — **o mapa precisa de internet**; o resto do
+  dashboard segue funcionando offline. Estações sem coordenadas simplesmente não
+  aparecem no mapa.
 
 ## Cadastro (tudo configurável)
 
-1. **Estação**: id (igual ao do rsync-hub), nome de exibição e, opcionalmente, o
-   caminho do watchdog (default: `incoming/<id>/.carbonara-status`).
+1. **Estação**: id (igual ao do rsync-hub), nome de exibição, coordenadas geográficas
+   (latitude/longitude em graus decimais WGS84, opcionais — necessárias apenas para a
+   estação aparecer na tela Mapa), opcionalmente o caminho do watchdog
+   (default: `incoming/<id>/.carbonara-status`) e, também opcional, uma **janela de
+   offline personalizada** em minutos — vazio usa a automática (2×intervalo do
+   heartbeat + 2 min); um valor fixo vale **só no dashboard** e faz o status daqui
+   divergir do `rsync-hub monitor`.
 2. **Arquivo de monitoramento** (por estação, quantos quiser): caminho do `.dat`,
-   quantas linhas do final ler, separador de colunas (`\t` para tabulação), aspas,
+   quantas linhas do final ler, **período a plotar em horas** (opcional: recorta os
+   gráficos às últimas N horas dentro das linhas lidas — se elas não cobrirem o
+   período, o gráfico avisa), separador de colunas (`\t` para tabulação), aspas,
    separador decimal, linhas de cabeçalho a pular, linha com nomes de colunas
    (opcional — permite referenciar colunas por nome), coluna+formato do timestamp e a
    lista de variáveis (coluna → rótulo → unidade → limites físicos mín/máx opcionais).

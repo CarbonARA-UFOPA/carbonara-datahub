@@ -27,6 +27,13 @@
       <input name="tail_lines" type="number" min="1" max="10000"
              value="{{ fcfg.tail_lines if fcfg else 100 }}">
     </label>
+    <label>Período a plotar (horas, opcional)
+      <input name="window_hours" type="number" min="1" max="8760"
+             value="{{ fcfg.window_hours if fcfg and fcfg.get('window_hours') else '' }}"
+             placeholder="vazio = todas as linhas lidas">
+      <small>Recorta os gráficos às últimas N horas. As linhas lidas continuam
+      limitadas por "Linhas do final" — se não cobrirem o período, o gráfico avisa.</small>
+    </label>
     <label>Separador de colunas
       <input name="separator" value="{{ '\\t' if fcfg and fcfg.separator == '\t' else (fcfg.separator if fcfg else ',') }}">
       <small>Use <code>\t</code> para tabulação.</small>
@@ -68,10 +75,11 @@
   <div class="help-card">
     <strong>Cada linha desta tabela = uma variável = um gráfico.</strong>
     <ul class="help-list">
-      <li><em>Coluna</em> — onde o valor está em cada linha do arquivo: um índice
-          (<code>0</code> = primeira coluna, <code>1</code> = segunda, …) <strong>ou</strong> o
-          nome exato da coluna (ex.: <code>PanelDgC</code>), se a "linha com os nomes das
-          colunas" foi indicada acima.</li>
+      <li><em>Índice</em> — a posição da coluna no arquivo (<code>0</code> = primeira,
+          <code>1</code> = segunda, …). <strong>Não editável</strong>: cada nova linha
+          recebe o próximo índice livre (índices repetidos não são permitidos) e a
+          coluna do timestamp fica de fora. Use <em>⇊ Todas as colunas do arquivo</em>
+          para listar de uma vez todas as colunas detectadas no arquivo.</li>
       <li><em>Rótulo</em> — o título que aparece no gráfico (ex.: "Temperatura do painel").</li>
       <li><em>Unidade</em> — só para exibição na legenda (ex.: <code>°C</code>, <code>V</code>, <code>%</code>).</li>
       <li><em>Mín / Máx físicos</em> (opcionais) — limites plausíveis da variável: viram
@@ -83,11 +91,11 @@
     Valores não numéricos (<code>NAN</code> etc.) viram lacunas no gráfico.</small>
   </div>
   <table class="table" id="vars-table">
-    <thead><tr><th>Coluna</th><th>Rótulo</th><th>Unidade</th><th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
+    <thead><tr><th>Índice</th><th>Rótulo</th><th>Unidade</th><th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
     <tbody>
-    {% for v in (fcfg.variables if fcfg else [{'column': '', 'label': '', 'unit': ''}]) %}
+    {% for v in (fcfg.variables if fcfg else [{'column': 1, 'label': '', 'unit': ''}]) %}
       <tr>
-        <td><input name="var_column" value="{{ v.column }}"></td>
+        <td><input name="var_column" value="{{ v.column }}" readonly class="num-input"></td>
         <td><input name="var_label" value="{{ v.label }}"></td>
         <td><input name="var_unit" value="{{ v.unit or '' }}"></td>
         <td><input name="var_min" value="{{ v.min if v.min is not none else '' }}" placeholder="—" class="num-input"></td>
@@ -98,9 +106,10 @@
     </tbody>
   </table>
   <button type="button" class="btn" id="btn-add-var">+ Variável</button>
+  <button type="button" class="btn" id="btn-fill-cols">⇊ Todas as colunas do arquivo</button>
 
   <div class="form-actions">
-    <button type="button" class="btn" id="btn-preview">👁 Pré-visualizar parse</button>
+    <button type="button" class="btn" id="btn-preview">Pré-visualizar parse</button>
     <button class="btn btn-primary" type="submit">Salvar</button>
     <a class="btn" href="{{ url_for('pages.station_detail', station_id=station.id) }}">Cancelar</a>
   </div>
