@@ -11,7 +11,7 @@ coleta sem reescrever todo o sistema.
 
 ```
 ESTAÇÃO                WORKSTATION CENTRAL — wrkst02 (10.1.90.246)
-                       coleta: sshd nativo (rsync)   ·   db + ingestion + monitor: Docker Compose
+                       coleta: sshd nativo (rsync)   ·   db + ingestion + processing + ftp: Docker Compose
 
 ┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
 │  collector  │rsync │  rsync-hub  │      │  ingestion  │      │ TimescaleDB │
@@ -28,16 +28,17 @@ ESTAÇÃO                WORKSTATION CENTRAL — wrkst02 (10.1.90.246)
 > e a ingestão: o rsync só escreve nele (confinado por estação), a ingestão só lê dele. Nenhum
 > dos lados conhece o outro. O FTP deixou de ser entrada e agora só **distribui** `archive/`.
 
-## As três fronteiras de desacoplamento
+## As fronteiras de desacoplamento
 
-O sistema é dividido em três camadas **independentes e substituíveis**. Esse é o princípio
+O sistema é dividido em camadas **independentes e substituíveis**. Esse é o princípio
 que garante a flexibilidade pedida no projeto.
 
 | # | Camada | Responsabilidade | Como trocar |
 |---|--------|------------------|-------------|
 | 1 | **Transporte** | Como o arquivo viaja da estação ao servidor | Nova classe em `common/python/transports/` (repo `carbonara-stations`) + `transport.type` no config. Hoje **rsync-over-SSH** (era FTPS); trocar por SFTP/outro não toca no resto. |
 | 2 | **Ingestão / parsing** | Como o arquivo vira linha no banco | Novo parser em `ingestion/parsers/` (este repo) + entrada no `config.yaml`. Só lê o diretório de coleta; ignora como o arquivo chegou. |
-| 3 | **Armazenamento** | Persistir as séries temporais | TimescaleDB. Trocar o banco afeta só a ingestão; coletores não mudam. |
+| 3 | **Processamento / QA-QC** | Marcar a qualidade das medições já inseridas (`measurements.quality`) | Novo check em `processing/checks/` (este repo) + entrada no `config.yaml`. Só fala com o banco; não altera valores crus, só flags. |
+| 4 | **Armazenamento** | Persistir as séries temporais | TimescaleDB. Trocar o banco afeta só ingestão/processamento; coletores não mudam. |
 
 **Consequência prática:** a ingestão e o banco dependem apenas do **diretório de coleta**
 (`/srv/carbonara/incoming/`). A migração do FTP para rsync-over-SSH mudou só a camada de

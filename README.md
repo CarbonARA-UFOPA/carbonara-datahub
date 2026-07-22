@@ -1,99 +1,178 @@
 # carbonara-datahub
 
-Servidor central (workstation) do projeto **CARBONARA** que **concentra e armazena** os
-dados das estações meteorológicas. Recebe os arquivos enviados pelos agentes de coleta
-(repo [`carbonara-stations`](https://github.com/CarbonARA-UFOPA/carbonara-stations)) via
-**rsync-over-SSH**, faz o parsing e os carrega de forma estruturada em um banco de séries
-temporais.
+Central server (workstation) of the **CARBONARA** project — weather-station data for
+forest monitoring in the Amazon. The datahub **concentrates and stores** the data
+produced by the field stations: it receives the files pushed by the collection agents
+(repo [`carbonara-stations`](https://github.com/CarbonARA-UFOPA/carbonara-stations) or
+the simple clients shipped here) via **rsync-over-SSH**, parses them, loads them into a
+time-series database, runs quality control over the fresh measurements, and distributes
+the processed files downstream via read-only FTP.
 
-## Componentes
+## How it all works
 
-Coleta **nativa no host** (um script, `rsync-hub`) + stack de dados em **Docker Compose**:
+```mermaid
+flowchart LR
+    subgraph field["Field stations (Linux / Windows)"]
+        ST["Datalogger files<br/>(e.g. Campbell LoggerNet)"]
+        CL["Station client<br/>collection/station/"]
+        ST --> CL
+    end
 
-| Componente | O que é |
-|------------|---------|
-| `rsync-hub` (host) | **Um script** que faz tudo da coleta: autoriza/remove/lista estações, monitora as conexões (modo ao vivo) e serve de comando forçado do SSH que confina cada estação (write-only) à sua pasta `incoming/<station_id>/`. |
-| `db` (compose) | PostgreSQL + **TimescaleDB** — armazena as medições (`measurements` como hypertable). |
-| `ingestion` (compose) | Serviço Python que observa `incoming/`, faz parse e carrega no banco; move processados para `archive/` e erros para `quarantine/`. |
-| `ftp` (compose) | **Distribuição read-only**: serve `archive/` para consumidores. Não recebe mais dados. |
+    subgraph hub["Central server (this repo)"]
+        RH["rsync-hub<br/>forced command + rrsync -wo<br/>(native on host)"]
+        INC[("incoming/&lt;station_id&gt;/")]
+        ING["ingestion<br/>parse (pluggable parsers)"]
+        ARC[("archive/")]
+        QUA[("quarantine/")]
+        DB[("TimescaleDB<br/>measurements hypertable")]
+        PROC["processing<br/>QA/QC checks → quality flags"]
+        FTP["FTP / FTPS<br/>read-only distribution"]
+    end
 
+    CONS["Downstream consumers<br/>(analysis, dashboards)"]
+
+    CL -- "rsync over SSH · port 22 (key)" --> RH
+    CL -- "rsync daemon · port 873 (password)" --> RH
+    RH --> INC
+    INC --> ING
+    ING -- "parsed OK → insert (idempotent)" --> DB
+    ING -- "file processed" --> ARC
+    ING -- "invalid file" --> QUA
+    DB <--> PROC
+    ARC --> FTP
+    FTP --> CONS
+    DB --> CONS
 ```
-estações → rsync/ssh → incoming/ → ingestion (parse) → TimescaleDB
-             (rsync-hub)   │            └→ archive/ (ok) → FTP (distribuição) | quarantine/ (erro)
-             registra conexões em log; `rsync-hub monitor` mostra ao vivo
-```
 
-### Coleta (`collection/`): host guiado (`rsync-hub`) + clientes (`station/`)
+Each station only ever *pushes*: its SSH key (or rsync-daemon account) is confined,
+write-only, to its own `incoming/<station_id>/` directory. Everything to the right of
+the landing directory is transport-agnostic — it does not know or care how a file
+arrived. `rsync-hub monitor` shows connections and per-station liveness in real time.
 
-O lado **host** (esta workstation) é um script guiado — o `install` conduz passo a passo:
-pasta raiz → conta de serviço → autorização das estações (após o `install`, o script fica
-disponível como `rsync-hub` em `/usr/local/bin`):
+## Components
+
+Collection runs **natively on the host** (a single script, `rsync-hub`); the data stack
+runs in **Docker Compose**:
+
+| Component | What it is |
+|-----------|------------|
+| `rsync-hub` (host) | **One script** that does all of collection: authorizes/removes/lists stations, monitors connections (live mode) and acts as the SSH forced command that confines each station (write-only) to its `incoming/<station_id>/` folder. |
+| `db` (compose) | PostgreSQL + **TimescaleDB** — stores the measurements (`measurements` as a hypertable, long/EAV model: new variables need no `ALTER TABLE`). |
+| `ingestion` (compose) | Python service that watches `incoming/`, parses files (pluggable parsers) and loads them into the database; moves processed files to `archive/` and failures to `quarantine/`. Inserts are idempotent — reprocessing never duplicates. |
+| `processing` (compose) | QA/QC service: periodically evaluates freshly ingested measurements with pluggable checks and marks `measurements.quality` flags. Never modifies raw values. |
+| `ftp` (compose) | **Read-only distribution**: serves `archive/` to downstream consumers. It no longer receives data (collection migrated from FTP to rsync-over-SSH). |
+
+## Collection (`collection/`): guided host (`rsync-hub`) + station clients
+
+The **host** side (this workstation) is a guided script — `install` walks you through
+root folder → service account → station authorization (after `install`, the script is
+available as `rsync-hub` in `/usr/local/bin`):
 
 ```bash
-sudo ./collection/rsync-hub install   # instalação GUIADA do host — 1x
-sudo rsync-hub add flona01            # autoriza GERANDO a chave aqui: stations/flona01/
-                                      #   guarda o par + INSTRUCOES.txt de ativação
-sudo rsync-hub add flona01 f.pub      # ou autoriza uma chave já existente
-sudo rsync-hub add flona01 --senha    # ou por USUÁRIO+SENHA (rsync daemon:873 — mais
-                                      #   simples no cliente; dados sem criptografia)
-     rsync-hub list                   # lista estações
-     rsync-hub monitor                # fica rodando mostrando as conexões
-     rsync-hub cliente                # instruções p/ configurar uma estação
-     rsync-hub                        # menu interativo
+sudo ./collection/rsync-hub install   # GUIDED host installation — once
+sudo rsync-hub add flona01            # authorize by GENERATING the key here: stations/flona01/
+                                      #   stores the key pair + activation INSTRUCOES.txt
+sudo rsync-hub add flona01 f.pub      # or authorize an existing public key
+sudo rsync-hub add flona01 --senha    # or by USER+PASSWORD (rsync daemon:873 — simpler
+                                      #   on the client; data is NOT encrypted)
+     rsync-hub list                   # list authorized stations
+     rsync-hub monitor                # live view of connections and station status
+     rsync-hub cliente                # step-by-step client setup instructions
+     rsync-hub                        # interactive menu
 ```
 
-O lado **cliente** roda nas estações (Linux **ou Windows**) — assistentes guiados em
-[`collection/station/`](collection/station/): `carbonara-station.sh` (Linux) e
-`carbonara-station.ps1` + `carbonara-station.cmd` (Windows). O `setup` pergunta, em ordem:
-IP do host (porta padrão 22) → caminho da chave recebida → teste de conexão → pasta a
-enviar → tempo de reciclagem (com ativação do envio automático).
-Ver [`collection/station/README.md`](collection/station/README.md).
+The **client** side runs on the stations (Linux **or Windows**) — guided assistants in
+[`collection/station/`](collection/station/): `carbonara-station.sh` (Linux) and
+`carbonara-station.ps1` + `carbonara-station.cmd` (Windows). `setup` asks, in order:
+station id → hub IP → auth mode (key or password) → connection test → data folder →
+send interval (offering to install the schedule). The local data folder is **never
+modified** — the client is a strict one-way synchronizer.
+See [`collection/station/README.md`](collection/station/README.md).
 
-Isolamento simples e real: cada estação tem uma **chave** que só executa `rsync-hub serve
-<id>` (via `command="…",restrict` no `authorized_keys` — sem shell/túnel/PTY), e o
-`rrsync -wo` tranca o rsync na pasta da estação, em modo **só-escrita** (envia, não baixa
-nem alcança as outras). A ingestão move o arquivo para `archive/` logo após processar,
-tirando-o do alcance da estação.
+Simple, real isolation: each station has a **key** that can only run `rsync-hub serve
+<id>` (via `command="…",restrict` in `authorized_keys` — no shell/tunnel/PTY), and
+`rrsync -wo` locks the transfer to that station's folder, **write-only** (it can upload,
+but cannot download or reach the others). Ingestion moves each file to `archive/` right
+after processing, taking it out of the station's reach.
 
-## Início rápido
+## Quick start
 
 ```bash
-cp .env.example .env          # defina senhas e FTP_PUBLIC_HOST
-cp ingestion/config.example.yaml ingestion/config.yaml
-# gere o certificado TLS do FTP (ver ftp/README.md)
+cp .env.example .env                                     # set passwords and FTP_PUBLIC_HOST
+cp ingestion/config.example.yaml ingestion/config.yaml   # CSV column → variable mapping
+cp processing/config.example.yaml processing/config.yaml # valid physical ranges per variable
+# generate the FTP TLS certificate (see ftp/README.md)
 docker compose up -d
-docker compose ps
+docker compose ps                                        # db, ingestion, processing, ftp
 ```
 
-Passo a passo completo e teste ponta a ponta em [`docs/installation.md`](docs/installation.md).
+End-to-end test without a real station: drop a sample CSV into the landing directory
+and watch it flow:
 
-## Estrutura
+```bash
+mkdir -p data/incoming/flona01
+cp examples/sample-station-data/flona01_20260627.csv data/incoming/flona01/
+docker compose logs -f ingestion
+```
+
+Full walkthrough in [`docs/installation.md`](docs/installation.md).
+
+## Repository structure
 
 ```
 carbonara-datahub/
-├── docker-compose.yml        # db + ingestion + ftp (distribuição)
+├── docker-compose.yml        # db + ingestion + processing + ftp (distribution)
 ├── .env.example
-├── collection/               # camada de COLETA (transporte rsync)
-│   ├── rsync-hub             #   lado HOST: instalação guiada + gerência + monitor + comando forçado
-│   └── station/              #   lado CLIENTE: assistentes guiados p/ estações Linux e Windows
-├── ftp/                      # config do FTP/FTPS (agora só distribuição) + docs de operação em ftp/docs/
-├── database/init/            # SQL idempotente rodado no 1º start (schema + hypertable)
-├── ingestion/                # ingest.py + parsers plugáveis + Dockerfile
-├── examples/                 # CSV de exemplo p/ teste ponta a ponta
+├── collection/               # COLLECTION layer (rsync transport)
+│   ├── rsync-hub             #   HOST side: guided install + management + monitor + forced command
+│   └── station/              #   CLIENT side: guided assistants for Linux and Windows stations
+├── ingestion/                # ingest.py + pluggable parsers + Dockerfile
+├── processing/               # QA/QC: pluggable checks flag measurements.quality
+├── database/init/            # idempotent SQL run on first start (schema + hypertable)
+├── ftp/                      # FTP/FTPS config (distribution only) + operational docs in ftp/docs/
+├── examples/                 # sample CSV for the end-to-end test
 └── docs/                     # architecture, installation, maintenance
 ```
 
-## Desacoplamento
+## Data model
 
-A ingestão e o banco dependem **apenas** do diretório `incoming/` — não sabem como o arquivo
-chegou. A migração do FTP para rsync-over-SSH trocou só a camada de transporte; ingestão, schema
-e banco não mudaram. Adicionar um formato novo de arquivo = novo parser em `ingestion/parsers/`.
-Ver [`docs/architecture.md`](docs/architecture.md).
+Long/EAV time-series model — adding a new measured quantity is an `INSERT` into the
+`variables` catalog, never an `ALTER TABLE`:
 
-## Documentação
+- `stations` — station metadata (location, forest type, fixed vs. mobile/roving);
+- `variables` — catalog of quantities (`air_temp`, `co2`, …), seeded with common weather variables;
+- `measurements` — fact hypertable, natural key `(time, station_id, variable_id)`,
+  auto-compression after 30 days, hourly continuous aggregate (`measurements_hourly`).
 
-- [Arquitetura](docs/architecture.md)
-- [Instalação](docs/installation.md)
-- [Manutenção](docs/maintenance.md) — backup/restore, logs, troubleshooting.
+`measurements.quality` convention: `0` ok/unevaluated · `1` parse-invalid (set by
+ingestion) · `2` out of physical range (set by processing) · `3+` reserved for future
+rules. Raw values are never altered — filter `quality = 0` for approved data.
 
-Parte do projeto [CarbonARA-UFOPA](https://github.com/CarbonARA-UFOPA). Licença: [MIT](LICENSE).
+## Decoupled layers
+
+Transport, ingestion, processing and storage are **independent and swappable**,
+connected only through the landing directory and the database:
+
+```
+collection/  → transport      (file arrives)
+ingestion/   → parse + insert (file becomes raw rows)
+processing/  → QA/QC          (rows get quality flags)
+database/    → storage        (time series)
+```
+
+Ingestion depends **only** on the `incoming/` directory — it does not know how a file
+arrived (the FTP → rsync migration swapped the transport layer without touching
+ingestion, schema or database). A new file format is a new parser in
+[`ingestion/parsers/`](ingestion/); a new quality rule is a new check in
+[`processing/checks/`](processing/README.md). See
+[`docs/architecture.md`](docs/architecture.md).
+
+## Documentation
+
+Internal documentation is written in Brazilian Portuguese:
+
+- [Architecture](docs/architecture.md) — layers, data flow, design decisions;
+- [Installation](docs/installation.md) — full walkthrough (collection + data stack);
+- [Maintenance](docs/maintenance.md) — backup/restore, logs, troubleshooting.
+
+Part of the [CarbonARA-UFOPA](https://github.com/CarbonARA-UFOPA) project. License: [MIT](LICENSE).

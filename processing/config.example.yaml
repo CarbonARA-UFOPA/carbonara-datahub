@@ -1,0 +1,25 @@
+# config.example.yaml — copie para config.yaml e ajuste.
+# Define as regras de QA/QC aplicadas às medições recém-inseridas.
+# Convenção de flags em measurements.quality: 0=ok/não avaliado, 1=parse inválido
+# (ingestão), 2=fora da faixa, 3+ reservado (ver processing/checks/base.py).
+
+poll_seconds: 60      # de quanto em quanto tempo avaliar as medições novas
+
+checks:
+  - check: range_check
+    options:
+      flag: 2
+      # Limites FÍSICOS plausíveis (generosos de propósito — o objetivo é pegar
+      # sensor defeituoso/valor absurdo, não recortar extremos reais). Ajuste
+      # conforme os sensores e o sítio.
+      variables:
+        air_temp:      {min: -10,  max: 50}     # degC
+        rel_humidity:  {min: 0,    max: 100}    # %
+        pressure:      {min: 850,  max: 1100}   # hPa
+        wind_speed:    {min: 0,    max: 60}     # m/s
+        wind_dir:      {min: 0,    max: 360}    # deg
+        rainfall:      {min: 0,    max: 200}    # mm por intervalo
+        solar_rad:     {min: 0,    max: 1500}   # W/m2
+        co2:           {min: 250,  max: 1000}   # ppm
+        soil_temp:     {min: 0,    max: 50}     # degC
+        soil_moisture: {min: 0,    max: 100}    # %

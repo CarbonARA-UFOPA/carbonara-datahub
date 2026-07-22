@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 data for forest monitoring in the Amazon). Stations push files to the hub via **rsync-over-SSH**;
 the hub parses them and loads them into a time-series database. Docs and comments are written in
 **Brazilian Portuguese** — match that language when editing docs, comments, and log messages.
+Exception: the top-level `README.md` is in **English** (project-facing) — keep it that way.
 
 > Collection was **migrated from FTP to rsync-over-SSH**. FTP now only *distributes* processed
 > data (read-only); it no longer receives. If you find older docs/comments describing FTP upload
@@ -19,12 +20,14 @@ the hub parses them and loads them into a time-series database. Docs and comment
 ```bash
 cp .env.example .env                              # DB_PASSWORD, FTP_USER_PASS, FTP_PUBLIC_HOST
 cp ingestion/config.example.yaml ingestion/config.yaml
+cp processing/config.example.yaml processing/config.yaml
 docker compose up -d
 docker compose ps                                 # all should be healthy/running
 docker compose logs -f ingestion
 ```
 
-Compose services: `db`, `ingestion`, and `ftp` (now read-only distribution). Collection is
+Compose services: `db`, `ingestion`, `processing` (QA/QC), and `ftp` (now read-only
+distribution). Collection is
 **not** a Compose service — it's the `rsync-hub` script running natively on the host (see the
 collection layer below); prep the host with `sudo ./collection/rsync-hub install`.
 
@@ -34,7 +37,7 @@ Notes:
 - `CARBONARA_ROOT` sets the data-volume root: defaults to `./data` for local dev, set it to
   `/srv/carbonara` in production (where the native sshd writes `incoming/`). Subdirs are
   `incoming/`, `archive/`, `quarantine/`, `log/`.
-- Rebuild a service after code changes: `docker compose up -d --build ingestion` (or `monitor`).
+- Rebuild a service after code changes: `docker compose up -d --build ingestion` (or `processing`).
 - DB init SQL (`database/init/0{1,2,3}_*.sql`) runs **only on first start** with an empty
   `db_data` volume. To re-run schema changes during dev, `docker compose down -v` wipes the
   volume (destroys all data) then `up -d`.
@@ -49,7 +52,7 @@ Notes:
 There is **no test suite, linter, or CI** configured. The ingestion service has no unit tests;
 validation is the end-to-end path above.
 
-## Architecture: three decoupled layers
+## Architecture: four decoupled layers
 
 The core design principle is that transport, ingestion, and storage are independent and
 swappable, connected only through a **shared landing directory** (`/srv/carbonara/incoming/`).
@@ -63,7 +66,10 @@ Full rationale in `docs/architecture.md`.
 2. **Ingestion/parsing** (`ingestion/`) — turns files into DB rows. It is **deliberately blind
    to transport**: it only watches the landing directory and does not know how a file arrived.
    Untouched by the FTP→rsync migration.
-3. **Storage** (TimescaleDB) — persists the time series.
+3. **Processing/QA-QC** (`processing/`) — flags freshly ingested rows in
+   `measurements.quality` via pluggable checks. Talks **only to the DB** — knows nothing
+   about files or transport; never modifies `value`, only `quality`.
+4. **Storage** (TimescaleDB) — persists the time series.
 
 Data flow: `station → rsync/ssh → /srv/carbonara/incoming/<station_id>/ → ingestion (parse) →
 TimescaleDB`, with processed files moved to `archive/<station_id>/<date>/` and failures to
@@ -256,6 +262,28 @@ Parsers are a plugin registry (`ingestion/parsers/base.py`). To add one:
 `ingest.py` itself does not change. A parser must **raise on invalid input** — that is what
 routes the file to quarantine. The included `csv_generic` parser is config-driven: `columns:`
 maps CSV column → `variable_id`, non-numeric values become `NULL` with `quality=1`.
+
+## Processing service (`processing/`)
+
+Periodic QA/QC pass over freshly ingested rows (`process.py`), mirroring the ingestion
+conventions. Key invariants when editing:
+
+- **Watermark-driven**: `processing_state.qc_watermark` (table self-created by the service,
+  independent of `database/init/`) holds the highest `ingested_at` already evaluated. Each
+  pass evaluates only the new window and advances the watermark **only if every check
+  succeeded** — a failed check means the whole window is re-evaluated next pass.
+- **Checks are idempotent**: they must only touch rows with `quality = 0` (never overwrite a
+  flag set by ingestion or another check), so re-running a window is always safe. Keep them
+  set-based (SQL `UPDATE`), never row-by-row in Python.
+- **Never modify `value`** — raw data stays auditable; this layer writes `quality` only.
+- **Flag convention** (documented in `checks/base.py` and `processing/README.md`):
+  `0` ok/unevaluated, `1` parse-invalid (set by ingestion), `2` out of physical range
+  (`range_check`), `3+` reserved. New rules claim the next free flag and document it.
+- **Adding a check = plugin registry** (same pattern as parsers): subclass `Check` in
+  `processing/checks/`, decorate with `@register("name")`, import it in
+  `checks/__init__.py`, reference it in `processing/config.yaml` under `checks:`.
+  `process.py` itself does not change. A check failure is isolated (rollback + log), never
+  crashes the loop.
 
 ## Data model (TimescaleDB)
 

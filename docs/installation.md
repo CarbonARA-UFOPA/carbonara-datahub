@@ -120,11 +120,14 @@ FTP_PUBLIC_HOST=10.1.90.246       # IP/hostname da workstation (para o modo pass
 `CARBONARA_ROOT` é o que faz os containers montarem `incoming/`, `archive/` e `quarantine/` da
 mesma raiz que a coleta usa. Sem defini-lo, o Compose cai no default de desenvolvimento (`./data`).
 
-### B2. Configurar a ingestão
+### B2. Configurar a ingestão e o processamento (QA/QC)
 
 ```bash
 cp ingestion/config.example.yaml ingestion/config.yaml
 # Ajuste o mapa coluna->variável (bloco `columns:`) conforme os dataloggers reais.
+
+cp processing/config.example.yaml processing/config.yaml
+# Ajuste as faixas físicas válidas por variável (ver processing/README.md).
 ```
 
 ### B3. Gerar o certificado TLS do FTP (FTPS)
@@ -141,7 +144,7 @@ chmod 600 ftp/tls/pure-ftpd.pem
 
 ```bash
 docker compose up -d
-docker compose ps          # db, ingestion e ftp devem ficar "healthy"/"running"
+docker compose ps          # db, ingestion, processing e ftp devem ficar "healthy"/"running"
 docker compose logs -f ingestion
 ```
 
