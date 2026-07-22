@@ -9,8 +9,8 @@
 #   4) Comando forçado — cada estação, ao conectar por SSH, cai em `rsync-hub serve <id>`,
 #      que confina o rsync à pasta daquela estação (write-only).
 #
-# O lado CLIENTE (estações Linux/Windows) fica em station/carbonara-station.sh e
-# station/carbonara-station.ps1 — assistentes guiados que geram a chave, testam e
+# O lado CLIENTE (estações Linux/Windows) fica em collection/station/carbonara-station.sh e
+# collection/station/carbonara-station.ps1 — assistentes guiados que geram a chave, testam e
 # agendam o envio. Rode `rsync-hub cliente` para ver as instruções passo a passo.
 #
 # Isolamento (simples, mas real): cada estação tem uma CHAVE que só executa este script
@@ -39,7 +39,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-07-15.3"
+RSYNC_HUB_VERSION="2026-07-22.1"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -257,7 +257,7 @@ Servidor (host): $wi_addr · porta: 22 (padrão) · conta: $HUB_USER
 
 1) Copie para a máquina da estação:
      - a chave privada desta pasta:  ${wi_id}_key   (mantenha-a protegida!)
-     - o cliente (pasta station/ do repositório carbonara-datahub):
+     - o cliente (pasta collection/station/ do repositório carbonara-datahub):
          Linux:    carbonara-station.sh
          Windows:  carbonara-station.ps1 + carbonara-station.cmd
 
@@ -389,7 +389,7 @@ Servidor (host): $wp_addr · porta: $RSYNCD_PORT (rsync direto, sem SSH)
 Credenciais:     usuário: $wp_id   ·   senha: $wp_pw
                  (guarde este arquivo com cuidado — a senha está nele)
 
-1) Copie o cliente para a máquina da estação (pasta station/ do repositório
+1) Copie o cliente para a máquina da estação (pasta collection/station/ do repositório
    carbonara-datahub):
        Linux:    carbonara-station.sh
        Windows:  carbonara-station.ps1 + carbonara-station.cmd
@@ -614,7 +614,7 @@ O jeito mais simples (chave gerada AQUI no host):
        → cria $BASE/stations/<id>/ com a chave privada (<id>_key), a pública
          (que permanece lá, já autorizada) e um INSTRUCOES.txt de ativação.
     2. leve para a estação: a chave privada <id>_key + o cliente da pasta
-       station/ (Linux: carbonara-station.sh · Windows: carbonara-station.ps1
+       collection/station/ (Linux: carbonara-station.sh · Windows: carbonara-station.ps1
        e carbonara-station.cmd, na mesma pasta).
     3. na estação, rode o assistente:
            Linux:    ./carbonara-station.sh setup
@@ -785,7 +785,7 @@ uso:
 
 configuração: gravada pelo install em $CONF_FILE (raiz atual: $BASE);
 CARBONARA_ROOT, HUB_USER e RRSYNC no ambiente têm precedência.
-o lado CLIENTE fica em station/carbonara-station.sh (Linux) e .ps1 (Windows).
+o lado CLIENTE fica em collection/station/carbonara-station.sh (Linux) e .ps1 (Windows).
 EOF
 }
 

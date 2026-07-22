@@ -1,0 +1,13 @@
+# Sistema operacional
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Configuração local (não versionar segredos)
+.env
+ingestion/config.yaml
+
+# Dados locais de desenvolvimento
+data/

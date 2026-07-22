@@ -1,4 +1,4 @@
-# Clientes das estações (`station/`)
+# Clientes das estações (`collection/station/`)
 
 Assistentes **guiados** que rodam na máquina da estação (o *cliente*) e enviam os
 arquivos de dados para o servidor central (o *host*, preparado com o

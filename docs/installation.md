@@ -2,7 +2,7 @@
 
 Guia para subir a workstation central do CARBONARA. São **duas partes independentes**:
 
-- **A. Coleta** — `rsync-over-SSH`, **nativa no host**, toda pelo script [`rsync-hub`](../rsync-hub).
+- **A. Coleta** — `rsync-over-SSH`, **nativa no host**, toda pelo script [`rsync-hub`](../collection/rsync-hub).
 - **B. Dados** — TimescaleDB + ingestão + FTP de distribuição, em **Docker Compose**.
 
 A fronteira entre elas é o diretório `incoming/`: o `rsync-hub` só escreve nele, a ingestão só
@@ -38,7 +38,7 @@ cd carbonara-datahub
 
 ```bash
 sudo apt-get update && sudo apt-get install -y openssh-server rsync
-sudo ./rsync-hub install          # instalação GUIADA: pasta raiz → conta → estações
+sudo ./collection/rsync-hub install   # instalação GUIADA: pasta raiz → conta → estações
 ```
 
 O assistente conduz passo a passo: pergunta a **pasta raiz** dos dados (default
@@ -46,7 +46,7 @@ O assistente conduz passo a passo: pergunta a **pasta raiz** dos dados (default
 cria `incoming/`, `log/` e `.ssh/authorized_keys`, grava as escolhas em
 `/etc/rsync-hub.conf`, oferece a cópia para `/usr/local/bin/rsync-hub` e já emenda na
 autorização das primeiras estações. Para automação sem perguntas:
-`sudo ./rsync-hub install --defaults`. Se o `rrsync` não for encontrado, o assistente
+`sudo ./collection/rsync-hub install --defaults`. Se o `rrsync` não for encontrado, o assistente
 avisa (ele acompanha o pacote `rsync`).
 
 ### A2. Autorizar cada estação
@@ -61,7 +61,7 @@ rsync-hub list                 # confere as estações autorizadas
 Isso cria `/srv/carbonara/stations/flona01/` com a **chave privada** (`flona01_key` —
 leve-a para a estação), a pública (permanece lá, já autorizada) e um **`INSTRUCOES.txt`**
 com o passo a passo de ativação para o operador (ver
-[`station/README.md`](../station/README.md)).
+[`collection/station/README.md`](../collection/station/README.md)).
 
 > **Leitura sem sudo:** os arquivos de `stations/` (e os dados de `incoming/`/`archive/`)
 > são legíveis por qualquer usuário local da workstation — dá para copiar a chave e as
@@ -190,7 +190,7 @@ sudo ls -R /srv/carbonara/archive/flona01
 > `sudo`): `mkdir -p data/incoming/flona01 && cp examples/... data/incoming/flona01/`.
 
 Para testar uma estação **real** enviando por rsync-over-SSH (em vez de copiar o arquivo à
-mão), use o cliente guiado em [`station/`](../station/README.md) — `setup` → autorizar no
+mão), use o cliente guiado em [`collection/station/`](../collection/station/README.md) — `setup` → autorizar no
 host → `test` → `send` — ou o agente completo do repo
 [`carbonara-stations`](https://github.com/CarbonARA-UFOPA/carbonara-stations).
 

@@ -23,29 +23,31 @@ estações → rsync/ssh → incoming/ → ingestion (parse) → TimescaleDB
              registra conexões em log; `rsync-hub monitor` mostra ao vivo
 ```
 
-### Coleta: host guiado (`rsync-hub`) + clientes (`station/`)
+### Coleta (`collection/`): host guiado (`rsync-hub`) + clientes (`station/`)
 
 O lado **host** (esta workstation) é um script guiado — o `install` conduz passo a passo:
-pasta raiz → conta de serviço → autorização das estações:
+pasta raiz → conta de serviço → autorização das estações (após o `install`, o script fica
+disponível como `rsync-hub` em `/usr/local/bin`):
 
 ```bash
-sudo ./rsync-hub install              # instalação GUIADA do host — 1x
-sudo ./rsync-hub add flona01          # autoriza GERANDO a chave aqui: stations/flona01/
+sudo ./collection/rsync-hub install   # instalação GUIADA do host — 1x
+sudo rsync-hub add flona01            # autoriza GERANDO a chave aqui: stations/flona01/
                                       #   guarda o par + INSTRUCOES.txt de ativação
-sudo ./rsync-hub add flona01 f.pub    # ou autoriza uma chave já existente
-sudo ./rsync-hub add flona01 --senha  # ou por USUÁRIO+SENHA (rsync daemon:873 — mais
+sudo rsync-hub add flona01 f.pub      # ou autoriza uma chave já existente
+sudo rsync-hub add flona01 --senha    # ou por USUÁRIO+SENHA (rsync daemon:873 — mais
                                       #   simples no cliente; dados sem criptografia)
-     ./rsync-hub list                 # lista estações
-     ./rsync-hub monitor              # fica rodando mostrando as conexões
-     ./rsync-hub cliente              # instruções p/ configurar uma estação
-     ./rsync-hub                      # menu interativo
+     rsync-hub list                   # lista estações
+     rsync-hub monitor                # fica rodando mostrando as conexões
+     rsync-hub cliente                # instruções p/ configurar uma estação
+     rsync-hub                        # menu interativo
 ```
 
 O lado **cliente** roda nas estações (Linux **ou Windows**) — assistentes guiados em
-[`station/`](station/): `carbonara-station.sh` (Linux) e `carbonara-station.ps1` +
-`carbonara-station.cmd` (Windows). O `setup` pergunta, em ordem: IP do host (porta
-padrão 22) → caminho da chave recebida → teste de conexão → pasta a enviar → tempo de
-reciclagem (com ativação do envio automático). Ver [`station/README.md`](station/README.md).
+[`collection/station/`](collection/station/): `carbonara-station.sh` (Linux) e
+`carbonara-station.ps1` + `carbonara-station.cmd` (Windows). O `setup` pergunta, em ordem:
+IP do host (porta padrão 22) → caminho da chave recebida → teste de conexão → pasta a
+enviar → tempo de reciclagem (com ativação do envio automático).
+Ver [`collection/station/README.md`](collection/station/README.md).
 
 Isolamento simples e real: cada estação tem uma **chave** que só executa `rsync-hub serve
 <id>` (via `command="…",restrict` no `authorized_keys` — sem shell/túnel/PTY), e o
@@ -71,9 +73,10 @@ Passo a passo completo e teste ponta a ponta em [`docs/installation.md`](docs/in
 carbonara-datahub/
 ├── docker-compose.yml        # db + ingestion + ftp (distribuição)
 ├── .env.example
-├── rsync-hub                 # coleta, lado HOST: instalação guiada + gerência + monitor + comando forçado
-├── station/                  # coleta, lado CLIENTE: assistentes guiados p/ estações Linux e Windows
-├── ftp/                      # config do FTP/FTPS (agora só distribuição)
+├── collection/               # camada de COLETA (transporte rsync)
+│   ├── rsync-hub             #   lado HOST: instalação guiada + gerência + monitor + comando forçado
+│   └── station/              #   lado CLIENTE: assistentes guiados p/ estações Linux e Windows
+├── ftp/                      # config do FTP/FTPS (agora só distribuição) + docs de operação em ftp/docs/
 ├── database/init/            # SQL idempotente rodado no 1º start (schema + hypertable)
 ├── ingestion/                # ingest.py + parsers plugáveis + Dockerfile
 ├── examples/                 # CSV de exemplo p/ teste ponta a ponta
