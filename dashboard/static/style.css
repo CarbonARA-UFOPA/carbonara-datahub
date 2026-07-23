@@ -45,6 +45,11 @@ h2 { font-size: 1.05rem; margin: .2rem 0; }
 .table th .col-label { display: block; margin-top: .15rem; font-weight: 700;
                        text-transform: none; letter-spacing: 0; color: var(--accent); }
 .table th.col-ts .col-label { color: var(--purple); }
+/* Linha de checkbox (opção booleana) em largura total, fora dos grids de texto. */
+.check-row { display: flex; align-items: flex-start; gap: .5rem;
+             margin: .1rem 0 .7rem; font-weight: normal; }
+.check-row input[type="checkbox"] { width: auto; margin: .2rem 0 0; flex: 0 0 auto; }
+.check-row span { font-size: .88rem; color: var(--muted); line-height: 1.35; }
 .actions { display: flex; gap: .4rem; align-items: center; }
 .actions form { margin: 0; }
 

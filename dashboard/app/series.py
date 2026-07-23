@@ -141,12 +141,17 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
             "values": values,
         })
 
+    # Última leitura em formato COMPLETO (com ano) para o tooltip do mapa — o eixo do
+    # gráfico usa '%d/%m %H:%M' (sem ano, para não poluir), mas o "última leitura" precisa
+    # do ano. Pega o timestamp mais novo que casou o formato.
+    last_dt = next((d for d in reversed(dts) if d is not None), None)
     keep = _decimate(len(rows))
     return {
         "file": fcfg["id"],
         "path": str(path),
         "rows_read": len(rows),
         "decimated": len(keep) < len(rows),
+        "last_reading": last_dt.strftime("%d/%m/%Y %H:%M") if last_dt else None,
         "timestamps": [timestamps[i] for i in keep],
         "variables": [
             {**v, "values": [v["values"][i] for i in keep]} for v in variables

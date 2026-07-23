@@ -238,13 +238,16 @@ function initMapPage() {
       fetch(f.series_url).then((r) => r.json()).catch(() => null)));
     results.forEach((data, fi) => {
       if (!data || data.error) return;
+      // "última leitura" com ANO (data.last_reading = '%d/%m/%Y %H:%M'); fallback no
+      // timestamp do eixo (sem ano) se o backend for antigo.
+      if (data.last_reading) lastTs = data.last_reading;
       const rows = [];
       data.variables.forEach((v) => {
         let val = null;
         for (let i = v.values.length - 1; i >= 0; i--) {
           if (v.values[i] != null) {
             val = v.values[i];
-            if (data.timestamps[i]) lastTs = data.timestamps[i];
+            if (!data.last_reading && data.timestamps[i]) lastTs = data.timestamps[i];
             break;
           }
         }
