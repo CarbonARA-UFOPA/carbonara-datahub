@@ -75,7 +75,21 @@ function makeOrUpdateChart(canvas, labels, v, color, opts = {}) {
       interaction: { mode: "index", intersect: false },
       plugins: { legend: { display: !!opts.legend } },
       scales: {
-        x: { ticks: { maxTicksLimit: opts.legend ? 10 : 6, autoSkip: true } },
+        x: {
+          ticks: { autoSkip: false },
+          // Âncora os rótulos do eixo x no ÚLTIMO ponto (a leitura mais RECENTE é o que
+          // importa): escolhe ~N ticks espaçados a partir do FIM, garantindo sempre o
+          // último timestamp (antes o autoSkip espaçava do primeiro e o último sumia).
+          afterBuildTicks: (axis) => {
+            const n = (axis.chart.data.labels || []).length;
+            if (!n) return;
+            const maxT = opts.legend ? 10 : 6;
+            const step = Math.max(1, Math.ceil(n / maxT));
+            const idx = [];
+            for (let i = n - 1; i >= 0; i -= step) idx.unshift(i);
+            axis.ticks = idx.map((i) => ({ value: i }));
+          },
+        },
         y: { suggestedMin: limits.min ?? undefined, suggestedMax: limits.max ?? undefined },
       },
     },
