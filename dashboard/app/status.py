@@ -16,10 +16,32 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:  # py3.9+
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore[assignment]
+
 from . import config_store, tailer
 
 _INTERVAL_RE = re.compile(r"^interval_min=(\d+)\s*$", re.M)
 _LOG_TAIL = 500  # linhas do fim do connections.log a examinar
+
+
+def _fmt_signal(epoch: float, cfg: dict) -> str:
+    """Formata o horário do último sinal em HORA LOCAL.
+
+    O status (online/offline) é sempre calculado em epoch (imune a fuso); isto é só a
+    EXIBIÇÃO. Por padrão usa o fuso do processo; se o processo roda em UTC (ex.: serviço
+    sem TZ) enquanto o servidor está em -03, defina ``timezone`` no config (ex.:
+    ``America/Santarem``) para forçar a hora local correta.
+    """
+    tzname = cfg.get("timezone")
+    if tzname and ZoneInfo is not None:
+        try:
+            return datetime.fromtimestamp(epoch, ZoneInfo(tzname)).strftime("%d/%m/%Y %H:%M:%S")
+        except Exception:
+            pass
+    return datetime.fromtimestamp(epoch).strftime("%d/%m/%Y %H:%M:%S")
 
 
 def _parse_log_ts(ts: str) -> float | None:
@@ -118,9 +140,7 @@ def station_status(cfg: dict, station: dict) -> dict:
         "name": station.get("name") or station["id"],
         "status": status,
         "receiving": receiving,
-        "last_signal": (
-            datetime.fromtimestamp(act).strftime("%d/%m/%Y %H:%M:%S") if act else None
-        ),
+        "last_signal": (_fmt_signal(act, cfg) if act else None),
         "seconds_since_signal": int(now - act) if act else None,
         "interval_min": interval_min,
         "limit_seconds": limit,
