@@ -340,7 +340,7 @@ stations:
   - path: /srv/carbonara/incoming/eddyfarm/loggernet/CR1000_Public.dat
     tail_lines: 360
     separator: ','
-    quotechar: '"'
+    quotechar: ''
     decimal: .
     skip_header_lines: 4
     header_line: 2
@@ -356,13 +356,13 @@ stations:
     - column: 2
       label: Temperatura do painel (CR1000X)
       unit: °C
-      min: 0
-      max: 60
+      min: 0.0
+      max: 60.0
     - column: 3
       label: Bateria do datalogger
       unit: V
       min: 11.5
-      max: 16
+      max: 16.0
     - column: 5
       label: DataPoll
       unit: null
@@ -674,4 +674,6 @@ stations:
       min: null
       max: null
     id: cr1000_public
+    window_hours: null
+    strip_regex: '"m -125'
   offline_window_min: null
