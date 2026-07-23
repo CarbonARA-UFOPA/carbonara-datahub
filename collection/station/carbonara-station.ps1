@@ -54,7 +54,11 @@ param(
 
     # Caminho da pasta de configuração. Usado pela tarefa agendada como SYSTEM, que tem
     # outro perfil de usuário e precisa apontar para a configuração de quem fez o setup.
-    [string]$ConfigDir = ''
+    [string]$ConfigDir = '',
+
+    # Intervalo (min) para o 'schedule' — usado quando o setup/agendamento se re-executa
+    # elevado (UAC) para criar a tarefa SYSTEM sem perguntar o intervalo de novo.
+    [int]$Every = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -68,6 +72,17 @@ $CwRsyncDir = 'C:\cwrsync'
 $CwRsyncUrl = 'https://itefix.net/sites/default/files/2026-06/cwrsync_6.4.8_x64_free.zip'
 
 # --- Utilitários -----------------------------------------------------------------
+# Grava texto UTF-8 SEM BOM e com quebras de linha LF (\n) — NUNCA CRLF. Obrigatório
+# para arquivos lidos por ferramentas Unix no servidor/rsync: o heartbeat (o monitor
+# valida 'interval_min=<n>' e um '\r' o reprova, jogando a estação na janela global de
+# 1h) e o --files-from do rsync (um '\r' no fim de cada caminho faz o rsync procurar
+# "arquivo\r", inexistente). [IO.File]::WriteAllLines usa CRLF no Windows — por isso este.
+function Write-TextLf([string]$Path, [string[]]$Lines) {
+    $text = ''
+    if ($Lines -and $Lines.Count -gt 0) { $text = ($Lines -join "`n") + "`n" }
+    [IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Ask([string]$Pergunta, [string]$Default = '') {
     $r = if ($Default) { Read-Host "$Pergunta [$Default]" } else { Read-Host $Pergunta }
     if ($r) { $r.Trim() } else { $Default }
@@ -353,7 +368,7 @@ function Send-Heartbeat($Cfg) {
         "interval_min=$($Cfg.SendEveryMin)",
         ('ts={0:yyyy-MM-ddTHH:mm:ssZ}' -f (Get-Date).ToUniversalTime())
     )
-    [IO.File]::WriteAllLines($hb, [string[]]$lines, (New-Object System.Text.UTF8Encoding($false)))
+    Write-TextLf $hb ([string[]]$lines)   # LF: o monitor do servidor valida interval_min
     $rsyncDir = Split-Path $Cfg.Rsync
     if ($env:PATH -notlike "$rsyncDir*") { $env:PATH = "$rsyncDir;$env:PATH" }
     if (-not $env:HOME) { $env:HOME = $env:USERPROFILE }
@@ -400,33 +415,39 @@ function Invoke-Probe($Cfg) {
 # (tipos de arquivo e subpastas excluídos) e o critério de dotfiles da ingestão. Cada
 # item traz a chave "rótulo/caminho", a assinatura (tamanho:mtime) e se já assentou.
 function Get-LocalFiles($Cfg) {
-    $out = @()
     $cut = (Get-Date).AddMinutes(-[int]$Cfg.MinAgeMin)
-    foreach ($f in (Get-Folders $Cfg)) {
+    foreach ($f in @(Get-Folders $Cfg)) {
         if (-not (Test-Path -LiteralPath $f.Path)) { continue }
         $dataDir = (Get-Item -LiteralPath $f.Path).FullName.TrimEnd('\')
+        # Rótulo e caminho FIXADOS como string (escalar) por pasta — evita que uma
+        # eventual coleção vinda do JSON contamine cada item com um array.
+        $lbl  = [string]$f.Label
+        $fp   = [string]$f.Path
+        $fexc = @($f.FileExcludes)
+        $dexc = @($f.DirExcludes)
         Get-ChildItem -LiteralPath $dataDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
             $_.Name -notlike '.*' -and
             $_.FullName.Substring($dataDir.Length) -notmatch '[\\/]\.'
         } | ForEach-Object {
             $rel = $_.FullName.Substring($dataDir.Length + 1) -replace '\\', '/'
-            $name = $_.Name
+            $nm = $_.Name
             $skip = $false
-            foreach ($d in $f.DirExcludes) { if (("/$rel/") -like "*/$d/*") { $skip = $true; break } }
-            if (-not $skip) { foreach ($g in $f.FileExcludes) { if ($name -like $g) { $skip = $true; break } } }
+            foreach ($d in $dexc) { if (("/$rel/") -like "*/$d/*") { $skip = $true; break } }
+            if (-not $skip) { foreach ($g in $fexc) { if ($nm -like $g) { $skip = $true; break } } }
             if (-not $skip) {
-                $out += [pscustomobject]@{
-                    Key     = "$($f.Label)/$rel"
+                # Emite o objeto direto (stream) — NÃO acumula em $out nem usa ',$out';
+                # assim @(Get-LocalFiles) é sempre uma lista PLANA, sem aninhamento.
+                [pscustomobject]@{
+                    Key     = "$lbl/$rel"
                     Rel     = $rel
-                    Label   = $f.Label
-                    Path    = $f.Path
+                    Label   = $lbl
+                    Path    = $fp
                     Sig     = '{0}:{1}' -f $_.Length, $_.LastWriteTimeUtc.Ticks
                     Settled = ($_.LastWriteTime -le $cut)
                 }
             }
         }
     }
-    return , $out
 }
 
 # Estado local do que já foi enviado (as pastas de dados NUNCA são alteradas).
@@ -519,7 +540,9 @@ function Invoke-Setup {
         if (Test-Path -LiteralPath $keyWin) {
             $keyPath = (Get-Item -LiteralPath $keyWin).FullName
             # Restringe a chave ao usuário atual (o ssh recusa chave com permissão aberta).
-            Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
+            # Restringe a chave, mas concede LEITURA ao SYSTEM — senão a tarefa agendada
+            # como SYSTEM não conseguiria ler a chave e o envio por SSH falharia.
+            Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F", '/grant:r', 'SYSTEM:R') | Out-Null
         } else {
             Write-Host "  não encontrei a chave em: $keyWin"
             if (Ask-YesNo '  Gerar um NOVO par de chaves aqui (a pública precisará ser autorizada no servidor)?' $false) {
@@ -539,7 +562,9 @@ function Invoke-Setup {
                     }
                     if ($r.TimedOut -or $r.Code -ne 0) { throw "falha ao gerar a chave SSH: $($r.Out -join ' ')" }
                 }
-                Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F") | Out-Null
+                # Restringe a chave, mas concede LEITURA ao SYSTEM — senão a tarefa agendada
+            # como SYSTEM não conseguiria ler a chave e o envio por SSH falharia.
+            Invoke-Native 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', "$($env:USERNAME):F", '/grant:r', 'SYSTEM:R') | Out-Null
                 $script:pubKey = (Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim()
                 $newKey = $true
             }
@@ -712,13 +737,18 @@ function Invoke-Send {
         $sent = @{}
         # Um envio (e um files-from) por pasta — cada pasta vai para o seu sub-diretório
         # (rótulo) no servidor, o que evita colisão de nomes entre pastas diferentes.
-        foreach ($grp in ($tosend | Group-Object Label)) {
-            $items = @($grp.Group)
-            $label = $grp.Name
-            $path  = $items[0].Path
-            if (-not (Test-Path -LiteralPath $path)) { continue }
-            # UTF-8 SEM BOM — um BOM corromperia o primeiro caminho da lista no rsync.
-            [IO.File]::WriteAllLines($list, [string[]]@($items | ForEach-Object { $_.Rel }), (New-Object System.Text.UTF8Encoding($false)))
+        foreach ($fold in @(Get-Folders $cfg)) {
+            $label = [string]$fold.Label
+            $path  = [string]$fold.Path
+            # Arquivos deste rótulo dentro do que há para enviar (lista plana).
+            $items = @($tosend | Where-Object { $_.Label -eq $label })
+            if ($items.Count -eq 0) { continue }
+            if (-not (Test-Path -LiteralPath $path)) {
+                Write-Host ("  [{0}] pasta não encontrada: {1} — pulando." -f $label, $path)
+                continue
+            }
+            # UTF-8 SEM BOM e LF — um BOM ou um '\r' (CRLF) corromperia os caminhos no rsync.
+            Write-TextLf $list ([string[]]@($items | ForEach-Object { [string]$_.Rel }))
             Write-Host ("  [{0}] {1} arquivo(s) de {2}" -f $label, $items.Count, $path)
             # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
             # legíveis pelos usuários locais do host, independentemente das permissões aqui.
@@ -890,37 +920,81 @@ function Show-FoldersMenu {
 }
 
 # --- Agendamento (Agendador de Tarefas) --------------------------------------------------
+# A rotina de envio é uma TAREFA do Windows — vive independente desta janela. O ideal é
+# rodar como SYSTEM: continua com a janela FECHADA, sem ninguém logado e APÓS REINICIAR.
+# Isso exige administrador; se não for o caso, o Install-Schedule oferece elevar (UAC).
 function Install-Schedule([string]$Every) {  # instala/substitui a tarefa de envio periódico
-    # -ConfigDir fixa a configuração desta instalação (necessário quando a tarefa roda
-    # como SYSTEM, cujo perfil/%LOCALAPPDATA% é outro).
-    $tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" send -ConfigDir `"$ConfDir`""
-    # Invoke-NativeQuiet monta a linha de comando escapando as aspas internas do /TR
-    # como \" — obrigatório quando o caminho do script tem espaços (ex.: C:\Users\Km67
-    # Eddy System\...); com o operador & do PowerShell o schtasks quebraria no espaço.
-    $argv = @('/Create', '/F', '/SC', 'MINUTE', '/MO', $Every, '/TN', $TaskName)
+    $minutes = [int]$Every
+    if ($minutes -lt 1) { $minutes = 10 }
+
+    # Sem admin: oferece re-executar ELEVADO para criar a tarefa como SYSTEM (o modo que
+    # sobrevive a fechar a janela, deslogar e reiniciar). Passa -Every para não reperguntar.
+    if (-not (Test-IsAdmin)) {
+        Write-Host ''
+        Write-Host 'Para o envio continuar com a janela FECHADA, sem login e APÓS REINICIAR, a'
+        Write-Host 'tarefa precisa rodar como SYSTEM — isso pede administrador (aparece o aviso UAC).'
+        if (Ask-YesNo 'Elevar agora e instalar como SYSTEM (recomendado)?' $true) {
+            $a = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" schedule -ConfigDir `"$ConfDir`" -Every $minutes"
+            try {
+                Start-Process -FilePath 'powershell.exe' -ArgumentList $a -Verb RunAs -Wait
+            } catch {
+                Write-Host "não consegui elevar ($($_.Exception.Message)) — vou criar uma tarefa"
+                Write-Host 'que roda só enquanto você estiver LOGADO.'
+            }
+            # Confirma pelo estado real da tarefa (a janela elevada já fechou).
+            $q = Invoke-NativeQuiet 'schtasks.exe' @('/Query', '/TN', $TaskName) 15
+            if ($q.Code -eq 0) {
+                Write-Host ("ok: envio automático ativo a cada {0} min como SYSTEM (tarefa '{1}')." -f $minutes, $TaskName)
+                Write-Host 'roda com a janela fechada, sem ninguém logado e após reiniciar.'
+                return
+            }
+            Write-Host '(a tarefa como SYSTEM não foi criada — seguindo sem elevação.)'
+        } else {
+            Write-Host 'ok — a tarefa vai rodar só enquanto você estiver LOGADO no Windows.'
+        }
+    }
+
     $asSystem = Test-IsAdmin
-    if ($asSystem) { $argv += @('/RU', 'SYSTEM') }   # roda mesmo sem ninguém logado
+    # Ação: 'send' OCULTO (sem piscar janela), apontando para ESTA configuração.
+    # -ConfigDir fixa a config (a tarefa SYSTEM tem outro %LOCALAPPDATA%).
+    $tr = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`" send -ConfigDir `"$ConfDir`""
+    # Invoke-NativeQuiet escapa as aspas internas do /TR como \" — obrigatório quando o
+    # caminho do script tem espaços (ex.: C:\Users\Km67 Eddy System\...).
+    $argv = @('/Create', '/F', '/SC', 'MINUTE', '/MO', "$minutes", '/TN', $TaskName)
+    if ($asSystem) { $argv += @('/RU', 'SYSTEM', '/RL', 'HIGHEST') }   # roda mesmo sem ninguém logado
     $argv += @('/TR', $tr)
     $r = Invoke-NativeQuiet 'schtasks.exe' $argv 30
-    if ($r.Code -eq 0) {
-        Write-Host ("ok: envio automático ativo a cada {0} min (Agendador de Tarefas, tarefa '{1}')." -f $Every, $TaskName)
-        if ($asSystem) {
-            Write-Host 'a tarefa roda como SYSTEM: continua sincronizando com a janela fechada,'
-            Write-Host 'sem ninguém logado e após reiniciar — e sem piscar janelas.'
-        } else {
-            Write-Host 'pode fechar esta janela: a tarefa continua rodando enquanto o usuário'
-            Write-Host 'estiver LOGADO no Windows. Para sincronizar também sem login/após'
-            Write-Host 'reiniciar, rode o schedule uma vez em um PowerShell como ADMINISTRADOR'
-            Write-Host '(a tarefa então é recriada como SYSTEM).'
-        }
-        Write-Host 'para remover: .\carbonara-station.ps1 unschedule'
-    } else {
+    if ($r.Code -ne 0) {
         $r.Out | ForEach-Object { Write-Host "  $_" }
         Write-Host 'falha ao criar a tarefa agendada — tente em um PowerShell como administrador.'
+        return
     }
+    # Reforço (best-effort, Windows 8+/10/11): não parar na bateria e RECUPERAR execuções
+    # perdidas (ex.: logo após reiniciar). Assim a rotina fica realmente "sempre salva".
+    try {
+        if (Get-Command Set-ScheduledTask -ErrorAction SilentlyContinue) {
+            $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                    -StartWhenAvailable -MultipleInstances IgnoreNew
+            Set-ScheduledTask -TaskName $TaskName -Settings $set -ErrorAction Stop | Out-Null
+        }
+    } catch { }
+
+    Write-Host ("ok: envio automático ativo a cada {0} min (Agendador de Tarefas, tarefa '{1}')." -f $minutes, $TaskName)
+    if ($asSystem) {
+        Write-Host 'roda como SYSTEM: continua com a janela FECHADA, sem ninguém logado e APÓS'
+        Write-Host 'REINICIAR — sem piscar janelas. É o modo recomendado para estações de campo.'
+    } else {
+        Write-Host 'ATENÇÃO: esta tarefa roda só enquanto você estiver LOGADO no Windows (após'
+        Write-Host 'reiniciar, só volta quando alguém logar). Para rodar sempre — janela fechada,'
+        Write-Host 'sem login e após reboot — refaça o agendamento e aceite ELEVAR (SYSTEM).'
+    }
+    Write-Host 'para remover: .\carbonara-station.ps1 unschedule'
 }
 
 function Invoke-Schedule {
+    Get-Config | Out-Null   # exige estar configurado
+    # Se veio -Every (re-execução elevada), usa direto e não repergunta.
+    if ($Every -ge 1) { Install-Schedule ([string]$Every); return }
     $cfg = Get-Config
     do {
         $iv = Ask 'Enviar a cada quantos minutos? (1-1439)' $(if ($cfg.SendEveryMin) { $cfg.SendEveryMin } else { '10' })

@@ -235,14 +235,23 @@ age are eligible; dotfiles/dot-dirs are skipped (matches the hub's ingestion rul
 failure the affected folder's state is untouched. Config lives per user
 (`~/.config/carbonara-station/` / `%LOCALAPPDATA%\carbonara-station\`).
 
-Windows scheduling: `Install-Schedule` embeds `-ConfigDir "<user's conf dir>"` in the
-task action (the `.ps1` accepts `-ConfigDir` to override its config paths) and, when the
-shell is elevated, creates the task with `/RU SYSTEM` — it then runs with no user logged
-on, survives reboots, and shows no console flashes; SYSTEM has a different
-%LOCALAPPDATA%, which is why -ConfigDir is mandatory in the action. Non-elevated
-schedule = task runs only while the user is logged on. The send mutex is
-`Global\CarbonaraStationSend` (cross-session, SYSTEM task vs user window) with a
-local-namespace fallback.
+Windows scheduling (`Install-Schedule`): the routine is a Task Scheduler task that lives
+independently of the interactive window — the goal is that it keeps sending with the
+window CLOSED, with nobody logged on, and AFTER REBOOT. That requires running as SYSTEM
+(`/RU SYSTEM /RL HIGHEST`), which needs admin. So when not elevated, Install-Schedule
+OFFERS to self-elevate (`Start-Process -Verb RunAs -Wait`) and re-runs `schedule
+-ConfigDir <dir> -Every <N>` in the elevated window (the `-Every` param skips the
+re-prompt); it then confirms via `schtasks /Query`. If the user declines/UAC fails, it
+falls back to a logged-on-only task and says so loudly. The action runs `send` with
+`-WindowStyle Hidden` (no flashes) and embeds `-ConfigDir "<user's conf dir>"` — SYSTEM
+has a different %LOCALAPPDATA%, so -ConfigDir is mandatory (the `.ps1` accepts it to
+override its config paths). After creation, a best-effort `Set-ScheduledTask` (Win8+)
+hardens settings: `-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+-StartWhenAvailable -MultipleInstances IgnoreNew` (so it doesn't stop on battery and
+catches up missed runs after downtime/reboot). Key-mode caveat: setup's `icacls` grants
+the SSH key `SYSTEM:R` in addition to the user, otherwise the SYSTEM task couldn't read
+the key and the SSH send would fail. The send mutex is `Global\CarbonaraStationSend`
+(cross-session, SYSTEM task vs user window) with a local-namespace fallback.
 
 Concurrent-append safety (why reading live datalogger files is fine): clients only READ
 sources — a reader never blocks the datalogger's writes; if the writer holds an

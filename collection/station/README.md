@@ -153,15 +153,22 @@ de 1 hora do servidor.
 
 Pode. Quem executa o envio periódico é o **Agendador de Tarefas** do Windows, não a
 janela — depois do `schedule` (ou do "ativar envio automático" no `setup`), feche o
-`cmd`/PowerShell à vontade. Detalhe importante:
+`cmd`/PowerShell à vontade. A rotina fica salva e continua rodando mesmo após **reiniciar**.
 
-- `schedule` rodado em PowerShell **comum**: a tarefa executa enquanto o usuário
-  estiver **logado** no Windows (após reiniciar, é preciso logar de novo).
-- `schedule` rodado em PowerShell **como administrador**: a tarefa é criada como
-  **SYSTEM** — sincroniza com a janela fechada, **sem ninguém logado e após
-  reiniciar**, sem piscar janelas. Recomendado para estações de campo.
+Ao agendar, o cliente busca o modo mais robusto (**SYSTEM**): se você não estiver como
+administrador, ele **oferece elevar** (aparece o aviso do Windows/UAC). Aceitando:
+
+- tarefa **SYSTEM** — sincroniza com a janela **fechada**, **sem ninguém logado e após
+  reiniciar**, sem piscar janelas, e não para quando o notebook vai para a **bateria**
+  (recupera execuções perdidas após um desligamento). É o recomendado para estações de campo.
+- se você recusar a elevação (ou o UAC falhar), cai numa tarefa que roda **só enquanto
+  você estiver logado** — o próprio cliente avisa isso em letras claras. Para virar SYSTEM
+  depois, refaça o `schedule` e aceite elevar.
 
 Confira com `status` (mostra se a tarefa está ativa) e pelos carimbos em `envios.log`.
+
+> Se você tinha configurado com uma versão anterior e a rotina parava ao fechar a janela,
+> rode o `schedule` de novo e **aceite elevar** — a tarefa é recriada como SYSTEM.
 
 ## Configuração gravada
 

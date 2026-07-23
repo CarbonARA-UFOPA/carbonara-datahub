@@ -39,7 +39,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-07-23.1"
+RSYNC_HUB_VERSION="2026-07-23.2"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -681,7 +681,10 @@ print_status() {
         hb_epoch=""; interval=""
         if [ -f "$hb" ]; then
             hb_epoch="$(stat -c %Y "$hb" 2>/dev/null || stat -f %m "$hb" 2>/dev/null || echo '')"
-            interval="$(sed -n 's/^interval_min=//p' "$hb" 2>/dev/null | head -1)"
+            # tr -d '\r': clientes Windows gravam o heartbeat com CRLF; sem isto o '\r'
+            # no fim de "interval_min=15" reprova a validação e a estação cai na janela
+            # global de 1h (CICLO some) em vez de 2×ciclo+2min.
+            interval="$(sed -n 's/^interval_min=//p' "$hb" 2>/dev/null | tr -d '\r' | head -1)"
             echo "$interval" | grep -Eq '^[0-9]+$' || interval=""
         fi
         act="0"
