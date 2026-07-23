@@ -49,7 +49,7 @@ Configuração gravada em %LOCALAPPDATA%\carbonara-station\config.json.
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('menu', 'setup', 'test', 'send', 'folders', 'schedule', 'unschedule', 'status', 'reset', 'help')]
+    [ValidateSet('menu', 'setup', 'test', 'send', 'folders', 'schedule', 'unschedule', 'status', 'reset', 'purge', 'help')]
     [string]$Command = 'menu',
 
     # Caminho da pasta de configuração. Usado pela tarefa agendada como SYSTEM, que tem
@@ -63,6 +63,7 @@ $ConfFile   = Join-Path $ConfDir 'config.json'
 $LogFile    = Join-Path $ConfDir 'envios.log'
 $StateFile  = Join-Path $ConfDir 'sent.state'   # o que já foi enviado: rótulo/caminho<TAB>tamanho:mtime
 $TaskName   = 'CarbonaraStationSend'
+$DefaultHubHost = '200.139.13.53'   # servidor central do projeto (padrão sugerido no setup)
 $CwRsyncDir = 'C:\cwrsync'
 $CwRsyncUrl = 'https://itefix.net/sites/default/files/2026-06/cwrsync_6.4.8_x64_free.zip'
 
@@ -195,12 +196,22 @@ function Show-FoldersSummary($Cfg) {
         Write-Host '  (nenhuma pasta configurada — rode setup ou adicione em Gerenciar pastas)'
         return
     }
+    # Quando a config está disponível, mostramos o DESTINO completo (IP + pasta da estação
+    # + subpasta/rótulo desta pasta); senão, só o rótulo da subpasta no servidor.
+    $hh = if ($Cfg -and ($Cfg.PSObject.Properties.Name -contains 'HubHost')) { $Cfg.HubHost } else { $null }
+    $st = if ($Cfg -and ($Cfg.PSObject.Properties.Name -contains 'StationId')) { $Cfg.StationId } else { $null }
     for ($i = 0; $i -lt $folders.Count; $i++) {
         $f = $folders[$i]
         $extra = ''
         if ($f.FileExcludes.Count) { $extra += "  · exceto arquivos: $($f.FileExcludes -join ',')" }
         if ($f.DirExcludes.Count)  { $extra += "  · sem subpastas: $($f.DirExcludes -join ',')" }
-        Write-Host ("  {0}) {1}  ->  servidor:[{2}]{3}" -f ($i + 1), $f.Path, $f.Label, $extra)
+        if ($hh) {
+            $sub = if ($st) { "$st/" } else { '' }
+            $dst = "{0}:/{1}{2}/" -f $hh, $sub, $f.Label
+        } else {
+            $dst = "subpasta no servidor: [$($f.Label)]"
+        }
+        Write-Host ("  {0}) {1}  ->  {2}{3}" -f ($i + 1), $f.Path, $dst, $extra)
     }
 }
 
@@ -283,6 +294,21 @@ function ConvertTo-UnixPath([string]$WinPath) {
     return ($WinPath -replace '\\', '/')
 }
 
+# Caminho cygwin da CHAVE, garantido SEM espaços. O rsync divide o valor de -e por
+# espaços ao montar o comando ssh, então um "-i" cujo caminho tenha espaço (ex.:
+# C:\Users\Km67 Eddy System\...) quebra o ssh (ele lê metade do caminho e trata o resto
+# como hostname). Solução: usar o nome CURTO 8.3 do Windows (nunca tem espaço) antes de
+# converter para /cygdrive/. Se o 8.3 estiver desativado no disco, devolve o caminho
+# longo (e o chamador avisa o usuário).
+function Get-CygSshKey([string]$WinPath) {
+    $p = $WinPath
+    try {
+        $fso = New-Object -ComObject Scripting.FileSystemObject
+        if ($fso.FileExists($WinPath)) { $p = $fso.GetFile($WinPath).ShortPath }
+    } catch { }
+    return (ConvertTo-UnixPath $p)
+}
+
 # Monta a linha de comando do rsync (executável + argumentos), conforme o modo de
 # autenticação: chave SSH (rsync-over-ssh) ou usuário+senha (rsync daemon, rsync://).
 # $SourceDir troca a origem (ex.: pasta vazia no teste, ou cada pasta no envio);
@@ -308,7 +334,7 @@ function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [strin
     } else {
         $dest = '{0}@{1}:/' -f $Cfg.HubUser, $Cfg.HubHost
         if ($DestSub) { $dest += "$DestSub/" }
-        $keyArg = ConvertTo-UnixPath $Cfg.KeyPath
+        $keyArg = Get-CygSshKey $Cfg.KeyPath
         $ssh  = "ssh -i $keyArg -p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
         $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir)/", $dest)
     }
@@ -338,7 +364,7 @@ function Send-Heartbeat($Cfg) {
         try { $r = Invoke-NativeQuiet $Cfg.Rsync @('-z', '--chmod=F644', '--timeout=30', $src, $dest) 60 }
         finally { Remove-Item Env:RSYNC_PASSWORD -ErrorAction SilentlyContinue }
     } else {
-        $keyArg = ConvertTo-UnixPath $Cfg.KeyPath
+        $keyArg = Get-CygSshKey $Cfg.KeyPath
         $ssh = "ssh -i $keyArg -p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
         $dest = '{0}@{1}:/.carbonara-status' -f $Cfg.HubUser, $Cfg.HubHost
         $r = Invoke-NativeQuiet $Cfg.Rsync @('-z', '--chmod=F644', '--timeout=30', '-e', $ssh, $src, $dest) 60
@@ -451,7 +477,7 @@ function Invoke-Setup {
 
     # 2. Servidor (IP + porta, padrão 22)
     do {
-        $hubHost = Ask 'IP (ou hostname) do servidor central' $(if ($old) { $old.HubHost })
+        $hubHost = Ask 'IP (ou hostname) do servidor central' $(if ($old -and $old.HubHost) { $old.HubHost } else { $DefaultHubHost })
         if (-not $hubHost) { Write-Host '  informe um endereço.' }
     } until ($hubHost)
     # 3. Autenticação: chave SSH ou usuário+senha
@@ -524,6 +550,13 @@ function Invoke-Setup {
 
     # 4. Teste simples de conexão (o host responde? a credencial é aceita?)
     Write-Host ''
+    if ($authMode -ne 'senha' -and $keyPath -and ((Get-CygSshKey $keyPath) -match ' ')) {
+        Write-Host 'AVISO: o caminho da chave tem ESPAÇOS e o nome curto (8.3) do Windows parece'
+        Write-Host 'desativado neste disco — o rsync/ssh pode falhar ("Could not resolve hostname").'
+        Write-Host 'Se o teste falhar, mova a chave para uma pasta SEM espaços (ex.: C:\carbonara\)'
+        Write-Host 'e rode o setup de novo apontando para o novo caminho.'
+        Write-Host ''
+    }
     $probeCfg = [pscustomobject]@{
         Rsync = $rsyncPath; KeyPath = $keyPath; AuthMode = $authMode
         StationId = $id; Password = $password
@@ -736,6 +769,33 @@ function Invoke-Reset {  # força reenvio completo no próximo send (o servidor 
     Write-Host '(o servidor não duplica medições: a ingestão é idempotente.)'
 }
 
+# Remove a configuração/conexão desta estação E o agendamento — para começar do zero.
+# NÃO toca nas pastas de DADOS nem no arquivo de CHAVE (que ficam fora do ConfDir).
+function Invoke-Purge {
+    Write-Host 'Isto apaga APENAS a CONFIGURAÇÃO desta estação: o endereço do servidor, a'
+    Write-Host 'LISTA de quais pastas enviar (não as pastas!), os filtros, o agendamento e o'
+    Write-Host 'histórico local (estado + log).'
+    Write-Host ''
+    Write-Host '>>> As suas PASTAS DE DADOS NÃO são apagadas — em NENHUMA hipótese. <<<'
+    Write-Host '    O cliente só LÊ seus arquivos; remover a configuração apenas faz a estação'
+    Write-Host "    'esquecer' para onde e o que enviar. Seus dados e a chave SSH ficam intactos."
+    Write-Host ''
+    if (-not (Ask-YesNo 'Remover a configuração?' $false)) { Write-Host 'cancelado.'; return }
+    $r = Invoke-NativeQuiet 'schtasks.exe' @('/Delete', '/F', '/TN', $TaskName) 30
+    if ($r.Code -eq 0) {
+        Write-Host '  agendamento (Agendador de Tarefas) removido.'
+    } else {
+        Write-Host '  aviso: não removi o agendamento (talvez criado como SYSTEM) — rode o unschedule'
+        Write-Host "  em um PowerShell como ADMINISTRADOR, ou apague a tarefa '$TaskName' manualmente."
+    }
+    foreach ($f in @($ConfFile, $StateFile, $LogFile,
+                     (Join-Path $ConfDir '.carbonara-status'),
+                     (Join-Path $ConfDir 'files-from.txt'))) {
+        Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host "ok: configuração removida — rode 'setup' para configurar de novo."
+}
+
 # --- Gerência de pastas ----------------------------------------------------------------
 function Add-Folder {
     $cfg = Get-Config
@@ -773,11 +833,12 @@ function Remove-Folder {
     if ($sel -notmatch '^\d+$') { Write-Host '  número inválido.'; return }
     $idx = [int]$sel - 1
     if ($idx -lt 0 -or $idx -ge $folders.Count) { Write-Host '  fora da faixa.'; return }
-    if ($folders.Count -le 1 -and -not (Ask-YesNo 'essa é a única pasta — remover mesmo? (a estação ficará sem enviar dados)' $false)) { return }
+    if ($folders.Count -le 1 -and -not (Ask-YesNo 'essa é a única pasta — tirar da lista? (a estação ficará sem enviar dados)' $false)) { return }
     $new = @()
     for ($i = 0; $i -lt $folders.Count; $i++) { if ($i -ne $idx) { $new += $folders[$i] } }
     Set-Folders $cfg $new
-    Write-Host "ok: pasta removida. (o estado de envio dela é limpo no próximo 'send'.)"
+    Write-Host 'ok: pasta retirada da LISTA de sincronização — os arquivos no disco continuam'
+    Write-Host "lá, nada foi apagado. (o estado de envio dela é limpo no próximo 'send'.)"
 }
 
 function Edit-FolderFilters {
@@ -930,6 +991,7 @@ function Show-Menu {
         Write-Host ' 6) Remover agendamento'
         Write-Host ' 7) Status'
         Write-Host ' 8) Limpar estado de envio (força reenvio de tudo)'
+        Write-Host ' 9) Remover configuração/conexão desta estação (e o agendamento)'
         Write-Host ' 0) Sair'
         $op = Read-Host 'opção'
         try {
@@ -942,6 +1004,7 @@ function Show-Menu {
                 '6' { Invoke-Unschedule }
                 '7' { Invoke-Status }
                 '8' { if (Ask-YesNo 'limpar o estado e reenviar tudo no próximo envio?' $false) { Invoke-Reset } }
+                '9' { Invoke-Purge }
                 '0' { return }
                 ''  { return }
                 default { Write-Host 'opção inválida' }
@@ -965,6 +1028,7 @@ uso (PowerShell):
   .\carbonara-station.ps1 unschedule    remove o agendamento
   .\carbonara-station.ps1 status        configuração, pendências e últimos envios
   .\carbonara-station.ps1 reset         limpa o estado de envio (força reenvio de tudo)
+  .\carbonara-station.ps1 purge         remove a configuração/conexão e o agendamento (zera)
   .\carbonara-station.ps1               menu interativo
 
 várias pastas são suportadas — cada uma vai para um sub-diretório próprio no servidor
@@ -988,6 +1052,7 @@ try {
         'unschedule' { Invoke-Unschedule }
         'status'     { Invoke-Status }
         'reset'      { Invoke-Reset }
+        'purge'      { Invoke-Purge }
         'menu'       { Show-Menu }
         'help'       { Show-Help }
     }

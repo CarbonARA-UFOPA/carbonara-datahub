@@ -39,7 +39,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-07-22.1"
+RSYNC_HUB_VERSION="2026-07-23.1"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -664,7 +664,7 @@ print_status() {
     else
         C_ON=""; C_OFF=""; C_RX=""; C_0=""
     fi
-    printf '  %-16s %-18s %-22s %-8s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (UTC)" "CICLO" "PASTA"
+    printf '  %-16s %-18s %-22s %-8s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "PASTA"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
     found=0
     for d in "$INCOMING"/*/; do
@@ -696,7 +696,7 @@ print_status() {
         receiving=0
         [ "$lastev" = "CONNECT" ] && receiving=1
         [ "$act" != 0 ] && [ "$((now - act))" -le 60 ] && receiving=1
-        if [ "$act" = 0 ]; then when="-"; else when="$(date -u -d "@$act" +%FT%TZ 2>/dev/null || echo "$act")"; fi
+        if [ "$act" = 0 ]; then when="-"; else when="$(date -d "@$act" '+%F %T' 2>/dev/null || echo "$act")"; fi
         if [ -n "$interval" ]; then cyc="${interval} min"; else cyc="-"; fi
         if [ "$receiving" = 1 ]; then
             dot="${C_RX}●${C_0}"; txt="Recebendo dados"
@@ -710,6 +710,17 @@ print_status() {
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
 }
 
+# Converte, para EXIBIÇÃO, o 1º campo (carimbo UTC ISO gravado por serve()) de cada
+# linha do log para a hora LOCAL do host — o arquivo em si continua em UTC.
+fmt_log_local() {
+    while IFS= read -r ln; do
+        [ -n "$ln" ] || continue
+        ts="${ln%% *}"; rest="${ln#* }"
+        loc="$(date -d "$ts" '+%F %T' 2>/dev/null || echo "$ts")"
+        printf '  %s %s\n' "$loc" "$rest"
+    done
+}
+
 monitor() {
     trap 'echo; exit 0' INT
     while true; do
@@ -718,8 +729,12 @@ monitor() {
         echo
         print_status
         echo
-        echo "últimas conexões (chave SSH):"
-        tail -n 6 "$LOG" 2>/dev/null | sed 's/^/  /' || echo "  (sem registros)"
+        echo "últimas conexões (chave SSH, hora local):"
+        if [ -s "$LOG" ]; then
+            tail -n 6 "$LOG" 2>/dev/null | fmt_log_local
+        else
+            echo "  (sem registros)"
+        fi
         if [ -f "$RSYNCD_LOG" ]; then
             echo "últimas conexões (usuário+senha, rsync daemon):"
             tail -n 4 "$RSYNCD_LOG" 2>/dev/null | sed 's/^/  /'

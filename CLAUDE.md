@@ -204,8 +204,10 @@ breaks the whole parse. A full-file rewrite drops the BOM; restore it with
 
 Both clients expose the same subcommands: `setup` (guided wizard), `test` (rsync
 dry-run), `send`, `folders` (manage sync folders), `schedule`/`unschedule`, `status`,
-`reset`, and an interactive menu when run without args (whose header shows the station
-and the configured sync folders). Send semantics (keep in sync across both — this is a
+`reset`, `purge` (wipe this station's config + folders + state + schedule, for a clean
+restart — never touches the data folders or the SSH key, which live outside the config
+dir), and an interactive menu when run without args (whose header shows the station and
+the configured sync folders). Send semantics (keep in sync across both — this is a
 hard product requirement): **the local data folders are NEVER modified** — no moves, no
 deletes; the client is a one-way synchronizer.
 

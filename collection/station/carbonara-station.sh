@@ -44,6 +44,7 @@ FOLDERS="$CONF_DIR/folders"      # uma pasta por linha: PATH<TAB>LABEL<TAB>FEXC<
 LOGF="$CONF_DIR/envios.log"
 STATE="$CONF_DIR/sent.state"     # o que já foi enviado: rótulo/caminho<TAB>tamanho:mtime
 CRON_TAG="# carbonara-station send"
+HUB_DEFAULT_HOST="200.139.13.53" # servidor central do projeto (padrão sugerido no setup)
 
 # Arrays paralelos com as pastas configuradas (preenchidos por load_folders).
 F_PATH=(); F_LABEL=(); F_FEXC=(); F_DEXC=()
@@ -105,7 +106,7 @@ folders_save() { # grava os arrays F_* de volta em $FOLDERS
     chmod 600 "$FOLDERS" 2>/dev/null || true
 }
 
-print_folders_summary() { # cabeçalho/legenda com as pastas e seus filtros
+print_folders_summary() { # $1=host (opcional) $2=estação (opcional) — pastas, destino e filtros
     load_folders
     if [ "${#F_PATH[@]}" -eq 0 ]; then
         echo "  (nenhuma pasta configurada — rode 'setup' ou adicione em 'folders')"
@@ -113,10 +114,17 @@ print_folders_summary() { # cabeçalho/legenda com as pastas e seus filtros
     fi
     k=0
     while [ "$k" -lt "${#F_PATH[@]}" ]; do
+        # Com host conhecido, mostra o DESTINO completo (IP + pasta da estação + rótulo
+        # desta pasta); sem host, só o rótulo da subpasta no servidor.
+        if [ -n "${1:-}" ]; then
+            dst="$1:/${2:+$2/}${F_LABEL[$k]}/"
+        else
+            dst="subpasta no servidor: [${F_LABEL[$k]}]"
+        fi
         extra=""
         [ -n "${F_FEXC[$k]}" ] && extra="$extra  · exceto arquivos: ${F_FEXC[$k]}"
         [ -n "${F_DEXC[$k]}" ] && extra="$extra  · sem subpastas: ${F_DEXC[$k]}"
-        printf '  %d) %s  →  servidor:[%s]%s\n' "$((k + 1))" "${F_PATH[$k]}" "${F_LABEL[$k]}" "$extra"
+        printf '  %d) %s  →  %s%s\n' "$((k + 1))" "${F_PATH[$k]}" "$dst" "$extra"
         k=$((k + 1))
     done
 }
@@ -266,7 +274,7 @@ setup() {
 
     # 2. Servidor (IP + porta, padrão 22)
     while :; do
-        HUB_HOST="$(ask "IP (ou hostname) do servidor central" "${HUB_HOST:-}")"
+        HUB_HOST="$(ask "IP (ou hostname) do servidor central" "${HUB_HOST:-$HUB_DEFAULT_HOST}")"
         [ -n "$HUB_HOST" ] && break
         echo "  informe um endereço."
     done
@@ -587,7 +595,7 @@ folders_remove() {
     idx=$((sel - 1))
     { [ "$idx" -ge 0 ] && [ "$idx" -lt "${#F_PATH[@]}" ]; } || { echo "  fora da faixa."; return 0; }
     if [ "${#F_PATH[@]}" -le 1 ]; then
-        ask_yn "essa é a única pasta — remover mesmo? (a estação ficará sem enviar dados)" n || return 0
+        ask_yn "essa é a única pasta — tirar da lista? (a estação ficará sem enviar dados)" n || return 0
     fi
     NP=(); NL=(); NFE=(); NDE=(); j=0
     while [ "$j" -lt "${#F_PATH[@]}" ]; do
@@ -602,7 +610,8 @@ folders_remove() {
         F_PATH=(); F_LABEL=(); F_FEXC=(); F_DEXC=()
     fi
     folders_save
-    echo "ok: pasta removida. (o estado de envio dela é limpo no próximo 'send'.)"
+    echo "ok: pasta retirada da LISTA de sincronização — os arquivos no disco continuam"
+    echo "lá, nada foi apagado. (o estado de envio dela é limpo no próximo 'send'.)"
 }
 
 folders_edit() {
@@ -672,6 +681,27 @@ unschedule() {
     echo "ok: agendamento removido (se existia)."
 }
 
+# Remove a configuração/conexão desta estação E o agendamento — para começar do zero.
+# NÃO toca nas pastas de DADOS nem no arquivo de CHAVE (que ficam fora do CONF_DIR).
+purge_config() {
+    echo "Isto apaga APENAS a CONFIGURAÇÃO desta estação: o endereço do servidor, a"
+    echo "LISTA de quais pastas enviar (não as pastas!), os filtros, o agendamento e o"
+    echo "histórico local (estado + log)."
+    echo
+    echo ">>> As suas PASTAS DE DADOS NÃO são apagadas — em NENHUMA hipótese. <<<"
+    echo "    O cliente só LÊ seus arquivos; remover a configuração apenas faz a estação"
+    echo "    'esquecer' para onde e o que enviar. Seus dados e a chave SSH ficam intactos."
+    echo
+    ask_yn "Remover a configuração?" n || { echo "cancelado."; return 0; }
+    if command -v crontab >/dev/null 2>&1; then
+        ( crontab -l 2>/dev/null | grep -vF "$CRON_TAG" || true ) | crontab - 2>/dev/null || true
+        echo "  agendamento (cron) removido."
+    fi
+    rm -f "$CONF" "$FOLDERS" "$STATE" "$LOGF" \
+          "$CONF_DIR/.carbonara-status" "$CONF_DIR/.lock"
+    echo "ok: configuração e agendamento removidos — rode 'setup' para configurar de novo."
+}
+
 # --- Status ---------------------------------------------------------------------------
 status() {
     load_conf
@@ -683,7 +713,7 @@ status() {
         echo "chave:     $KEY_FILE"
     fi
     echo "pastas sincronizadas (somente leitura: nada é movido/apagado):"
-    print_folders_summary
+    print_folders_summary "$HUB_HOST" "$STATION_ID"
     scan="$(mktemp)"; scan_all > "$scan"
     total="$(wc -l < "$scan" | tr -d ' ')"
     [ -f "$STATE" ] || : > "$STATE"
@@ -703,12 +733,14 @@ status() {
 menu_header() {  # cabeçalho: identifica a estação e mostra as pastas já sincronizadas
     if [ -r "$CONF" ]; then
         ( . "$CONF" 2>/dev/null || true
-          printf 'estação: %s   servidor: %s:%s\n' "${STATION_ID:-?}" "${HUB_HOST:-?}" "${HUB_PORT:-?}" )
+          printf 'estação: %s   servidor: %s:%s\n' "${STATION_ID:-?}" "${HUB_HOST:-?}" "${HUB_PORT:-?}"
+          echo "pastas sincronizadas:"
+          print_folders_summary "${HUB_HOST:-}" "${STATION_ID:-}" )
     else
         echo "estação: (ainda não configurada — use a opção 1)"
+        echo "pastas sincronizadas:"
+        print_folders_summary
     fi
-    echo "pastas sincronizadas:"
-    print_folders_summary
 }
 
 menu() {
@@ -725,6 +757,7 @@ menu() {
         echo " 6) Remover agendamento"
         echo " 7) Status"
         echo " 8) Limpar estado de envio (força reenvio de tudo)"
+        echo " 9) Remover configuração/conexão desta estação (e o agendamento)"
         echo " 0) Sair"
         printf "opção> "
         read -r op || exit 0
@@ -737,6 +770,7 @@ menu() {
             6) ( unschedule ) || true ;;
             7) ( status ) || true ;;
             8) if ask_yn "limpar o estado e reenviar tudo no próximo envio?" n; then reset_state; fi ;;
+            9) ( purge_config ) || true ;;
             0|q|"") exit 0 ;;
             *) echo "opção inválida" ;;
         esac
@@ -756,6 +790,7 @@ uso:
   $(basename "$0") unschedule   remove o agendamento
   $(basename "$0") status       configuração, pendências e últimos envios
   $(basename "$0") reset        limpa o estado de envio (força reenvio de tudo)
+  $(basename "$0") purge        remove a configuração/conexão e o agendamento (zera)
   $(basename "$0")              menu interativo
 
 várias pastas são suportadas — cada uma vai para um sub-diretório próprio no servidor
@@ -775,6 +810,7 @@ case "${1:-}" in
     unschedule) unschedule ;;
     status)     status ;;
     reset)      reset_state ;;
+    purge)      purge_config ;;
     ""|menu)    menu ;;
     -h|--help|help) usage ;;
     *) usage; exit 1 ;;

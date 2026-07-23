@@ -69,6 +69,7 @@ apagar nada lá).
    ./carbonara-station.sh folders    # gerencia as pastas (incluir/remover/filtrar)
    ./carbonara-station.sh schedule   # (re)agenda o envio periódico (cron / Agendador de Tarefas)
    ./carbonara-station.sh status     # configuração, pendências e últimos envios
+   ./carbonara-station.sh purge      # remove a configuração/conexão e o agendamento (zera)
    ```
    (No Windows, os mesmos subcomandos com `.\carbonara-station.cmd`.)
 
@@ -172,6 +173,13 @@ Confira com `status` (mostra se a tarefa está ativa) e pelos carimbos em `envio
 Rodar `setup` de novo reconfigura (os valores atuais viram os defaults do assistente); ao
 chegar nas pastas, ele oferece **manter** as já configuradas. Configurações antigas (uma
 única pasta) são **migradas** automaticamente na primeira execução do novo cliente.
+
+Para **começar do zero** (trocar de servidor, refazer a conexão), use `purge` (ou a opção
+correspondente no menu): ele apaga a configuração, a lista de pastas, o estado de envio, o
+log e **o agendamento** — mas **não toca nas pastas de dados nem no arquivo de chave**, que
+ficam fora da pasta de configuração. No Windows, se o agendamento tiver sido criado como
+**SYSTEM**, rode o `purge` (ou `unschedule`) em um PowerShell **como administrador** para
+conseguir removê-lo.
 
 ## Windows: como o rsync é instalado
 
