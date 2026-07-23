@@ -18,6 +18,27 @@ def _column_index(spec, header: list[str] | None, row_len: int) -> int | None:
     return cleaned.index(spec) if spec in cleaned else None
 
 
+def parse_timestamp(raw: str, fmt: str | None) -> datetime | None:
+    """Parse TOLERANTE do timestamp. Dataloggers Campbell/TOA5 gravam fração de segundo
+    ('2026-07-23 17:00:03.607'), que o formato padrão '%Y-%m-%d %H:%M:%S' não casa. Aqui
+    tentamos o formato como está e, se falhar, uma variante: com '.%f' anexado quando o
+    formato não a declara, ou sem ela quando o valor não tem fração. Assim o padrão da
+    dashboard funciona com ou sem os milissegundos, sem o usuário ter que ajustar nada."""
+    raw = (raw or "").strip().strip('"')
+    fmt = fmt or "%Y-%m-%d %H:%M:%S"
+    candidates = [fmt]
+    if "%f" not in fmt:
+        candidates.append(fmt + ".%f")
+    else:
+        candidates.append(fmt.replace(".%f", "").replace("%f", "").rstrip("."))
+    for f in candidates:
+        try:
+            return datetime.strptime(raw, f)
+        except ValueError:
+            continue
+    return None
+
+
 def _read_header(path, fcfg) -> list[str] | None:
     hl = fcfg.get("header_line")
     if not hl:
@@ -59,11 +80,11 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
     dts: list[datetime | None] = []
     for row in rows:
         raw = row[ts_idx].strip().strip('"') if ts_idx is not None and ts_idx < len(row) else ""
-        try:
-            dt = datetime.strptime(raw, ts_format)
+        dt = parse_timestamp(raw, ts_format)
+        if dt is not None:
             dts.append(dt)
             timestamps.append(dt.strftime("%d/%m %H:%M"))
-        except ValueError:
+        else:
             dts.append(None)
             timestamps.append(raw)
 
@@ -151,9 +172,7 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
         ts_idx = _column_index(ts_cfg.get("column", 0), header, max(ncols))
         if ts_idx is not None:
             raw = rows[-1][ts_idx].strip().strip('"') if ts_idx < len(rows[-1]) else ""
-            try:
-                datetime.strptime(raw, ts_cfg.get("format") or "%Y-%m-%d %H:%M:%S")
-            except ValueError:
+            if parse_timestamp(raw, ts_cfg.get("format")) is None:
                 diagnostics.append(
                     f"Timestamp não casa com o formato: valor '{raw}' × formato "
                     f"'{ts_cfg.get('format')}'."
