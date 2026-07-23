@@ -576,17 +576,45 @@ function initFileForm() {
       const diags = data.diagnostics || [], rows = data.rows || [];
       diags.forEach((d) => (html += `<p class="warn diag">⚠ ${esc(d)}</p>`));
       if (!diags.length) html += `<p class="diag" style="color:var(--green)">✓ Parse OK.</p>`;
-      html += "<table class='table'><thead><tr>";
+
+      /* Mapa coluna(índice) -> rótulo configurado NO FORMULÁRIO (variáveis + timestamp),
+         para o preview mostrar EM QUAL coluna cada rótulo (ex.: RECORD) caiu. Resolve
+         tanto índice numérico quanto nome de coluna (configs por nome, via header). */
+      const clean = (h) => (h || "").trim().replace(/^"|"$/g, "");
+      const resolveIdx = (raw) => {
+        const s = (raw || "").trim();
+        if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+        if (data.header) { const i = data.header.findIndex((h) => clean(h) === s); return i >= 0 ? i : null; }
+        return null;
+      };
+      const colLabels = new Map();
+      const tsIdx = resolveIdx(form.elements.ts_column ? form.elements.ts_column.value : "");
+      if (tsIdx !== null && Number.isFinite(tsIdx)) colLabels.set(tsIdx, { label: "carimbo de tempo", ts: true });
+      Array.from(tbody.rows).forEach((tr) => {
+        const colInp = tr.querySelector('[name="var_column"]');
+        if (!colInp) return;
+        const idx = resolveIdx(colInp.value);
+        if (idx === null || !Number.isFinite(idx)) return;
+        const labInp = tr.querySelector('[name="var_label"]');
+        colLabels.set(idx, { label: (labInp && labInp.value) || `coluna ${idx}`, ts: false });
+      });
+      const cellCls = (c) => (colLabels.has(c) ? (colLabels.get(c).ts ? " class='col-mapped col-ts'" : " class='col-mapped'") : "");
+
+      html += "<p class='meta'>Colunas destacadas = mapeadas no formulário (rótulo abaixo do número); " +
+        "azul = carimbo de tempo. As demais ainda não têm rótulo.</p>";
+      html += "<div style='overflow-x:auto'><table class='table'><thead><tr>";
       const ncols = Math.max(...rows.map((r) => r.length), (data.header || []).length);
       for (let c = 0; c < ncols; c++) {
         const name = data.header && data.header[c] ? ` · ${esc(data.header[c])}` : "";
-        html += `<th>${c}${name}</th>`;
+        const lab = colLabels.get(c);
+        const labPart = lab ? `<br><span class='col-label'>${esc(lab.label)}</span>` : "";
+        html += `<th${cellCls(c)}>${c}${name}${labPart}</th>`;
       }
       html += "</tr></thead><tbody>";
       rows.forEach((r) => {
-        html += "<tr>" + Array.from({ length: ncols }, (_, c) => `<td>${esc(r[c] ?? "")}</td>`).join("") + "</tr>";
+        html += "<tr>" + Array.from({ length: ncols }, (_, c) => `<td${cellCls(c)}>${esc(r[c] ?? "")}</td>`).join("") + "</tr>";
       });
-      html += "</tbody></table>";
+      html += "</tbody></table></div>";
       area.innerHTML = html;
     } catch (e) {
       area.innerHTML = `<p class="warn">Falha no preview: ${esc(String(e))}</p>`;

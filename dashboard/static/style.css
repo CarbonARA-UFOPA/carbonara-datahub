@@ -39,6 +39,12 @@ h2 { font-size: 1.05rem; margin: .2rem 0; }
          border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .table th, .table td { padding: .55rem .8rem; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .table th { background: #eef2f0; font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }
+/* Preview do parser: colunas mapeadas no formulário (com rótulo) e a do timestamp. */
+.table th.col-mapped, .table td.col-mapped { background: rgba(46, 158, 91, .14); }
+.table th.col-ts, .table td.col-ts { background: rgba(138, 92, 214, .16); }
+.table th .col-label { display: block; margin-top: .15rem; font-weight: 700;
+                       text-transform: none; letter-spacing: 0; color: var(--accent); }
+.table th.col-ts .col-label { color: var(--purple); }
 .actions { display: flex; gap: .4rem; align-items: center; }
 .actions form { margin: 0; }
 
