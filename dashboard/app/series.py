@@ -1,11 +1,23 @@
 """Monta as séries dos gráficos (e o preview do formulário) a partir do tail do arquivo."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 
 from . import config_store, tailer
 
 MAX_POINTS = 500  # decimação: acima disso o gráfico fica pesado sem ganho visual
+
+
+def _compile_strip(fcfg: dict):
+    """Compila a regex de limpeza dos valores (fcfg['strip_regex']); None se ausente/ inválida."""
+    pat = (fcfg.get("strip_regex") or "").strip()
+    if not pat:
+        return None
+    try:
+        return re.compile(pat)
+    except re.error:
+        return None
 
 
 def _column_index(spec, header: list[str] | None, row_len: int) -> int | None:
@@ -110,6 +122,7 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
             rows = rows[start:]
             timestamps = timestamps[start:]
 
+    strip_re = _compile_strip(fcfg)
     variables = []
     for var in fcfg.get("variables", []):
         idx = _column_index(var["column"], header, row_len)
@@ -117,7 +130,7 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
             problems.append(f"coluna '{var['column']}' não encontrada (variável '{var['label']}')")
             continue
         values = [
-            tailer.to_float(row[idx], fcfg.get("decimal", ".")) if idx < len(row) else None
+            tailer.to_float(row[idx], fcfg.get("decimal", "."), strip_re) if idx < len(row) else None
             for row in rows
         ]
         variables.append({
@@ -155,8 +168,10 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
     lines = tailer.tail_data_lines(path, max_rows, entry.get("skip_header_lines", 0))
     rows = tailer.parse_rows(lines, entry["separator"], entry["quotechar"])
     header = _read_header(path, entry)
+    strip_re = _compile_strip(entry)
 
     diagnostics: list[str] = []
+    ts_idx = None
     if rows:
         ncols = [len(r) for r in rows]
         if min(ncols) == 1 and max(ncols) == 1:
@@ -180,9 +195,19 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
     else:
         diagnostics.append("Nenhuma linha de dados lida — arquivo vazio ou só cabeçalho.")
 
+    # Mostra no preview o MESMO que os gráficos vão usar: aplica a limpeza por regex em
+    # cada célula (menos a do timestamp, que tem parse próprio). Assim você vê o 'm' etc.
+    # já removido antes de mapear as variáveis.
+    out_rows = rows[-max_rows:]
+    if strip_re is not None:
+        out_rows = [
+            [c if i == ts_idx else strip_re.sub("", (c or "")).strip() for i, c in enumerate(r)]
+            for r in out_rows
+        ]
+
     return {
         "path": str(path),
         "header": header,
-        "rows": rows[-max_rows:],
+        "rows": out_rows,
         "diagnostics": diagnostics,
     }

@@ -65,8 +65,12 @@ def parse_rows(lines: list[str], separator: str, quotechar: str) -> list[list[st
     return [row for row in reader]
 
 
-def to_float(cell: str, decimal: str = ".") -> float | None:
+def to_float(cell: str, decimal: str = ".", strip_re=None) -> float | None:
     cell = (cell or "").strip().strip('"')
+    # Limpeza opcional por regex: remove os trechos casados antes de virar número
+    # (ex.: tirar o 'm' de 'm -125', ou unidades). strip_re é um Pattern já compilado.
+    if strip_re is not None:
+        cell = strip_re.sub("", cell).strip()
     if cell.upper() in _NON_VALUES:
         return None
     if decimal != ".":

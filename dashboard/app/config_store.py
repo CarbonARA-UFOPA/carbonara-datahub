@@ -227,6 +227,17 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
     if decimal == separator:
         errors.append("Separador decimal não pode ser igual ao separador de colunas.")
 
+    # Regex opcional de limpeza dos valores: os trechos casados são removidos de cada
+    # célula (não do timestamp) antes de virar número — ex.: '[A-Za-z]' tira o 'm' de
+    # 'm -125'. Validamos aqui para não gravar uma regex quebrada.
+    strip_regex = (form.get("strip_regex") or "").strip()
+    if strip_regex:
+        try:
+            re.compile(strip_regex)
+        except re.error as exc:
+            errors.append(f"Expressão para remover dos valores é inválida: {exc}")
+            strip_regex = ""
+
     ts_col_raw = (form.get("ts_column") or "0").strip()
     ts_column: int | str = int(ts_col_raw) if INT_RE.match(ts_col_raw) else ts_col_raw
     ts_format = (form.get("ts_format") or "%Y-%m-%d %H:%M:%S").strip()
@@ -285,4 +296,6 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
         "timestamp": {"column": ts_column, "format": ts_format},
         "variables": variables,
     }
+    if strip_regex:
+        entry["strip_regex"] = strip_regex
     return entry, errors

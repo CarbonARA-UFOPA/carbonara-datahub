@@ -65,6 +65,13 @@
              value="{{ fcfg.header_line if fcfg and fcfg.header_line else '' }}">
       <small>TOA5 = 2. Permite referenciar colunas por nome.</small>
     </label>
+    <label>Remover dos valores (regex, opcional)
+      <input name="strip_regex" value="{{ fcfg.strip_regex if fcfg and fcfg.strip_regex else '' }}"
+             placeholder="ex.: [A-Za-z]">
+      <small>Apaga de cada valor os trechos casados (não mexe no timestamp). Ex.:
+        <code>[A-Za-z]</code> tira o <code>m</code> de <code>m -125</code>;
+        <code>[^0-9.,+\-]</code> deixa só número/sinal.</small>
+    </label>
   </div>
 
   <div class="grid-3">

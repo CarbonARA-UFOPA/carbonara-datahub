@@ -51,6 +51,10 @@ stations:
                                               #   aspas pelas vírgulas internas (mapeie
                                               #   por índice — os nomes deixam de alinhar)
         decimal: "."
+        # strip_regex (opcional): apaga de cada VALOR os trechos casados antes de virar
+        # número (não mexe no timestamp). Ex.: "[A-Za-z]" tira o 'm' de "m -125";
+        # "[^0-9.,+-]" deixa só número/sinal. Útil com quotechar:"" para limpar strings.
+        # strip_regex: "[A-Za-z]"
         skip_header_lines: 1                  # TOA5 = 4 · CSV com cabeçalho = 1
         header_line: 1                        # linha (1-based) com nomes; TOA5 = 2; null = sem nomes
         timestamp:
