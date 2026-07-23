@@ -203,17 +203,35 @@ breaks the whole parse. A full-file rewrite drops the BOM; restore it with
 `head -c 3 file | xxd` (`efbbbf`). `carbonara-station.cmd` must stay pure ASCII.
 
 Both clients expose the same subcommands: `setup` (guided wizard), `test` (rsync
-dry-run), `send`, `schedule`/`unschedule`, `status`, `reset`, and an interactive menu
-when run without args. Send semantics (keep in sync across both — this is a hard product
-requirement): **the local data folder is NEVER modified** — no moves, no deletes; the
-client is a one-way synchronizer. What was already sent is tracked in a local state file
-(`sent.state`, one `relpath<TAB>size:mtime` line per file, next to the config); each
-cycle sends only new-or-changed files (growing datalogger `.dat`s re-send whole — fine,
-hub ingestion is idempotent), and on rsync rc=0 the state is updated and pruned to files
-that still exist locally. `reset` wipes the state to force a full re-send. Only files
-older than the configured min age are eligible; dotfiles/dot-dirs are skipped (matches
-the hub's ingestion rule); on failure the state is untouched. Config lives per user
-(`~/.config/carbonara-station/config` / `%LOCALAPPDATA%\carbonara-station\config.json`).
+dry-run), `send`, `folders` (manage sync folders), `schedule`/`unschedule`, `status`,
+`reset`, and an interactive menu when run without args (whose header shows the station
+and the configured sync folders). Send semantics (keep in sync across both — this is a
+hard product requirement): **the local data folders are NEVER modified** — no moves, no
+deletes; the client is a one-way synchronizer.
+
+**Multiple folders + filters** (keep in sync across both): a station syncs a **list** of
+folders, not one. Each folder has a unique **label** (sanitized from its basename) and is
+sent to its own sub-dir on the server — `incoming/<id>/<label>/…` — so same-named files in
+different folders never collide. Per folder, two optional **filters** narrow what is sent:
+file-type globs (matched against the filename, e.g. `*.tmp,*.bak`) and sub-folder names to
+skip (e.g. `temp,cache`); filters apply only to *selection* (the scan), the folders stay
+untouched. On Linux the folder list lives in a separate `folders` file (TSV:
+`PATH<TAB>LABEL<TAB>FILE_EXCLUDES<TAB>DIR_EXCLUDES`); on Windows it is the `Folders[]`
+array in `config.json` (needs `ConvertTo-Json -Depth`). **Every send re-scans all folders
+from disk** — this is what makes files created after the first sync get picked up (there is
+no cached listing). Legacy single-folder configs (`DATA_DIR` / `DataDir`) are migrated to a
+one-entry list on first run.
+
+What was already sent is tracked in a local state file (`sent.state`, one
+`<label>/relpath<TAB>size:mtime` line per file, next to the config); each cycle sends only
+new-or-changed files (growing datalogger `.dat`s re-send whole — fine, hub ingestion is
+idempotent). Sends are **per folder** (one rsync + one `--files-from` each, to that
+folder's label sub-dir); state is updated only for the folders whose rsync returned rc=0
+(partial success across folders is fine) and pruned to files that still exist locally.
+`reset` wipes the state to force a full re-send. Only files older than the configured min
+age are eligible; dotfiles/dot-dirs are skipped (matches the hub's ingestion rule); on
+failure the affected folder's state is untouched. Config lives per user
+(`~/.config/carbonara-station/` / `%LOCALAPPDATA%\carbonara-station\`).
 
 Windows scheduling: `Install-Schedule` embeds `-ConfigDir "<user's conf dir>"` in the
 task action (the `.ps1` accepts `-ConfigDir` to override its config paths) and, when the

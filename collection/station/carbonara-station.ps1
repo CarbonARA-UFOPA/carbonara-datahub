@@ -15,20 +15,28 @@ Papéis:
      id da estação → IP do host → como autenticar: CHAVE SSH (porta 22; arquivo
      recebido do servidor, gerado lá pelo `rsync-hub add <id>`) OU USUÁRIO+SENHA
      (porta 873, rsync direto; criado lá pelo `rsync-hub add <id> --senha` — mais
-     simples, porém dados sem criptografia) → TESTE simples de conexão → pasta local
-     a enviar (rsync) → tempo de reciclagem (minutos) + ativação do envio automático.
-  2) Envio — `send` SINCRONIZA a pasta local com o servidor: NUNCA move nem apaga
-     nada da pasta local. O controle do que já foi enviado é um estado local
-     (tamanho+mtime por arquivo, em %LOCALAPPDATA%\carbonara-station\sent.state):
-     só vai o que é novo ou mudou desde o último envio. Idade mínima configurável
-     evita arquivo ainda sendo escrito; o rsync --partial retoma em link instável.
+     simples, porém dados sem criptografia) → TESTE simples de conexão → pasta(s)
+     local(is) a enviar (rsync) → tempo de reciclagem (minutos) + envio automático.
+  2) Envio — `send` SINCRONIZA as pastas locais com o servidor: NUNCA move nem apaga
+     nada das pastas locais. A cada ciclo TODAS as pastas configuradas são varridas de
+     novo (arquivos novos entram automaticamente). O controle do que já foi enviado é
+     um estado local (tamanho+mtime por arquivo, em
+     %LOCALAPPDATA%\carbonara-station\sent.state): só vai o que é novo ou mudou desde o
+     último envio. Idade mínima configurável evita arquivo ainda sendo escrito; o
+     rsync --partial retoma em link instável.
   3) Agendamento — `schedule` cria a tarefa no Agendador de Tarefas do Windows.
 
+Múltiplas pastas: cada pasta configurada é enviada para um sub-diretório próprio no
+servidor (o "rótulo", derivado do nome da pasta), evitando colisão de nomes entre
+pastas. Cada pasta pode ter FILTROS: tipos de arquivo a NÃO enviar (globs, ex.:
+*.tmp,*.bak) e subpastas a NÃO enviar (ex.: temp,cache).
+
 Uso (PowerShell):
-  .\carbonara-station.ps1               # menu interativo
+  .\carbonara-station.ps1               # menu interativo (mostra as pastas no cabeçalho)
   .\carbonara-station.ps1 setup         # configuração guiada (1ª vez ou reconfigurar)
   .\carbonara-station.ps1 test          # testa a conexão com o servidor (dry-run)
   .\carbonara-station.ps1 send          # envia agora os arquivos pendentes
+  .\carbonara-station.ps1 folders       # gerencia as pastas de sincronização
   .\carbonara-station.ps1 schedule      # agenda o envio periódico
   .\carbonara-station.ps1 unschedule    # remove o agendamento
   .\carbonara-station.ps1 status        # configuração, pendências e últimos envios
@@ -41,7 +49,7 @@ Configuração gravada em %LOCALAPPDATA%\carbonara-station\config.json.
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('menu', 'setup', 'test', 'send', 'schedule', 'unschedule', 'status', 'reset', 'help')]
+    [ValidateSet('menu', 'setup', 'test', 'send', 'folders', 'schedule', 'unschedule', 'status', 'reset', 'help')]
     [string]$Command = 'menu',
 
     # Caminho da pasta de configuração. Usado pela tarefa agendada como SYSTEM, que tem
@@ -53,7 +61,7 @@ $ErrorActionPreference = 'Stop'
 $ConfDir    = if ($ConfigDir) { $ConfigDir } else { Join-Path $env:LOCALAPPDATA 'carbonara-station' }
 $ConfFile   = Join-Path $ConfDir 'config.json'
 $LogFile    = Join-Path $ConfDir 'envios.log'
-$StateFile  = Join-Path $ConfDir 'sent.state'   # o que já foi enviado: caminho<TAB>tamanho:mtime
+$StateFile  = Join-Path $ConfDir 'sent.state'   # o que já foi enviado: rótulo/caminho<TAB>tamanho:mtime
 $TaskName   = 'CarbonaraStationSend'
 $CwRsyncDir = 'C:\cwrsync'
 $CwRsyncUrl = 'https://itefix.net/sites/default/files/2026-06/cwrsync_6.4.8_x64_free.zip'
@@ -69,6 +77,12 @@ function Ask-YesNo([string]$Pergunta, [bool]$DefaultYes = $true) {
     $r = Read-Host "$Pergunta [$h]"
     if (-not $r) { return $DefaultYes }
     return $r -match '^[sSyY]'
+}
+
+# Divide uma lista separada por vírgula em array (itens aparados, sem vazios).
+function Split-Csv([string]$s) {
+    if (-not $s) { return @() }
+    return @($s -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
 function Write-EnvioLog([string]$Msg) {
@@ -129,7 +143,65 @@ function Get-Config([switch]$Optional) {
 
 function Save-Config($Cfg) {
     New-Item -ItemType Directory -Force -Path $ConfDir | Out-Null
-    $Cfg | ConvertTo-Json | Set-Content -Path $ConfFile -Encoding UTF8
+    # -Depth: o config tem Folders[] de objetos com arrays de filtros dentro (>2 níveis).
+    $Cfg | ConvertTo-Json -Depth 8 | Set-Content -Path $ConfFile -Encoding UTF8
+}
+
+# --- Pastas configuradas ------------------------------------------------------------
+# Rótulo saneado e ÚNICO (não vazio) para o sub-diretório da pasta no servidor.
+function New-Label([string[]]$Existing, [string]$Path) {
+    $base = Split-Path $Path -Leaf
+    $lbl = ($base.ToLower() -replace '[^a-z0-9_-]', '_').Trim('_')
+    if (-not $lbl) { $lbl = 'pasta' }
+    $b = $lbl; $i = 2
+    while ($Existing -contains $lbl) { $lbl = "$b-$i"; $i++ }
+    return $lbl
+}
+
+# Lista normalizada das pastas configuradas. Migra config antiga (uma única DataDir).
+function Get-Folders($Cfg) {
+    $folders = @()
+    if ($Cfg.PSObject.Properties.Name -contains 'Folders' -and $Cfg.Folders) {
+        foreach ($f in @($Cfg.Folders)) {
+            $folders += [pscustomobject]@{
+                Path         = [string]$f.Path
+                Label        = [string]$f.Label
+                FileExcludes = @($f.FileExcludes | Where-Object { $_ })
+                DirExcludes  = @($f.DirExcludes  | Where-Object { $_ })
+            }
+        }
+    }
+    if ($folders.Count -eq 0 -and ($Cfg.PSObject.Properties.Name -contains 'DataDir') -and $Cfg.DataDir) {
+        $folders += [pscustomobject]@{
+            Path         = [string]$Cfg.DataDir
+            Label        = (New-Label @() ([string]$Cfg.DataDir))
+            FileExcludes = @(); DirExcludes = @()
+        }
+    }
+    return , $folders
+}
+
+# Grava a lista de pastas no config e persiste (remove o DataDir legado).
+function Set-Folders($Cfg, $Folders) {
+    if ($Cfg.PSObject.Properties.Name -contains 'Folders') { $Cfg.Folders = @($Folders) }
+    else { $Cfg | Add-Member -NotePropertyName Folders -NotePropertyValue @($Folders) -Force }
+    if ($Cfg.PSObject.Properties.Name -contains 'DataDir') { $Cfg.PSObject.Properties.Remove('DataDir') }
+    Save-Config $Cfg
+}
+
+function Show-FoldersSummary($Cfg) {
+    $folders = @(Get-Folders $Cfg)
+    if ($folders.Count -eq 0) {
+        Write-Host '  (nenhuma pasta configurada — rode setup ou adicione em Gerenciar pastas)'
+        return
+    }
+    for ($i = 0; $i -lt $folders.Count; $i++) {
+        $f = $folders[$i]
+        $extra = ''
+        if ($f.FileExcludes.Count) { $extra += "  · exceto arquivos: $($f.FileExcludes -join ',')" }
+        if ($f.DirExcludes.Count)  { $extra += "  · sem subpastas: $($f.DirExcludes -join ',')" }
+        Write-Host ("  {0}) {1}  ->  servidor:[{2}]{3}" -f ($i + 1), $f.Path, $f.Label, $extra)
+    }
 }
 
 # --- cwRsync: localização e instalação automática ----------------------------------
@@ -213,9 +285,13 @@ function ConvertTo-UnixPath([string]$WinPath) {
 
 # Monta a linha de comando do rsync (executável + argumentos), conforme o modo de
 # autenticação: chave SSH (rsync-over-ssh) ou usuário+senha (rsync daemon, rsync://).
-# $SourceDir permite trocar a origem (ex.: pasta vazia no teste de conexão).
-function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [string]$SourceDir = '') {
-    if (-not $SourceDir) { $SourceDir = $Cfg.DataDir }
+# $SourceDir troca a origem (ex.: pasta vazia no teste, ou cada pasta no envio);
+# $DestSub acrescenta um sub-diretório no destino (o rótulo da pasta).
+function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [string]$SourceDir = '', [string]$DestSub = '') {
+    if (-not $SourceDir) {
+        if (($Cfg.PSObject.Properties.Name -contains 'DataDir') -and $Cfg.DataDir) { $SourceDir = $Cfg.DataDir }
+        else { $SourceDir = $env:TEMP }
+    }
     $rsyncDir = Split-Path $Cfg.Rsync
     # Receita do próprio cwRsync: bin\ no PATH (DLLs cygwin) e HOME definido
     # (o ssh cygwin usa HOME para gravar o known_hosts).
@@ -227,9 +303,11 @@ function Get-RsyncPlan($Cfg, [string[]]$ExtraArgs, [string]$FilesFromWin, [strin
         # usuário = id da estação; a senha vai pela variável RSYNC_PASSWORD (os
         # chamadores definem/limpam) — nunca pela linha de comando.
         $dest = 'rsync://{0}@{1}:{2}/{0}/' -f $Cfg.StationId, $Cfg.HubHost, $Cfg.HubPort
+        if ($DestSub) { $dest += "$DestSub/" }
         $argv += @("$(ConvertTo-UnixPath $SourceDir)/", $dest)
     } else {
         $dest = '{0}@{1}:/' -f $Cfg.HubUser, $Cfg.HubHost
+        if ($DestSub) { $dest += "$DestSub/" }
         $keyArg = ConvertTo-UnixPath $Cfg.KeyPath
         $ssh  = "ssh -i $keyArg -p $($Cfg.HubPort) -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
         $argv += @('-e', $ssh, "$(ConvertTo-UnixPath $SourceDir)/", $dest)
@@ -268,7 +346,7 @@ function Send-Heartbeat($Cfg) {
     return ($r.Code -eq 0)
 }
 
-# Teste de conexão que NÃO depende da pasta de dados: dry-run a partir de uma pasta
+# Teste de conexão que NÃO depende das pastas de dados: dry-run a partir de uma pasta
 # vazia — valida rede, porta, chave e o confinamento no servidor, sem enviar nada.
 function Invoke-Probe($Cfg) {
     $tmp = Join-Path $env:TEMP ("carbonara-probe-" + [guid]::NewGuid().ToString('N'))
@@ -291,25 +369,41 @@ function Invoke-Probe($Cfg) {
     }
 }
 
-# Inventário da pasta local (fora de pastas/arquivos ocultos — mesmo critério de
-# dotfiles da ingestão no servidor): caminho relativo, assinatura (tamanho:mtime,
-# detecta arquivo novo/alterado) e se já "assentou" (mais velho que MinAgeMin).
+# Inventário das pastas locais. Varre TODAS as pastas configuradas a cada chamada
+# (é isto que faz arquivos novos serem detectados em todo ciclo), aplicando os filtros
+# (tipos de arquivo e subpastas excluídos) e o critério de dotfiles da ingestão. Cada
+# item traz a chave "rótulo/caminho", a assinatura (tamanho:mtime) e se já assentou.
 function Get-LocalFiles($Cfg) {
-    $dataDir = (Get-Item -LiteralPath $Cfg.DataDir).FullName.TrimEnd('\')
+    $out = @()
     $cut = (Get-Date).AddMinutes(-[int]$Cfg.MinAgeMin)
-    Get-ChildItem -LiteralPath $dataDir -Recurse -File | Where-Object {
-        $_.Name -notlike '.*' -and
-        $_.FullName.Substring($dataDir.Length) -notmatch '[\\/]\.'
-    } | ForEach-Object {
-        [pscustomobject]@{
-            Rel     = $_.FullName.Substring($dataDir.Length + 1) -replace '\\', '/'
-            Sig     = '{0}:{1}' -f $_.Length, $_.LastWriteTimeUtc.Ticks
-            Settled = ($_.LastWriteTime -le $cut)
+    foreach ($f in (Get-Folders $Cfg)) {
+        if (-not (Test-Path -LiteralPath $f.Path)) { continue }
+        $dataDir = (Get-Item -LiteralPath $f.Path).FullName.TrimEnd('\')
+        Get-ChildItem -LiteralPath $dataDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -notlike '.*' -and
+            $_.FullName.Substring($dataDir.Length) -notmatch '[\\/]\.'
+        } | ForEach-Object {
+            $rel = $_.FullName.Substring($dataDir.Length + 1) -replace '\\', '/'
+            $name = $_.Name
+            $skip = $false
+            foreach ($d in $f.DirExcludes) { if (("/$rel/") -like "*/$d/*") { $skip = $true; break } }
+            if (-not $skip) { foreach ($g in $f.FileExcludes) { if ($name -like $g) { $skip = $true; break } } }
+            if (-not $skip) {
+                $out += [pscustomobject]@{
+                    Key     = "$($f.Label)/$rel"
+                    Rel     = $rel
+                    Label   = $f.Label
+                    Path    = $f.Path
+                    Sig     = '{0}:{1}' -f $_.Length, $_.LastWriteTimeUtc.Ticks
+                    Settled = ($_.LastWriteTime -le $cut)
+                }
+            }
         }
     }
+    return , $out
 }
 
-# Estado local do que já foi enviado (a pasta de dados NUNCA é alterada).
+# Estado local do que já foi enviado (as pastas de dados NUNCA são alteradas).
 function Get-SentState {
     $h = @{}
     if (Test-Path $StateFile) {
@@ -455,24 +549,43 @@ function Invoke-Setup {
     }
     Write-Host ''
 
-    # 5. Pasta local que será enviada (rsync)
+    # 5. Pasta(s) local(is) que serão enviadas (rsync)
     # Default: a pasta de saída do LoggerNet (dataloggers Campbell Scientific, o padrão
     # das estações do projeto) quando existir; senão, uma pasta genérica do usuário.
-    do {
-        $default = if ($old) { $old.DataDir }
-                   elseif (Test-Path -LiteralPath 'C:\Campbellsci\LoggerNet') { 'C:\Campbellsci\LoggerNet' }
-                   else { Join-Path $env:USERPROFILE 'carbonara-dados' }
-        $dataDir = Ask 'Pasta LOCAL que deseja enviar por rsync' $default
-        if (-not (Test-Path -LiteralPath $dataDir)) {
-            if (Ask-YesNo "  a pasta não existe — criar $dataDir?") {
-                New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    $folders = @()
+    if ($old) { $folders = @(Get-Folders $old) }
+    $keep = $false
+    if ($folders.Count -gt 0) {
+        Write-Host 'Pastas já configuradas:'
+        Show-FoldersSummary $old
+        $keep = Ask-YesNo "Manter essas pastas? (responda 'n' para reconfigurar a pasta principal)" $true
+    }
+    if (-not $keep) {
+        do {
+            $default = if ($folders.Count) { $folders[0].Path }
+                       elseif (Test-Path -LiteralPath 'C:\Campbellsci\LoggerNet') { 'C:\Campbellsci\LoggerNet' }
+                       else { Join-Path $env:USERPROFILE 'carbonara-dados' }
+            $dataDir = Ask 'Pasta LOCAL principal a enviar por rsync' $default
+            if (-not (Test-Path -LiteralPath $dataDir)) {
+                if (Ask-YesNo "  a pasta não existe — criar $dataDir?") {
+                    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+                }
             }
-        }
-    } until (Test-Path -LiteralPath $dataDir)
+        } until (Test-Path -LiteralPath $dataDir)
+        $full = (Get-Item -LiteralPath $dataDir).FullName
+        Write-Host 'Filtros desta pasta (opcionais — Enter deixa em branco):'
+        $fe = Ask '  Tipos de arquivo a NÃO enviar (globs por vírgula, ex.: *.tmp,*.bak)'
+        $de = Ask '  Subpastas a NÃO enviar (por vírgula, ex.: temp,cache)'
+        $folders = @([pscustomobject]@{
+            Path         = $full; Label = (New-Label @() $full)
+            FileExcludes = @(Split-Csv $fe); DirExcludes = @(Split-Csv $de)
+        })
+        Write-Host '  (dá para adicionar mais pastas depois: menu → Gerenciar pastas.)'
+    }
     do {
         $minAge = Ask 'Idade mínima (minutos) para um arquivo ser considerado pronto' $(if ($old -and $old.MinAgeMin) { $old.MinAgeMin } else { '1' })
     } until ($minAge -match '^\d+$')
-    Write-Host '  (a pasta local NUNCA é alterada: nada é movido nem apagado — o envio só'
+    Write-Host '  (as pastas locais NUNCA são alteradas: nada é movido nem apagado — o envio só'
     Write-Host '   sincroniza com o servidor o que for novo ou mudar.)'
 
     # 6. Tempo de reciclagem (intervalo do envio automático)
@@ -483,7 +596,7 @@ function Invoke-Setup {
     Save-Config ([pscustomobject]@{
         StationId = $id;      HubHost = $hubHost; HubPort = $hubPort; HubUser = $hubUser
         AuthMode  = $authMode; Password = $password
-        DataDir   = $dataDir; MinAgeMin = $minAge; SendEveryMin = $every
+        Folders   = @($folders); MinAgeMin = $minAge; SendEveryMin = $every
         Rsync     = $rsyncPath; KeyPath = $keyPath
     })
     Write-Host ''
@@ -533,9 +646,10 @@ function Invoke-Test {
 }
 
 # --- Envio -----------------------------------------------------------------------------
-# Sincronização pura: NADA é movido ou apagado da pasta local. O que já foi enviado é
-# controlado pelo estado local ($StateFile, assinatura tamanho:mtime por arquivo) — só
-# vai o que é novo ou mudou; arquivos que crescem (ex.: .dat do LoggerNet) são
+# Sincronização pura: NADA é movido ou apagado das pastas locais. A cada ciclo TODAS as
+# pastas são varridas de novo (arquivos novos entram automaticamente). O que já foi
+# enviado é controlado pelo estado local ($StateFile, chave rótulo/caminho → tamanho:mtime)
+# — só vai o que é novo ou mudou; arquivos que crescem (ex.: .dat do LoggerNet) são
 # reenviados por inteiro e o servidor não duplica medições (ingestão idempotente).
 function Invoke-Send {
     $cfg = Get-Config
@@ -552,44 +666,62 @@ function Invoke-Send {
             Write-Host 'aviso: não consegui enviar o sinal de vida ao servidor (sem rede?).'
         }
         $state  = Get-SentState
-        $files  = @(Get-LocalFiles $cfg)
-        $tosend = @($files | Where-Object { $_.Settled -and $state[$_.Rel] -ne $_.Sig })
+        $all    = @(Get-LocalFiles $cfg)
+        $tosend = @($all | Where-Object { $_.Settled -and $state[$_.Key] -ne $_.Sig })
         if ($tosend.Count -eq 0) {
             Write-Host ("nada novo a sincronizar (arquivos com menos de {0} min não contam)." -f $cfg.MinAgeMin)
             return
         }
+        Write-Host ("sincronizando {0} arquivo(s) novo(s)/alterado(s) com {1}…" -f $tosend.Count, $cfg.HubHost)
         New-Item -ItemType Directory -Force -Path $ConfDir | Out-Null
         $list = Join-Path $ConfDir 'files-from.txt'
-        # UTF-8 SEM BOM — um BOM corromperia o primeiro caminho da lista no rsync.
-        [IO.File]::WriteAllLines($list, [string[]]@($tosend | ForEach-Object { $_.Rel }), (New-Object System.Text.UTF8Encoding($false)))
-
-        Write-Host ("sincronizando {0} arquivo(s) novo(s)/alterado(s) com {1}…" -f $tosend.Count, $cfg.HubHost)
-        # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
-        # legíveis pelos usuários locais do host, independentemente das permissões aqui.
-        # --partial-dir: transferência cancelada deixa o pedaço num diretório OCULTO no
-        # servidor (a ingestão nunca o vê) e o próximo envio retoma dali.
-        $plan = Get-RsyncPlan $cfg @('-rltz', '--chmod=D755,F644', '--partial-dir=.rsync-parcial', '--timeout=120') $list
-        if ($cfg.AuthMode -eq 'senha') { $env:RSYNC_PASSWORD = $cfg.Password }
-        try { $r = Invoke-Native $plan.Exe $plan.Args }
-        finally { Remove-Item Env:RSYNC_PASSWORD -ErrorAction SilentlyContinue }
-        $r.Out | ForEach-Object { Write-Host "  $_" }
-        if ($r.Code -eq 0) {
-            # Registra no estado — a pasta local permanece intocada.
-            foreach ($f in $tosend) { $state[$f.Rel] = $f.Sig }
-            # Poda do estado: só entradas de arquivos que ainda existem localmente.
-            $existing = @{}
-            foreach ($f in $files) { $existing[$f.Rel] = $true }
-            foreach ($k in @($state.Keys)) { if (-not $existing[$k]) { $state.Remove($k) } }
-            Save-SentState $state
-            Write-EnvioLog ("OK {0} arquivo(s) sincronizados" -f $tosend.Count)
-            Write-Host ("ok: {0} arquivo(s) sincronizados (nada foi movido ou apagado localmente)." -f $tosend.Count)
-        } else {
-            Write-EnvioLog ("FALHA rc={0} ({1} arquivo(s) pendentes)" -f $r.Code, $tosend.Count)
-            switch ($r.Code) {
+        $worst = 0
+        $sent = @{}
+        # Um envio (e um files-from) por pasta — cada pasta vai para o seu sub-diretório
+        # (rótulo) no servidor, o que evita colisão de nomes entre pastas diferentes.
+        foreach ($grp in ($tosend | Group-Object Label)) {
+            $items = @($grp.Group)
+            $label = $grp.Name
+            $path  = $items[0].Path
+            if (-not (Test-Path -LiteralPath $path)) { continue }
+            # UTF-8 SEM BOM — um BOM corromperia o primeiro caminho da lista no rsync.
+            [IO.File]::WriteAllLines($list, [string[]]@($items | ForEach-Object { $_.Rel }), (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host ("  [{0}] {1} arquivo(s) de {2}" -f $label, $items.Count, $path)
+            # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
+            # legíveis pelos usuários locais do host, independentemente das permissões aqui.
+            # --partial-dir: transferência cancelada deixa o pedaço num diretório OCULTO no
+            # servidor (a ingestão nunca o vê) e o próximo envio retoma dali.
+            $plan = Get-RsyncPlan $cfg @('-rltz', '--chmod=D755,F644', '--partial-dir=.rsync-parcial', '--timeout=120') $list $path $label
+            if ($cfg.AuthMode -eq 'senha') { $env:RSYNC_PASSWORD = $cfg.Password }
+            try { $r = Invoke-Native $plan.Exe $plan.Args }
+            finally { Remove-Item Env:RSYNC_PASSWORD -ErrorAction SilentlyContinue }
+            $r.Out | ForEach-Object { Write-Host "  $_" }
+            if ($r.Code -eq 0) {
+                foreach ($it in $items) { $sent[$it.Key] = $it.Sig }
+            } else {
+                if ($r.Code -gt $worst) { $worst = $r.Code }
+                Write-Host ("  [{0}] falha (rsync rc={1}) — será tentado de novo no próximo ciclo." -f $label, $r.Code)
+            }
+        }
+        Remove-Item -LiteralPath $list -Force -ErrorAction SilentlyContinue
+        # Atualiza o estado com o que foi enviado e poda para os arquivos que ainda
+        # existem localmente. As pastas locais permanecem intocadas.
+        foreach ($k in $sent.Keys) { $state[$k] = $sent[$k] }
+        $existing = @{}
+        foreach ($f in $all) { $existing[$f.Key] = $true }
+        foreach ($k in @($state.Keys)) { if (-not $existing[$k]) { $state.Remove($k) } }
+        Save-SentState $state
+        if ($sent.Count -gt 0) {
+            Write-EnvioLog ("OK {0} arquivo(s) sincronizados" -f $sent.Count)
+            Write-Host ("ok: {0} arquivo(s) sincronizados (nada foi movido ou apagado localmente)." -f $sent.Count)
+        }
+        if ($worst -ne 0) {
+            Write-EnvioLog ("FALHA rc={0} (parte dos arquivos pendente)" -f $worst)
+            switch ($worst) {
                 23 { Write-Host 'aviso: parte dos arquivos não pôde ser lida (em uso pelo datalogger?).'
-                     Write-Host '       nada foi registrado; tudo será tentado de novo no próximo ciclo.' }
+                     Write-Host '       o que falhou não foi registrado; será tentado de novo no próximo ciclo.' }
                 24 { Write-Host 'aviso: um arquivo sumiu durante a transferência — o próximo ciclo se ajusta sozinho.' }
-                default { Write-Host ("falha no envio (rsync rc={0}) — o estado não mudou; será tentado de novo no próximo ciclo." -f $r.Code) }
+                default { Write-Host ("falha em parte do envio (rsync rc={0}) — nova tentativa no próximo ciclo." -f $worst) }
             }
         }
     } finally {
@@ -602,6 +734,98 @@ function Invoke-Reset {  # força reenvio completo no próximo send (o servidor 
     Remove-Item -LiteralPath $StateFile -Force -ErrorAction SilentlyContinue
     Write-Host "ok: estado de envio limpo — o próximo 'send' reenvia tudo."
     Write-Host '(o servidor não duplica medições: a ingestão é idempotente.)'
+}
+
+# --- Gerência de pastas ----------------------------------------------------------------
+function Add-Folder {
+    $cfg = Get-Config
+    $folders = @(Get-Folders $cfg)
+    do {
+        $p = Ask 'Caminho da pasta a incluir (Enter cancela)'
+        if (-not $p) { Write-Host 'cancelado.'; return }
+        if (-not (Test-Path -LiteralPath $p)) {
+            if (Ask-YesNo "  a pasta não existe — criar $p?" $false) { New-Item -ItemType Directory -Force -Path $p | Out-Null }
+            else { continue }
+        }
+        $full = (Get-Item -LiteralPath $p).FullName
+        if (@($folders | Where-Object { $_.Path -eq $full }).Count) { Write-Host '  essa pasta já está na lista.'; return }
+        break
+    } while ($true)
+    Write-Host 'Filtros desta pasta (opcionais — Enter deixa em branco):'
+    $fe = Ask '  Tipos de arquivo a NÃO enviar (globs por vírgula, ex.: *.tmp,*.bak)'
+    $de = Ask '  Subpastas a NÃO enviar (por vírgula, ex.: temp,cache)'
+    $lbl = New-Label @($folders | ForEach-Object { $_.Label }) $full
+    $folders += [pscustomobject]@{
+        Path = $full; Label = $lbl
+        FileExcludes = @(Split-Csv $fe); DirExcludes = @(Split-Csv $de)
+    }
+    Set-Folders $cfg $folders
+    Write-Host ("ok: pasta adicionada (sub-diretório no servidor: [{0}])." -f $lbl)
+}
+
+function Remove-Folder {
+    $cfg = Get-Config
+    $folders = @(Get-Folders $cfg)
+    if ($folders.Count -eq 0) { Write-Host 'não há pastas configuradas.'; return }
+    Show-FoldersSummary $cfg
+    $sel = Ask 'Número da pasta a remover (Enter cancela)'
+    if (-not $sel) { return }
+    if ($sel -notmatch '^\d+$') { Write-Host '  número inválido.'; return }
+    $idx = [int]$sel - 1
+    if ($idx -lt 0 -or $idx -ge $folders.Count) { Write-Host '  fora da faixa.'; return }
+    if ($folders.Count -le 1 -and -not (Ask-YesNo 'essa é a única pasta — remover mesmo? (a estação ficará sem enviar dados)' $false)) { return }
+    $new = @()
+    for ($i = 0; $i -lt $folders.Count; $i++) { if ($i -ne $idx) { $new += $folders[$i] } }
+    Set-Folders $cfg $new
+    Write-Host "ok: pasta removida. (o estado de envio dela é limpo no próximo 'send'.)"
+}
+
+function Edit-FolderFilters {
+    $cfg = Get-Config
+    $folders = @(Get-Folders $cfg)
+    if ($folders.Count -eq 0) { Write-Host 'não há pastas configuradas.'; return }
+    Show-FoldersSummary $cfg
+    $sel = Ask 'Número da pasta cujos filtros deseja editar (Enter cancela)'
+    if (-not $sel) { return }
+    if ($sel -notmatch '^\d+$') { Write-Host '  número inválido.'; return }
+    $idx = [int]$sel - 1
+    if ($idx -lt 0 -or $idx -ge $folders.Count) { Write-Host '  fora da faixa.'; return }
+    $f = $folders[$idx]
+    Write-Host ("Editando filtros de: {0}" -f $f.Path)
+    Write-Host '(Enter mantém o valor atual; digite um espaço e Enter para LIMPAR o filtro)'
+    $fe = Ask '  Tipos de arquivo a NÃO enviar (globs por vírgula)' ($f.FileExcludes -join ',')
+    $de = Ask '  Subpastas a NÃO enviar (por vírgula)' ($f.DirExcludes -join ',')
+    $f.FileExcludes = @(Split-Csv $fe)
+    $f.DirExcludes  = @(Split-Csv $de)
+    $folders[$idx] = $f
+    Set-Folders $cfg $folders
+    Write-Host 'ok: filtros atualizados.'
+}
+
+function Show-FoldersMenu {
+    while ($true) {
+        Write-Host ''
+        Write-Host '----- Pastas de sincronização -----'
+        $cfg = Get-Config -Optional
+        if ($cfg) { Show-FoldersSummary $cfg } else { Write-Host '  (estação ainda não configurada — use a opção 1 do menu)' }
+        Write-Host ' 1) Adicionar pasta'
+        Write-Host ' 2) Remover pasta'
+        Write-Host ' 3) Editar filtros (tipos de arquivo / subpastas) de uma pasta'
+        Write-Host ' 0) Voltar'
+        $op = Read-Host 'opção'
+        try {
+            switch ($op) {
+                '1' { Add-Folder }
+                '2' { Remove-Folder }
+                '3' { Edit-FolderFilters }
+                '0' { return }
+                ''  { return }
+                default { Write-Host 'opção inválida' }
+            }
+        } catch {
+            Write-Host ("erro: {0}" -f $_.Exception.Message)
+        }
+    }
 }
 
 # --- Agendamento (Agendador de Tarefas) --------------------------------------------------
@@ -664,10 +888,11 @@ function Invoke-Status {
         Write-Host ("chave:     {0}" -f $cfg.KeyPath)
     }
     Write-Host ("rsync:     {0}" -f $cfg.Rsync)
-    Write-Host ("dados:     {0} (somente leitura: nada é movido/apagado)" -f $cfg.DataDir)
+    Write-Host 'pastas sincronizadas (somente leitura: nada é movido/apagado):'
+    Show-FoldersSummary $cfg
     $state = Get-SentState
     $files = @(Get-LocalFiles $cfg)
-    $pend  = @($files | Where-Object { $state[$_.Rel] -ne $_.Sig }).Count
+    $pend  = @($files | Where-Object { $_.Settled -and $state[$_.Key] -ne $_.Sig }).Count
     Write-Host ("arquivos:  {0} no total · {1} novo(s)/alterado(s) a sincronizar" -f $files.Count, $pend)
     $r = Invoke-Native 'schtasks.exe' @('/Query', '/TN', $TaskName)
     if ($r.Code -eq 0) {
@@ -688,13 +913,23 @@ function Show-Menu {
     while ($true) {
         Write-Host ''
         Write-Host '===== carbonara-station — estação (cliente Windows) ====='
+        $cfg = Get-Config -Optional
+        if ($cfg) {
+            Write-Host ("estação: {0}   servidor: {1}:{2}" -f $cfg.StationId, $cfg.HubHost, $cfg.HubPort)
+        } else {
+            Write-Host 'estação: (ainda não configurada — use a opção 1)'
+        }
+        Write-Host 'pastas sincronizadas:'
+        if ($cfg) { Show-FoldersSummary $cfg } else { Write-Host '  (nenhuma)' }
+        Write-Host '-------------------------------------------------------'
         Write-Host ' 1) Configurar esta estação (guiado)'
         Write-Host ' 2) Testar conexão com o servidor'
         Write-Host ' 3) Enviar agora'
-        Write-Host ' 4) Agendar envio periódico'
-        Write-Host ' 5) Remover agendamento'
-        Write-Host ' 6) Status'
-        Write-Host ' 7) Limpar estado de envio (força reenvio de tudo)'
+        Write-Host ' 4) Gerenciar pastas de sincronização (incluir/remover/filtrar)'
+        Write-Host ' 5) Agendar envio periódico'
+        Write-Host ' 6) Remover agendamento'
+        Write-Host ' 7) Status'
+        Write-Host ' 8) Limpar estado de envio (força reenvio de tudo)'
         Write-Host ' 0) Sair'
         $op = Read-Host 'opção'
         try {
@@ -702,10 +937,11 @@ function Show-Menu {
                 '1' { Invoke-Setup }
                 '2' { Invoke-Test }
                 '3' { Invoke-Send }
-                '4' { Invoke-Schedule }
-                '5' { Invoke-Unschedule }
-                '6' { Invoke-Status }
-                '7' { if (Ask-YesNo 'limpar o estado e reenviar tudo no próximo envio?' $false) { Invoke-Reset } }
+                '4' { Show-FoldersMenu }
+                '5' { Invoke-Schedule }
+                '6' { Invoke-Unschedule }
+                '7' { Invoke-Status }
+                '8' { if (Ask-YesNo 'limpar o estado e reenviar tudo no próximo envio?' $false) { Invoke-Reset } }
                 '0' { return }
                 ''  { return }
                 default { Write-Host 'opção inválida' }
@@ -724,13 +960,16 @@ uso (PowerShell):
   .\carbonara-station.ps1 setup         configuração guiada (1ª vez ou reconfigurar)
   .\carbonara-station.ps1 test          testa a conexão com o servidor (dry-run)
   .\carbonara-station.ps1 send          sincroniza agora (só o que é novo/alterado)
+  .\carbonara-station.ps1 folders       gerencia as pastas (incluir/remover/filtrar)
   .\carbonara-station.ps1 schedule      agenda o envio periódico
   .\carbonara-station.ps1 unschedule    remove o agendamento
   .\carbonara-station.ps1 status        configuração, pendências e últimos envios
   .\carbonara-station.ps1 reset         limpa o estado de envio (força reenvio de tudo)
   .\carbonara-station.ps1               menu interativo
 
-a pasta local NUNCA é alterada (nada é movido nem apagado); o controle do que já
+várias pastas são suportadas — cada uma vai para um sub-diretório próprio no servidor
+e pode ter filtros (tipos de arquivo e subpastas a não enviar).
+as pastas locais NUNCA são alteradas (nada é movido nem apagado); o controle do que já
 foi enviado fica em $StateFile
 transporte: cwRsync (instalado automaticamente pelo setup em $CwRsyncDir;
 a primeira instalação pede PowerShell como administrador).
@@ -744,6 +983,7 @@ try {
         'setup'      { Invoke-Setup }
         'test'       { Invoke-Test }
         'send'       { Invoke-Send }
+        'folders'    { Show-FoldersMenu }
         'schedule'   { Invoke-Schedule }
         'unschedule' { Invoke-Unschedule }
         'status'     { Invoke-Status }

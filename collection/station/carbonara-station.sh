@@ -9,32 +9,44 @@
 #      como autenticar: CHAVE SSH (porta 22; arquivo recebido do servidor, gerado lá
 #      pelo `rsync-hub add <id>`) OU USUÁRIO+SENHA (porta 873, rsync direto; criado lá
 #      pelo `rsync-hub add <id> --senha` — mais simples, porém dados sem criptografia)
-#      → TESTE simples de conexão → pasta local a enviar (rsync) → tempo de
+#      → TESTE simples de conexão → pasta(s) local(is) a enviar (rsync) → tempo de
 #      reciclagem (minutos) + ativação do envio automático.
-#   2) Envio — `send` SINCRONIZA a pasta local com o servidor: NUNCA move nem apaga
-#      nada da pasta local. O controle do que já foi enviado é um estado local
-#      (tamanho+mtime por arquivo, em ~/.config/carbonara-station/sent.state): só vai
-#      o que é novo ou mudou desde o último envio. Idade mínima configurável evita
-#      arquivo ainda sendo escrito; o rsync --partial retoma em link instável.
+#   2) Envio — `send` SINCRONIZA as pastas locais com o servidor: NUNCA move nem apaga
+#      nada das pastas locais. A cada ciclo TODAS as pastas configuradas são varridas de
+#      novo (novos arquivos são detectados automaticamente). O controle do que já foi
+#      enviado é um estado local (tamanho+mtime por arquivo, em
+#      ~/.config/carbonara-station/sent.state): só vai o que é novo ou mudou desde o
+#      último envio. Idade mínima configurável evita arquivo ainda sendo escrito; o
+#      rsync --partial retoma em link instável.
 #   3) Agendamento — `schedule` instala o envio periódico no cron do usuário.
 #
+# Múltiplas pastas: cada pasta configurada é enviada para um sub-diretório próprio no
+# servidor (o "rótulo", derivado do nome da pasta), evitando colisão de nomes entre
+# pastas. Cada pasta pode ter FILTROS: tipos de arquivo a NÃO enviar (globs, ex.:
+# *.tmp,*.bak) e subpastas a NÃO enviar (ex.: temp,cache).
+#
 # Uso:
-#   ./carbonara-station.sh              # menu interativo
+#   ./carbonara-station.sh              # menu interativo (mostra as pastas no cabeçalho)
 #   ./carbonara-station.sh setup        # configuração guiada (1ª vez ou reconfigurar)
 #   ./carbonara-station.sh test         # testa a conexão com o servidor (dry-run)
 #   ./carbonara-station.sh send         # envia agora os arquivos pendentes
+#   ./carbonara-station.sh folders      # gerencia as pastas de sincronização
 #   ./carbonara-station.sh schedule     # agenda o envio periódico (cron)
 #   ./carbonara-station.sh unschedule   # remove o agendamento
 #   ./carbonara-station.sh status       # configuração, pendências e últimos envios
 #
-# Configuração gravada em ~/.config/carbonara-station/config (um arquivo por usuário).
+# Configuração gravada em ~/.config/carbonara-station/ (config + folders, por usuário).
 set -eu
 
 CONF_DIR="${CARBONARA_STATION_HOME:-$HOME/.config/carbonara-station}"
 CONF="$CONF_DIR/config"
+FOLDERS="$CONF_DIR/folders"      # uma pasta por linha: PATH<TAB>LABEL<TAB>FEXC<TAB>DEXC
 LOGF="$CONF_DIR/envios.log"
-STATE="$CONF_DIR/sent.state"     # o que já foi enviado: caminho<TAB>tamanho:mtime
+STATE="$CONF_DIR/sent.state"     # o que já foi enviado: rótulo/caminho<TAB>tamanho:mtime
 CRON_TAG="# carbonara-station send"
+
+# Arrays paralelos com as pastas configuradas (preenchidos por load_folders).
+F_PATH=(); F_LABEL=(); F_FEXC=(); F_DEXC=()
 
 die()      { echo "erro: $*" >&2; exit 1; }
 self_path(){ readlink -f "$0" 2>/dev/null || echo "$0"; }
@@ -53,11 +65,67 @@ ask_yn() { # $1=pergunta $2=default (s|n) → rc 0 = sim
     case "$a" in s|S|y|Y|sim|Sim|SIM) return 0 ;; *) return 1 ;; esac
 }
 
+# --- Pastas configuradas -------------------------------------------------------------
+mk_label() { # $1=caminho → rótulo saneado e ÚNICO (não vazio) p/ o sub-dir no servidor
+    base="$(basename "$1")"
+    lbl="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '_')"
+    lbl="${lbl##_}"; lbl="${lbl%%_}"
+    [ -n "$lbl" ] || lbl="pasta"
+    base_lbl="$lbl"; i=2
+    while label_exists "$lbl"; do lbl="${base_lbl}-$i"; i=$((i + 1)); done
+    printf '%s' "$lbl"
+}
+label_exists() { # $1=rótulo → rc 0 se já usado por alguma pasta carregada
+    j=0
+    while [ "$j" -lt "${#F_LABEL[@]}" ]; do
+        [ "${F_LABEL[$j]}" = "$1" ] && return 0
+        j=$((j + 1))
+    done
+    return 1
+}
+
+load_folders() { # lê $FOLDERS para os arrays F_*
+    F_PATH=(); F_LABEL=(); F_FEXC=(); F_DEXC=()
+    [ -f "$FOLDERS" ] || return 0
+    while IFS="$(printf '\t')" read -r p l fe de || [ -n "${p:-}" ]; do
+        [ -n "${p:-}" ] || continue
+        case "$p" in \#*) continue ;; esac
+        F_PATH+=("$p"); F_LABEL+=("${l:-}"); F_FEXC+=("${fe:-}"); F_DEXC+=("${de:-}")
+    done < "$FOLDERS"
+}
+
+folders_save() { # grava os arrays F_* de volta em $FOLDERS
+    mkdir -p "$CONF_DIR"
+    : > "$FOLDERS"
+    k=0
+    while [ "$k" -lt "${#F_PATH[@]}" ]; do
+        printf '%s\t%s\t%s\t%s\n' "${F_PATH[$k]}" "${F_LABEL[$k]}" "${F_FEXC[$k]}" "${F_DEXC[$k]}" >> "$FOLDERS"
+        k=$((k + 1))
+    done
+    chmod 600 "$FOLDERS" 2>/dev/null || true
+}
+
+print_folders_summary() { # cabeçalho/legenda com as pastas e seus filtros
+    load_folders
+    if [ "${#F_PATH[@]}" -eq 0 ]; then
+        echo "  (nenhuma pasta configurada — rode 'setup' ou adicione em 'folders')"
+        return
+    fi
+    k=0
+    while [ "$k" -lt "${#F_PATH[@]}" ]; do
+        extra=""
+        [ -n "${F_FEXC[$k]}" ] && extra="$extra  · exceto arquivos: ${F_FEXC[$k]}"
+        [ -n "${F_DEXC[$k]}" ] && extra="$extra  · sem subpastas: ${F_DEXC[$k]}"
+        printf '  %d) %s  →  servidor:[%s]%s\n' "$((k + 1))" "${F_PATH[$k]}" "${F_LABEL[$k]}" "$extra"
+        k=$((k + 1))
+    done
+}
+
 load_conf() {
     [ -r "$CONF" ] || die "estação não configurada — rode: $(basename "$0") setup"
     . "$CONF"
     : "${STATION_ID:?configuração incompleta — rode setup de novo}"
-    : "${HUB_HOST:?}" "${DATA_DIR:?}"
+    : "${HUB_HOST:?}"
     AUTH_MODE="${AUTH_MODE:-chave}"
     if [ "$AUTH_MODE" = senha ]; then
         : "${PASSWORD:?configuração incompleta (senha) — rode setup de novo}"
@@ -68,9 +136,19 @@ load_conf() {
     fi
     HUB_USER="${HUB_USER:-carbonara}"
     MIN_AGE="${MIN_AGE:-1}"; SEND_EVERY="${SEND_EVERY:-10}"
+    # Migração: configs antigas guardavam UMA pasta em DATA_DIR. Se ainda não há arquivo
+    # de pastas, cria uma entrada a partir dela (o rótulo é derivado do nome da pasta).
+    if [ ! -f "$FOLDERS" ] && [ -n "${DATA_DIR:-}" ]; then
+        F_PATH=(); F_LABEL=(); F_FEXC=(); F_DEXC=()
+        lbl="$(mk_label "$DATA_DIR")"
+        F_PATH+=("$DATA_DIR"); F_LABEL+=("$lbl"); F_FEXC+=(""); F_DEXC+=("")
+        folders_save
+    fi
+    load_folders
+    [ "${#F_PATH[@]}" -gt 0 ] || die "nenhuma pasta configurada — rode: $(basename "$0") setup (ou 'folders')"
 }
 
-rsync_dest() {  # destino conforme o modo: módulo do rsync daemon OU conta ssh
+rsync_dest() {  # destino BASE (sem rótulo) conforme o modo: módulo rsyncd OU conta ssh
     if [ "$AUTH_MODE" = senha ]; then
         echo "rsync://$STATION_ID@$HUB_HOST:$HUB_PORT/$STATION_ID/"
     else
@@ -82,10 +160,52 @@ sig_of() { # tamanho:mtime — a "assinatura" que detecta arquivo novo/alterado
     stat -c '%s:%Y' "$1" 2>/dev/null || stat -f '%z:%m' "$1"
 }
 
-scan_all() { # gera $1: inventário completo da pasta — caminho<TAB>assinatura
-    ( cd "$DATA_DIR" && find . -type f -not -path '*/.*' -not -name '.*' 2>/dev/null \
-        | sed 's|^\./||' | sort \
-        | while IFS= read -r f; do printf '%s\t%s\n' "$f" "$(sig_of "$f")"; done ) > "$1"
+# Varre UMA pasta aplicando os filtros e emite, por arquivo elegível:
+#   rótulo/caminho-relativo <TAB> assinatura <TAB> assentado(1/0)
+# ($5=cutoff em epoch: assentado = mtime <= cutoff, ou seja, mais velho que MIN_AGE)
+scan_folder() {
+    local path="$1" fexc="$2" dexc="$3" label="$4" cutoff="$5"
+    [ -d "$path" ] || return 0
+    ( cd "$path" 2>/dev/null || exit 0
+      find . -type f -not -path '*/.*' -not -name '.*' 2>/dev/null | sed 's|^\./||' | sort \
+      | while IFS= read -r rel; do
+            skip=0
+            oIFS="$IFS"; set -f
+            # subpastas excluídas: casa se o rótulo aparece como componente do caminho
+            if [ -n "$dexc" ]; then
+                IFS=','
+                for d in $dexc; do
+                    [ -n "$d" ] || continue
+                    case "/$rel/" in */"$d"/*) skip=1; break ;; esac
+                done
+            fi
+            # tipos de arquivo excluídos: glob contra o NOME do arquivo
+            if [ "$skip" = 0 ] && [ -n "$fexc" ]; then
+                base="${rel##*/}"; IFS=','
+                for g in $fexc; do
+                    [ -n "$g" ] || continue
+                    case "$base" in $g) skip=1; break ;; esac
+                done
+            fi
+            IFS="$oIFS"; set +f
+            [ "$skip" = 0 ] || continue
+            sig="$(sig_of "$rel")"
+            mtime="${sig##*:}"
+            if [ -n "$mtime" ] && [ "$mtime" -le "$cutoff" ]; then settled=1; else settled=0; fi
+            printf '%s/%s\t%s\t%s\n' "$label" "$rel" "$sig" "$settled"
+        done )
+}
+
+# Varre TODAS as pastas configuradas (re-lê o disco a cada chamada — é isto que faz
+# arquivos novos serem detectados em todo ciclo). Emite as linhas de scan_folder.
+scan_all() {
+    local now cutoff k
+    now="$(date +%s)"; cutoff="$((now - MIN_AGE * 60))"
+    k=0
+    while [ "$k" -lt "${#F_PATH[@]}" ]; do
+        scan_folder "${F_PATH[$k]}" "${F_FEXC[$k]}" "${F_DEXC[$k]}" "${F_LABEL[$k]}" "$cutoff"
+        k=$((k + 1))
+    done
 }
 
 ssh_cmd() { echo "ssh -i $KEY_FILE -p $HUB_PORT -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"; }
@@ -108,7 +228,7 @@ send_heartbeat() {
     fi
 }
 
-# Teste de conexão que NÃO depende da pasta de dados: dry-run a partir de uma pasta
+# Teste de conexão que NÃO depende das pastas de dados: dry-run a partir de uma pasta
 # vazia — valida rede, porta, credencial e o confinamento no servidor, sem enviar nada.
 probe_conn() {
     tmpd="$(mktemp -d)"
@@ -223,19 +343,39 @@ setup() {
     fi
     echo
 
-    # 5. Pasta local que será enviada (rsync)
-    while :; do
-        DATA_DIR="$(ask "Pasta LOCAL que deseja enviar por rsync" "${DATA_DIR:-$HOME/carbonara-dados}")"
-        case "$DATA_DIR" in /*) : ;; *) echo "  use um caminho absoluto."; continue ;; esac
-        [ -d "$DATA_DIR" ] && break
-        if ask_yn "  a pasta não existe — criar $DATA_DIR?" s; then mkdir -p "$DATA_DIR"; break; fi
-    done
+    # 5. Pasta(s) local(is) que serão enviadas (rsync)
+    load_folders
+    keep_folders=0
+    if [ "${#F_PATH[@]}" -gt 0 ]; then
+        echo "Pastas já configuradas:"
+        print_folders_summary
+        if ask_yn "Manter essas pastas? (responda 'n' para reconfigurar a pasta principal)" s; then
+            keep_folders=1
+        fi
+    fi
+    if [ "$keep_folders" = 0 ]; then
+        F_PATH=(); F_LABEL=(); F_FEXC=(); F_DEXC=()
+        DATA_DIR="${DATA_DIR:-}"
+        while :; do
+            DATA_DIR="$(ask "Pasta LOCAL principal a enviar por rsync" "${DATA_DIR:-$HOME/carbonara-dados}")"
+            case "$DATA_DIR" in /*) : ;; *) echo "  use um caminho absoluto."; continue ;; esac
+            [ -d "$DATA_DIR" ] && break
+            if ask_yn "  a pasta não existe — criar $DATA_DIR?" s; then mkdir -p "$DATA_DIR"; break; fi
+        done
+        echo "Filtros desta pasta (opcionais — Enter deixa em branco):"
+        fe="$(ask "  Tipos de arquivo a NÃO enviar (globs por vírgula, ex.: *.tmp,*.bak)" "")"
+        de="$(ask "  Subpastas a NÃO enviar (por vírgula, ex.: temp,cache)" "")"
+        lbl="$(mk_label "$DATA_DIR")"
+        F_PATH+=("$DATA_DIR"); F_LABEL+=("$lbl"); F_FEXC+=("$fe"); F_DEXC+=("$de")
+        folders_save
+        echo "  (dá para adicionar mais pastas depois: menu → 'Gerenciar pastas' ou '$(basename "$0") folders'.)"
+    fi
     while :; do
         MIN_AGE="$(ask "Idade mínima (minutos) para um arquivo ser considerado pronto" "${MIN_AGE:-1}")"
         echo "$MIN_AGE" | grep -Eq '^[0-9]+$' && break
         echo "  informe um número inteiro de minutos."
     done
-    echo "  (a pasta local NUNCA é alterada: nada é movido nem apagado — o envio só"
+    echo "  (as pastas locais NUNCA são alteradas: nada é movido nem apagado — o envio só"
     echo "   sincroniza com o servidor o que for novo ou mudar.)"
 
     # 6. Tempo de reciclagem (intervalo do envio automático)
@@ -257,12 +397,11 @@ setup() {
           echo "HUB_USER=${HUB_USER:-carbonara}"
           echo "KEY_FILE=$KEY_FILE"
       fi
-      echo "DATA_DIR=$DATA_DIR"
       echo "MIN_AGE=$MIN_AGE"
       echo "SEND_EVERY=$SEND_EVERY"; } > "$CONF"
     chmod 600 "$CONF"
     echo
-    echo "ok: configuração gravada em $CONF."
+    echo "ok: configuração gravada em $CONF (pastas em $FOLDERS)."
 
     if [ -n "$NEW_KEY" ]; then
         echo
@@ -310,10 +449,11 @@ test_conn() {
 }
 
 # --- Envio ---------------------------------------------------------------------------
-# Sincronização pura: NADA é movido ou apagado da pasta local. O que já foi enviado é
-# controlado pelo estado local ($STATE, assinatura tamanho:mtime por arquivo) — só vai
-# o que é novo ou mudou; arquivos que crescem (ex.: .dat de datalogger) são reenviados
-# por inteiro e o servidor não duplica medições (ingestão idempotente).
+# Sincronização pura: NADA é movido ou apagado das pastas locais. A cada ciclo TODAS as
+# pastas são varridas de novo (novos arquivos entram automaticamente). O que já foi
+# enviado é controlado pelo estado local ($STATE, chave rótulo/caminho → tamanho:mtime)
+# — só vai o que é novo ou mudou; arquivos que crescem (ex.: .dat de datalogger) são
+# reenviados por inteiro e o servidor não duplica medições (ingestão idempotente).
 send() {
     load_conf
     mkdir -p "$CONF_DIR"
@@ -328,65 +468,181 @@ send() {
     if ! send_heartbeat; then
         echo "aviso: não consegui enviar o sinal de vida ao servidor (sem rede?)." >&2
     fi
-    all="$(mktemp)"; elig="$(mktemp)"; tosend="$(mktemp)"; lista="$(mktemp)"
-    scan_all "$all"
-    # Elegíveis: já "assentados" (mais velhos que MIN_AGE), fora de pastas/arquivos
-    # ocultos — mesmo critério de dotfiles da ingestão no servidor.
-    ( cd "$DATA_DIR" && find . -type f -not -path '*/.*' -not -name '.*' -mmin "+$MIN_AGE" 2>/dev/null \
-        | sed 's|^\./||' ) > "$elig"
-    # A enviar: elegíveis que são novos ou cuja assinatura mudou desde o último envio.
+    scan="$(mktemp)"; all="$(mktemp)"; tosend="$(mktemp)"; sentok="$(mktemp)"
+    scan_all > "$scan"                     # rótulo/caminho \t sig \t assentado
+    cut -f1,2 "$scan" > "$all"             # inventário atual (chave \t sig)
+    # A enviar: assentados cuja assinatura difere do estado (novos ou alterados).
     awk -F'\t' '
         FILENAME==ARGV[1] { st[$1]=$2; next }
-        FILENAME==ARGV[2] { el[$1]=1;  next }
-        ($1 in el) && st[$1] != $2 { print }
-    ' "$STATE" "$elig" "$all" > "$tosend"
+        $3=="1" && st[$1] != $2 { print $1"\t"$2 }
+    ' "$STATE" "$scan" > "$tosend"
     n="$(wc -l < "$tosend" | tr -d ' ')"
     if [ "$n" = 0 ]; then
         echo "nada novo a sincronizar (arquivos com menos de $MIN_AGE min não contam)."
-        rm -f "$all" "$elig" "$tosend" "$lista"; return 0
+        rm -f "$scan" "$all" "$tosend" "$sentok"; return 0
     fi
-    cut -f1 "$tosend" > "$lista"
     echo "sincronizando $n arquivo(s) novo(s)/alterado(s) com ${HUB_HOST}…"
-    rc=0
-    # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
-    # legíveis pelos usuários locais do host, independentemente das permissões aqui.
-    # --partial-dir: uma transferência cancelada/interrompida deixa o pedaço num
-    # diretório OCULTO no servidor (a ingestão nunca o vê) e o próximo envio retoma
-    # dali — nunca fica um arquivo truncado com nome real no incoming/.
-    if [ "$AUTH_MODE" = senha ]; then
-        ( cd "$DATA_DIR" && RSYNC_PASSWORD="$PASSWORD" rsync -rltz --chmod=D755,F644 \
-            --partial-dir=.rsync-parcial --timeout=120 --files-from="$lista" \
-            ./ "$(rsync_dest)" ) || rc=$?
-    else
-        ( cd "$DATA_DIR" && rsync -rltz --chmod=D755,F644 --partial-dir=.rsync-parcial \
-            --timeout=120 --files-from="$lista" -e "$(ssh_cmd)" ./ "$(rsync_dest)" ) || rc=$?
-    fi
-    if [ "$rc" = 0 ]; then
-        # Registra no estado — a pasta local permanece intocada.
-        awk -F'\t' 'NR==FNR { u[$1]=1; next } !($1 in u)' "$tosend" "$STATE" > "$STATE.tmp" || true
-        cat "$tosend" >> "$STATE.tmp"
-        # Poda do estado: só entradas de arquivos que ainda existem localmente.
+    worst=0
+    k=0
+    while [ "$k" -lt "${#F_PATH[@]}" ]; do
+        label="${F_LABEL[$k]}"; path="${F_PATH[$k]}"
+        k=$((k + 1))
+        [ -d "$path" ] || continue
+        lista="$(mktemp)"
+        # arquivos deste rótulo, sem o prefixo — caminhos relativos à própria pasta
+        awk -F'\t' -v p="$label/" 'substr($1,1,length(p))==p { print substr($1, length(p)+1) }' \
+            "$tosend" > "$lista"
+        if [ ! -s "$lista" ]; then rm -f "$lista"; continue; fi
+        cnt="$(wc -l < "$lista" | tr -d ' ')"
+        dest="$(rsync_dest)$label/"
+        echo "  [$label] $cnt arquivo(s) de ${path}…"
+        rc=0
+        # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
+        # legíveis pelos usuários locais do host, independentemente das permissões aqui.
+        # --partial-dir: uma transferência cancelada/interrompida deixa o pedaço num
+        # diretório OCULTO no servidor (a ingestão nunca o vê) e o próximo envio retoma
+        # dali — nunca fica um arquivo truncado com nome real no incoming/.
+        if [ "$AUTH_MODE" = senha ]; then
+            ( cd "$path" && RSYNC_PASSWORD="$PASSWORD" rsync -rltz --chmod=D755,F644 \
+                --partial-dir=.rsync-parcial --timeout=120 --files-from="$lista" \
+                ./ "$dest" ) || rc=$?
+        else
+            ( cd "$path" && rsync -rltz --chmod=D755,F644 --partial-dir=.rsync-parcial \
+                --timeout=120 --files-from="$lista" -e "$(ssh_cmd)" ./ "$dest" ) || rc=$?
+        fi
+        if [ "$rc" = 0 ]; then
+            # anota como enviados (chave \t sig) os arquivos deste rótulo
+            awk -F'\t' -v p="$label/" 'substr($1,1,length(p))==p' "$tosend" >> "$sentok"
+        else
+            [ "$rc" -gt "$worst" ] && worst="$rc"
+            echo "  [$label] falha (rsync rc=$rc) — será tentado de novo no próximo ciclo." >&2
+        fi
+        rm -f "$lista"
+    done
+    # Atualiza o estado: remove as chaves reenviadas, junta as recém-enviadas e poda
+    # para só conter arquivos que ainda existem localmente. As pastas locais ficam intocadas.
+    if [ -s "$sentok" ]; then
+        awk -F'\t' 'NR==FNR { u[$1]=1; next } !($1 in u)' "$sentok" "$STATE" > "$STATE.tmp" || true
+        cat "$sentok" >> "$STATE.tmp"
         awk -F'\t' 'NR==FNR { ex[$1]=1; next } ($1 in ex)' "$all" "$STATE.tmp" > "$STATE"
         rm -f "$STATE.tmp"
-        echo "$(date -u +%FT%TZ) OK $n arquivo(s) sincronizados" >> "$LOGF"
-        echo "ok: $n arquivo(s) sincronizados (nada foi movido ou apagado localmente)."
+        ok_n="$(wc -l < "$sentok" | tr -d ' ')"
+        echo "$(date -u +%FT%TZ) OK $ok_n arquivo(s) sincronizados" >> "$LOGF"
+        echo "ok: $ok_n arquivo(s) sincronizados (nada foi movido ou apagado localmente)."
     else
-        echo "$(date -u +%FT%TZ) FALHA rc=$rc ($n arquivo(s) pendentes)" >> "$LOGF"
-        case "$rc" in
+        # nada teve sucesso — ainda assim poda o estado para arquivos removidos localmente
+        awk -F'\t' 'NR==FNR { ex[$1]=1; next } ($1 in ex)' "$all" "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE" || rm -f "$STATE.tmp"
+    fi
+    if [ "$worst" != 0 ]; then
+        echo "$(date -u +%FT%TZ) FALHA rc=$worst (parte dos arquivos pendente)" >> "$LOGF"
+        case "$worst" in
             23) echo "aviso: parte dos arquivos não pôde ser lida (em uso pelo datalogger?)." >&2
-                echo "       nada foi registrado; tudo será tentado de novo no próximo ciclo." >&2 ;;
+                echo "       o que falhou não foi registrado; será tentado de novo no próximo ciclo." >&2 ;;
             24) echo "aviso: um arquivo sumiu durante a transferência — o próximo ciclo se ajusta sozinho." >&2 ;;
-            *)  echo "falha no envio (rsync rc=$rc) — o estado não mudou; será tentado de novo no próximo ciclo." >&2 ;;
+            *)  echo "falha em parte do envio (rsync rc=$worst) — o estado não mudou p/ o que falhou; nova tentativa no próximo ciclo." >&2 ;;
         esac
     fi
-    rm -f "$all" "$elig" "$tosend" "$lista"
-    return "$rc"
+    rm -f "$scan" "$all" "$tosend" "$sentok"
+    return "$worst"
 }
 
 reset_state() {  # força reenvio completo no próximo send (o servidor não duplica)
     rm -f "$STATE"
     echo "ok: estado de envio limpo — o próximo 'send' reenvia tudo."
     echo "(o servidor não duplica medições: a ingestão é idempotente.)"
+}
+
+# --- Gerência de pastas ---------------------------------------------------------------
+folders_add() {
+    load_folders
+    p=""
+    while :; do
+        p="$(ask "Caminho ABSOLUTO da pasta a incluir (Enter cancela)" "")"
+        [ -n "$p" ] || { echo "cancelado."; return 0; }
+        case "$p" in /*) : ;; *) echo "  use um caminho absoluto."; continue ;; esac
+        if [ ! -d "$p" ]; then
+            if ask_yn "  a pasta não existe — criar $p?" n; then mkdir -p "$p"; else continue; fi
+        fi
+        dup=0; j=0
+        while [ "$j" -lt "${#F_PATH[@]}" ]; do [ "${F_PATH[$j]}" = "$p" ] && dup=1; j=$((j + 1)); done
+        [ "$dup" = 1 ] && { echo "  essa pasta já está na lista."; return 0; }
+        break
+    done
+    echo "Filtros desta pasta (opcionais — Enter deixa em branco):"
+    fe="$(ask "  Tipos de arquivo a NÃO enviar (globs por vírgula, ex.: *.tmp,*.bak)" "")"
+    de="$(ask "  Subpastas a NÃO enviar (por vírgula, ex.: temp,cache)" "")"
+    lbl="$(mk_label "$p")"
+    F_PATH+=("$p"); F_LABEL+=("$lbl"); F_FEXC+=("$fe"); F_DEXC+=("$de")
+    folders_save
+    echo "ok: pasta adicionada (sub-diretório no servidor: [$lbl])."
+}
+
+folders_remove() {
+    load_folders
+    [ "${#F_PATH[@]}" -gt 0 ] || { echo "não há pastas configuradas."; return 0; }
+    print_folders_summary
+    sel="$(ask "Número da pasta a remover (Enter cancela)" "")"
+    [ -n "$sel" ] || return 0
+    echo "$sel" | grep -Eq '^[0-9]+$' || { echo "  número inválido."; return 0; }
+    idx=$((sel - 1))
+    { [ "$idx" -ge 0 ] && [ "$idx" -lt "${#F_PATH[@]}" ]; } || { echo "  fora da faixa."; return 0; }
+    if [ "${#F_PATH[@]}" -le 1 ]; then
+        ask_yn "essa é a única pasta — remover mesmo? (a estação ficará sem enviar dados)" n || return 0
+    fi
+    NP=(); NL=(); NFE=(); NDE=(); j=0
+    while [ "$j" -lt "${#F_PATH[@]}" ]; do
+        if [ "$j" != "$idx" ]; then
+            NP+=("${F_PATH[$j]}"); NL+=("${F_LABEL[$j]}"); NFE+=("${F_FEXC[$j]}"); NDE+=("${F_DEXC[$j]}")
+        fi
+        j=$((j + 1))
+    done
+    if [ "${#NP[@]}" -gt 0 ]; then
+        F_PATH=("${NP[@]}"); F_LABEL=("${NL[@]}"); F_FEXC=("${NFE[@]}"); F_DEXC=("${NDE[@]}")
+    else
+        F_PATH=(); F_LABEL=(); F_FEXC=(); F_DEXC=()
+    fi
+    folders_save
+    echo "ok: pasta removida. (o estado de envio dela é limpo no próximo 'send'.)"
+}
+
+folders_edit() {
+    load_folders
+    [ "${#F_PATH[@]}" -gt 0 ] || { echo "não há pastas configuradas."; return 0; }
+    print_folders_summary
+    sel="$(ask "Número da pasta cujos filtros deseja editar (Enter cancela)" "")"
+    [ -n "$sel" ] || return 0
+    echo "$sel" | grep -Eq '^[0-9]+$' || { echo "  número inválido."; return 0; }
+    idx=$((sel - 1))
+    { [ "$idx" -ge 0 ] && [ "$idx" -lt "${#F_PATH[@]}" ]; } || { echo "  fora da faixa."; return 0; }
+    echo "Editando filtros de: ${F_PATH[$idx]}"
+    echo "(Enter mantém o valor atual; digite um espaço e Enter para LIMPAR o filtro)"
+    fe="$(ask "  Tipos de arquivo a NÃO enviar (globs por vírgula)" "${F_FEXC[$idx]}")"
+    de="$(ask "  Subpastas a NÃO enviar (por vírgula)" "${F_DEXC[$idx]}")"
+    F_FEXC[$idx]="$(printf '%s' "$fe" | tr -d ' ')"
+    F_DEXC[$idx]="$(printf '%s' "$de" | tr -d ' ')"
+    folders_save
+    echo "ok: filtros atualizados."
+}
+
+folders_menu() {
+    while :; do
+        echo
+        echo "----- Pastas de sincronização -----"
+        print_folders_summary
+        echo " 1) Adicionar pasta"
+        echo " 2) Remover pasta"
+        echo " 3) Editar filtros (tipos de arquivo / subpastas) de uma pasta"
+        echo " 0) Voltar"
+        printf "opção> "
+        read -r op || return 0
+        case "$op" in
+            1) ( folders_add ) || true ;;
+            2) ( folders_remove ) || true ;;
+            3) ( folders_edit ) || true ;;
+            0|q|"") return 0 ;;
+            *) echo "opção inválida" ;;
+        esac
+    done
 }
 
 # --- Agendamento (cron) ---------------------------------------------------------------
@@ -426,12 +682,13 @@ status() {
         echo "servidor:  $HUB_USER@$HUB_HOST:$HUB_PORT (chave SSH)"
         echo "chave:     $KEY_FILE"
     fi
-    echo "dados:     $DATA_DIR (somente leitura: nada é movido/apagado)"
-    all="$(mktemp)"; scan_all "$all"
-    total="$(wc -l < "$all" | tr -d ' ')"
+    echo "pastas sincronizadas (somente leitura: nada é movido/apagado):"
+    print_folders_summary
+    scan="$(mktemp)"; scan_all > "$scan"
+    total="$(wc -l < "$scan" | tr -d ' ')"
     [ -f "$STATE" ] || : > "$STATE"
-    pend="$(awk -F'\t' 'FILENAME==ARGV[1] { st[$1]=$2; next } st[$1]!=$2 { n++ } END { print n+0 }' "$STATE" "$all")"
-    rm -f "$all"
+    pend="$(awk -F'\t' 'FILENAME==ARGV[1] { st[$1]=$2; next } $3=="1" && st[$1]!=$2 { n++ } END { print n+0 }' "$STATE" "$scan")"
+    rm -f "$scan"
     echo "arquivos:  $total no total · $pend novo(s)/alterado(s) a sincronizar"
     if crontab -l 2>/dev/null | grep -qF "$CRON_TAG"; then
         echo "agenda:    $(crontab -l 2>/dev/null | grep -F "$CRON_TAG" | awk '{print $1}') (cron)"
@@ -443,17 +700,31 @@ status() {
 }
 
 # --- Menu interativo -------------------------------------------------------------------
+menu_header() {  # cabeçalho: identifica a estação e mostra as pastas já sincronizadas
+    if [ -r "$CONF" ]; then
+        ( . "$CONF" 2>/dev/null || true
+          printf 'estação: %s   servidor: %s:%s\n' "${STATION_ID:-?}" "${HUB_HOST:-?}" "${HUB_PORT:-?}" )
+    else
+        echo "estação: (ainda não configurada — use a opção 1)"
+    fi
+    echo "pastas sincronizadas:"
+    print_folders_summary
+}
+
 menu() {
     while true; do
         echo
         echo "===== carbonara-station — estação (cliente Linux) ====="
+        menu_header
+        echo "-------------------------------------------------------"
         echo " 1) Configurar esta estação (guiado)"
         echo " 2) Testar conexão com o servidor"
         echo " 3) Enviar agora"
-        echo " 4) Agendar envio periódico"
-        echo " 5) Remover agendamento"
-        echo " 6) Status"
-        echo " 7) Limpar estado de envio (força reenvio de tudo)"
+        echo " 4) Gerenciar pastas de sincronização (incluir/remover/filtrar)"
+        echo " 5) Agendar envio periódico"
+        echo " 6) Remover agendamento"
+        echo " 7) Status"
+        echo " 8) Limpar estado de envio (força reenvio de tudo)"
         echo " 0) Sair"
         printf "opção> "
         read -r op || exit 0
@@ -461,10 +732,11 @@ menu() {
             1) ( setup ) || true ;;
             2) ( test_conn ) || true ;;
             3) ( send ) || true ;;
-            4) ( schedule ) || true ;;
-            5) ( unschedule ) || true ;;
-            6) ( status ) || true ;;
-            7) if ask_yn "limpar o estado e reenviar tudo no próximo envio?" n; then reset_state; fi ;;
+            4) folders_menu ;;
+            5) ( schedule ) || true ;;
+            6) ( unschedule ) || true ;;
+            7) ( status ) || true ;;
+            8) if ask_yn "limpar o estado e reenviar tudo no próximo envio?" n; then reset_state; fi ;;
             0|q|"") exit 0 ;;
             *) echo "opção inválida" ;;
         esac
@@ -479,15 +751,18 @@ uso:
   $(basename "$0") setup        configuração guiada (1ª vez ou reconfigurar)
   $(basename "$0") test         testa a conexão com o servidor (dry-run)
   $(basename "$0") send         sincroniza agora (só o que é novo/alterado)
+  $(basename "$0") folders      gerencia as pastas (incluir/remover/filtrar)
   $(basename "$0") schedule     agenda o envio periódico (cron)
   $(basename "$0") unschedule   remove o agendamento
   $(basename "$0") status       configuração, pendências e últimos envios
   $(basename "$0") reset        limpa o estado de envio (força reenvio de tudo)
   $(basename "$0")              menu interativo
 
-a pasta local NUNCA é alterada (nada é movido nem apagado); o controle do que já
+várias pastas são suportadas — cada uma vai para um sub-diretório próprio no servidor
+e pode ter filtros (tipos de arquivo e subpastas a não enviar).
+as pastas locais NUNCA são alteradas (nada é movido nem apagado); o controle do que já
 foi enviado fica em $STATE
-configuração por usuário em $CONF
+configuração por usuário em $CONF_DIR
 EOF
 }
 
@@ -495,6 +770,7 @@ case "${1:-}" in
     setup)      setup ;;
     test)       test_conn ;;
     send)       send ;;
+    folders)    folders_menu ;;
     schedule)   schedule ;;
     unschedule) unschedule ;;
     status)     status ;;

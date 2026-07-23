@@ -52,8 +52,10 @@ apagar nada lá).
    Ele pergunta, nesta ordem: **id da estação** → **IP do host** → **modo de
    autenticação** (chave, porta 22 e caminho do arquivo recebido; ou usuário+senha,
    porta 873 e a senha do `INSTRUCOES.txt`) → faz um **teste simples de conexão** →
-   **pasta local a enviar** (rsync) → **tempo de reciclagem** (minutos), já
-   oferecendo ativar o envio automático.
+   **pasta local principal a enviar** (rsync) e seus **filtros opcionais** (tipos de
+   arquivo e subpastas a *não* enviar) → **tempo de reciclagem** (minutos), já
+   oferecendo ativar o envio automático. Mais pastas podem ser incluídas depois
+   (veja *Várias pastas e filtros*, abaixo).
 
    > No modo chave, a estação também pode gerar a própria chave: se o caminho
    > informado não existir, o assistente oferece criar um novo par e mostra a
@@ -64,22 +66,46 @@ apagar nada lá).
    ```bash
    ./carbonara-station.sh test       # testa a conexão (dry-run, nada é enviado)
    ./carbonara-station.sh send       # envia agora os arquivos pendentes
+   ./carbonara-station.sh folders    # gerencia as pastas (incluir/remover/filtrar)
    ./carbonara-station.sh schedule   # (re)agenda o envio periódico (cron / Agendador de Tarefas)
    ./carbonara-station.sh status     # configuração, pendências e últimos envios
    ```
    (No Windows, os mesmos subcomandos com `.\carbonara-station.cmd`.)
 
-Sem argumentos, os dois scripts abrem um **menu interativo** com todas as opções.
+Sem argumentos, os dois scripts abrem um **menu interativo** com todas as opções. O
+**cabeçalho do menu** mostra a estação, o servidor e a lista de **pastas sincronizadas**
+(com seus filtros) já assim que o script abre — desde que já esteja configurado.
 
 > **Windows + Campbell Scientific:** se `C:\Campbellsci\LoggerNet` existir (saída padrão
 > do LoggerNet), o `setup` a sugere como pasta de dados default.
 
+## Várias pastas e filtros
+
+A estação pode enviar **mais de uma pasta**. Cada pasta configurada vai para um
+**sub-diretório próprio** no servidor (o *rótulo*, derivado do nome da pasta), então
+arquivos de nome igual em pastas diferentes **não colidem**.
+
+Gerencie as pastas pelo menu (**Gerenciar pastas de sincronização**) ou pelo subcomando
+`folders` — dá para **incluir**, **remover** e, por pasta, definir dois **filtros
+opcionais**:
+
+- **Tipos de arquivo a não enviar** — globs separados por vírgula (ex.: `*.tmp,*.bak`),
+  casados contra o *nome* do arquivo.
+- **Subpastas a não enviar** — nomes/relativos separados por vírgula (ex.: `temp,cache`);
+  qualquer arquivo dentro de uma subpasta com esse nome é ignorado.
+
+Os filtros valem só na *seleção* do que enviar — as pastas locais continuam intocadas.
+Alterar filtros ou pastas **reconfigura automaticamente** o que os próximos ciclos
+sincronizam; rode `schedule` de novo se quiser mudar o intervalo.
+
 ## Como o envio funciona
 
-- **A pasta local NUNCA é alterada** — nada é movido nem apagado; o propósito é
-  *sincronizar* com o servidor. O controle do que já foi enviado é um **estado local**
-  (assinatura tamanho+mtime por arquivo, em `sent.state` na pasta de configuração):
-  cada ciclo envia só o que é **novo ou mudou**.
+- **As pastas locais NUNCA são alteradas** — nada é movido nem apagado; o propósito é
+  *sincronizar* com o servidor. **A cada ciclo, TODAS as pastas configuradas são
+  varridas de novo** — arquivos criados depois da primeira sincronização entram
+  automaticamente. O controle do que já foi enviado é um **estado local** (assinatura
+  tamanho+mtime por arquivo, chaveado por `rótulo/caminho` em `sent.state`, na pasta de
+  configuração): cada ciclo envia só o que é **novo ou mudou**.
 - Arquivos que **crescem** (ex.: `.dat` do LoggerNet recebendo novas leituras) são
   reenviados por inteiro quando mudam — sem problema: a ingestão do servidor é
   **idempotente** e não duplica medições. Para forçar um reenvio completo: `reset`.
@@ -138,10 +164,14 @@ Confira com `status` (mostra se a tarefa está ativa) e pelos carimbos em `envio
 
 ## Configuração gravada
 
-- Linux: `~/.config/carbonara-station/config` (+ `envios.log` ao lado).
-- Windows: `%LOCALAPPDATA%\carbonara-station\config.json` (+ `envios.log` ao lado).
+- Linux: `~/.config/carbonara-station/config` + `folders` (lista de pastas) e
+  `envios.log` ao lado.
+- Windows: `%LOCALAPPDATA%\carbonara-station\config.json` (as pastas ficam no próprio
+  JSON, em `Folders`) + `envios.log` ao lado.
 
-Rodar `setup` de novo reconfigura (os valores atuais viram os defaults do assistente).
+Rodar `setup` de novo reconfigura (os valores atuais viram os defaults do assistente); ao
+chegar nas pastas, ele oferece **manter** as já configuradas. Configurações antigas (uma
+única pasta) são **migradas** automaticamente na primeira execução do novo cliente.
 
 ## Windows: como o rsync é instalado
 
