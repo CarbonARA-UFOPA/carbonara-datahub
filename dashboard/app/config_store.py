@@ -216,7 +216,13 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
     if len(separator) != 1:
         errors.append(f"Separador de colunas deve ter exatamente 1 caractere (recebi '{separator}').")
         separator = ","
-    quotechar = (form.get("quotechar") or '"').strip() or '"'
+    # "Ignorar aspas" (no_quotes): grava quotechar vazio = csv.QUOTE_NONE (divide os
+    # campos entre aspas pelas vírgulas internas — para dataloggers que empacotam vários
+    # valores numa string só, ex.: RadOut1). Senão, usa o caractere informado (padrão ").
+    if form.get("no_quotes"):
+        quotechar = ""
+    else:
+        quotechar = (form.get("quotechar") or '"').strip() or '"'
     decimal = (form.get("decimal") or ".").strip() or "."
     if decimal == separator:
         errors.append("Separador decimal não pode ser igual ao separador de colunas.")

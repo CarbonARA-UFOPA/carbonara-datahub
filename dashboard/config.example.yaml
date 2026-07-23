@@ -46,7 +46,10 @@ stations:
         path: incoming/flona01/flona01.dat   # relativo a data_root, ou absoluto
         tail_lines: 288                       # 288 × 30min = últimos ~6 dias
         separator: ","
-        quotechar: '"'                        # TOA5 (Campbell) usa aspas
+        quotechar: '"'                        # TOA5 (Campbell) usa aspas; "" (vazio) =
+                                              #   ignora aspas e divide os campos entre
+                                              #   aspas pelas vírgulas internas (mapeie
+                                              #   por índice — os nomes deixam de alinhar)
         decimal: "."
         skip_header_lines: 1                  # TOA5 = 4 · CSV com cabeçalho = 1
         header_line: 1                        # linha (1-based) com nomes; TOA5 = 2; null = sem nomes

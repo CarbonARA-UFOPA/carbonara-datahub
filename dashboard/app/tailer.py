@@ -54,7 +54,15 @@ def head_lines(path: Path, n: int) -> list[str]:
 
 
 def parse_rows(lines: list[str], separator: str, quotechar: str) -> list[list[str]]:
-    return [row for row in csv.reader(lines, delimiter=separator, quotechar=quotechar or '"')]
+    # quotechar vazio = SEM aspas (csv.QUOTE_NONE): divide puramente pelo separador, então
+    # um campo entre aspas com vírgulas dentro (ex.: RadOut1 do Campbell,
+    # "m -125,1,-1247,...") vira VÁRIAS colunas. As aspas ficam literais e são removidas
+    # depois (to_float/strip). Com aspas, o comportamento normal (campo entre aspas = 1 col).
+    if quotechar:
+        reader = csv.reader(lines, delimiter=separator, quotechar=quotechar)
+    else:
+        reader = csv.reader(lines, delimiter=separator, quoting=csv.QUOTE_NONE)
+    return [row for row in reader]
 
 
 def to_float(cell: str, decimal: str = ".") -> float | None:

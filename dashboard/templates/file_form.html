@@ -42,6 +42,13 @@
       <input name="quotechar" value="{{ fcfg.quotechar if fcfg else '"' }}">
       <small>TOA5 (Campbell) usa <code>"</code>.</small>
     </label>
+    <label>Ignorar aspas
+      <input type="checkbox" name="no_quotes" value="1"
+             {{ 'checked' if fcfg and fcfg.quotechar == '' else '' }}>
+      <small>Divide os campos entre aspas pelas vírgulas de dentro (ex.: RadOut1:
+        <code>"m -125,1,-1247,…"</code>). Vira várias colunas — mapeie por ÍNDICE
+        (os nomes do cabeçalho deixam de alinhar depois da coluna quebrada).</small>
+    </label>
   </div>
 
   <div class="grid-3">
