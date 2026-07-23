@@ -11,8 +11,8 @@ auth:
 stations:
 - id: eddyfarm
   name: eddyfarm
-  latitude: -3.5780411851564313
-  longitude: -55.07432993308608
+  latitude: -2.6840254232150995
+  longitude: -54.53497627398874
   heartbeat_file: /srv/carbonara/incoming/eddyfarm/.carbonara-status
   files:
   - path: /srv/carbonara/incoming/eddyfarm/loggernet/CR1000_Proc3K.dat
