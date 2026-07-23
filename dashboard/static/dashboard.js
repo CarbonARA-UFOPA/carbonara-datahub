@@ -110,6 +110,13 @@ document.addEventListener("DOMContentLoaded", () => {
 function initCharts() {
   const blocks = document.querySelectorAll(".file-block[data-series-url]");
   if (!blocks.length) return;
+  // Reajusta os gráficos ao reexpandir um arquivo — se foram criados recolhidos
+  // (display:none), o Chart.js os desenha com 0px até um resize.
+  document.querySelectorAll(".file-charts").forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (d.open) d.querySelectorAll("canvas").forEach((c) => c._chart && c._chart.resize());
+    });
+  });
   blocks.forEach(loadSeries);
   const every = (window.REFRESH_SECONDS || 60) * 1000;
   setInterval(() => blocks.forEach(loadSeries), every);

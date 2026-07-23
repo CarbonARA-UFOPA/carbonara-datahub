@@ -49,20 +49,25 @@
       {% endif %}
     </div>
   </div>
-  <p class="meta">
-    últimas <strong>{{ f.tail_lines }}</strong> linhas ·
-    separador <code>{{ '\\t' if f.separator == '\t' else f.separator }}</code> ·
-    {{ f.variables | length }} variável(is)
-    <span class="series-info"></span>
-  </p>
-  <p class="series-error warn"></p>
-  <div class="charts">
-    {% for v in f.variables %}
-      <div class="chart-box">
-        <canvas data-var="{{ loop.index0 }}" height="110"></canvas>
-      </div>
-    {% endfor %}
-  </div>
+  <details class="file-charts" open>
+    <summary class="file-charts-toggle">
+      Gráficos
+      <span class="meta">
+        últimas <strong>{{ f.tail_lines }}</strong> linhas ·
+        separador <code>{{ '\\t' if f.separator == '\t' else f.separator }}</code> ·
+        {{ f.variables | length }} variável(is)
+        <span class="series-info"></span>
+      </span>
+    </summary>
+    <p class="series-error warn"></p>
+    <div class="charts">
+      {% for v in f.variables %}
+        <div class="chart-box">
+          <canvas data-var="{{ loop.index0 }}" height="110"></canvas>
+        </div>
+      {% endfor %}
+    </div>
+  </details>
 </section>
 {% endfor %}
 {% endblock %}
