@@ -116,7 +116,7 @@
   <table class="table" id="vars-table">
     <thead><tr><th>Índice</th><th>Rótulo</th><th>Unidade</th><th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
     <tbody>
-    {% for v in (fcfg.variables if fcfg else [{'column': 1, 'label': '', 'unit': ''}]) %}
+    {% for v in (fcfg.variables if fcfg and fcfg.variables else [{'column': 1, 'label': '', 'unit': ''}]) %}
       <tr>
         <td><input name="var_column" value="{{ v.column }}" readonly class="num-input"></td>
         <td><input name="var_label" value="{{ v.label }}"></td>

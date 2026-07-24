@@ -269,7 +269,10 @@ def _parse_separator(raw: str) -> str:
     return raw.strip() or ","
 
 
-def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
+def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[dict, list[str]]:
+    """Valida o formulário de arquivo. ``require_variables=False`` (usado pelo preview)
+    dispensa a exigência de ≥1 variável — o preview só precisa ler e dividir o arquivo
+    em colunas, é justamente a etapa ANTES de mapear as variáveis."""
     errors: list[str] = []
     path = (form.get("path") or "").strip()
     if not path:
@@ -366,7 +369,7 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
             errors.append(f"'{label}': limite mínimo ({vmin}) maior que o máximo ({vmax}).")
         variables.append({"column": column, "label": label, "unit": unit,
                           "min": vmin, "max": vmax})
-    if not variables:
+    if require_variables and not variables:
         errors.append("Defina pelo menos uma variável (coluna + rótulo).")
 
     entry = {

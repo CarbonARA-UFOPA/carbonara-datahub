@@ -51,10 +51,17 @@ def dat_files(station_id: str):
 @admin_required
 def preview():
     cfg = current_app.store.load()
-    entry, errors = config_store.validate_file_entry(request.form)
-    if errors:
-        return jsonify({"error": " ".join(errors)}), 400
+    # O preview existe para o usuário VER como o arquivo se divide em colunas ANTES de
+    # mapear as variáveis — então não exigimos config completa. Só o caminho é
+    # indispensável (sem ele não há o que ler); os demais avisos de validação viram
+    # diagnósticos ao lado da tabela, sem bloquear a exibição.
+    entry, errors = config_store.validate_file_entry(request.form, require_variables=False)
+    if not (entry.get("path") or "").strip():
+        return jsonify({"error": "Informe o caminho do arquivo para pré-visualizar."}), 400
     try:
-        return jsonify(series.build_preview(cfg, entry))
+        result = series.build_preview(cfg, entry)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"Falha ao ler o arquivo: {exc}"}), 500
+    if errors and "diagnostics" in result:
+        result["diagnostics"] = list(errors) + result["diagnostics"]
+    return jsonify(result)
