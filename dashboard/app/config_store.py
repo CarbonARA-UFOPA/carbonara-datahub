@@ -145,8 +145,9 @@ def detect_hub_stations(cfg: dict) -> list[dict]:
     - linhas ``serve <id>`` em ``.ssh/authorized_keys`` — modo chave;
     - linhas ``<id>:...`` em ``rsyncd.secrets`` — modo senha.
 
-    Retorna ``[{id, in_dashboard, sources}]`` ordenado por id. É read-only e sob demanda."""
-    root = data_root(cfg)
+    Retorna ``[{id, in_dashboard, sources}]`` ordenado por id. É read-only e sob demanda.
+    Tolerante à raiz apontada para ``.../incoming`` por engano: também considera a
+    pasta-pai como BASE (a BASE do hub é a que CONTÉM ``incoming/``, não a própria)."""
     existing = {s.get("id") for s in cfg.get("stations", [])}
     sources: dict[str, set[str]] = {}
 
@@ -163,32 +164,53 @@ def detect_hub_stations(cfg: dict) -> list[dict]:
         except OSError:
             pass
 
-    scan_subdirs(root / "incoming", "incoming")
-    scan_subdirs(root / "stations", "stations")
-
-    ak = root / ".ssh" / "authorized_keys"
-    try:
-        if ak.is_file():
-            txt = ak.read_text(encoding="utf-8", errors="replace")
-            for m in re.finditer(r"serve\s+([A-Za-z0-9_-]+)", txt):
-                add(m.group(1), "authorized_keys")
-    except OSError:
-        pass
-
-    secrets = root / "rsyncd.secrets"
-    try:
-        if secrets.is_file():
-            for line in secrets.read_text(encoding="utf-8", errors="replace").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and ":" in line:
-                    add(line.split(":", 1)[0], "rsyncd.secrets")
-    except OSError:
-        pass
+    for base in hub_base_candidates(cfg):
+        scan_subdirs(base / "incoming", "incoming")
+        scan_subdirs(base / "stations", "stations")
+        ak = base / ".ssh" / "authorized_keys"
+        try:
+            if ak.is_file():
+                txt = ak.read_text(encoding="utf-8", errors="replace")
+                for m in re.finditer(r"serve\s+([A-Za-z0-9_-]+)", txt):
+                    add(m.group(1), "authorized_keys")
+        except OSError:
+            pass
+        secrets = base / "rsyncd.secrets"
+        try:
+            if secrets.is_file():
+                for line in secrets.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and ":" in line:
+                        add(line.split(":", 1)[0], "rsyncd.secrets")
+        except OSError:
+            pass
 
     return [
         {"id": sid, "in_dashboard": sid in existing, "sources": sorted(sources[sid])}
         for sid in sorted(sources)
     ]
+
+
+def hub_base_candidates(cfg: dict) -> list[Path]:
+    """Bases plausíveis do hub para a detecção: a raiz configurada e, se ela apontar para
+    uma pasta ``incoming`` (erro comum), também a pasta-pai."""
+    root = data_root(cfg)
+    bases = [root]
+    if root.name == "incoming" and root.parent not in bases:
+        bases.append(root.parent)
+    return bases
+
+
+def normalize_hub_root(root: str) -> tuple[str, bool]:
+    """Normaliza a raiz do hub: se apontar para uma pasta ``incoming``, corrige para a
+    pasta-pai (a BASE do hub é a que CONTÉM ``incoming/``). Retorna (raiz, foi_ajustada)."""
+    cleaned = (root or "").strip()
+    if not cleaned:
+        return cleaned, False
+    p = Path(cleaned.rstrip("/") or "/")
+    if p.name == "incoming":
+        return str(p.parent), True
+    return cleaned, False
 
 
 def new_station_entry(station_id: str, name: str | None = None) -> dict:
@@ -295,7 +317,7 @@ def validate_settings(form: dict, cfg: dict) -> tuple[dict, list[str]]:
     opcionais (log, fuso, fallback). É o único caminho que o usuário precisa acertar —
     o resto (incoming/, heartbeat, log) tem locais padrão derivados da raiz."""
     errors: list[str] = []
-    root = (form.get("data_root") or "").strip()
+    root, adjusted = normalize_hub_root(form.get("data_root") or "")
     if not root:
         errors.append("Informe a pasta raiz do hub (ex.: /srv/carbonara).")
 
@@ -323,7 +345,8 @@ def validate_settings(form: dict, cfg: dict) -> tuple[dict, list[str]]:
             errors.append("Fallback de offline: use segundos entre 60 e 86400.")
 
     return {"data_root": root or cfg.get("data_root"), "connections_log": connections_log,
-            "timezone": timezone, "stale_fallback_seconds": stale}, errors
+            "timezone": timezone, "stale_fallback_seconds": stale,
+            "data_root_adjusted": adjusted}, errors
 
 
 def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list[str]]:

@@ -61,9 +61,12 @@
   </div>
   {% if not detected %}
     <p class="empty">Nenhuma estação detectada sob <code>{{ cfg.data_root }}</code>.
-      Confira a raiz do hub acima (procuramos em <code>incoming/</code>,
-      <code>stations/</code>, <code>.ssh/authorized_keys</code> e
-      <code>rsyncd.secrets</code>).</p>
+      Procuramos em <code>incoming/</code>, <code>stations/</code>,
+      <code>.ssh/authorized_keys</code> e <code>rsyncd.secrets</code> dessa raiz.
+      <br>Dica: a <strong>raiz do hub</strong> é a pasta que <strong>contém</strong>
+      <code>incoming/</code> — ex.: se seus dados estão em
+      <code>/srv/carbonara/incoming/&lt;estação&gt;</code>, a raiz é
+      <code>/srv/carbonara</code> (não <code>/srv/carbonara/incoming</code>).</p>
   {% else %}
     <table class="table">
       <thead><tr><th>Estação</th><th>Fontes</th><th>Na dashboard?</th></tr></thead>

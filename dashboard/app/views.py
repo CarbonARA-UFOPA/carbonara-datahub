@@ -139,6 +139,9 @@ def settings_save():
     cfg["timezone"] = updated["timezone"]
     cfg["stale_fallback_seconds"] = updated["stale_fallback_seconds"]
     _save(cfg)
+    if updated.get("data_root_adjusted"):
+        flash(f"A raiz apontava para uma pasta incoming/; ajustei para '{updated['data_root']}' "
+              "(a raiz do hub é a que CONTÉM incoming/).", "ok")
     flash("Configuração master salva. Pastas, heartbeat e log passam a derivar da nova raiz.", "ok")
     return redirect(url_for("pages.settings"))
 
