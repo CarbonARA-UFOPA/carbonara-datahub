@@ -11,6 +11,7 @@ import os
 import re
 import tempfile
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -120,6 +121,78 @@ def unique_file_id(station: dict, path: str) -> str:
     return fid
 
 
+# --- Descoberta de arquivos .dat na pasta da estação ------------------------------
+def _suggested_alias(rel: Path) -> str:
+    """Apelido sugerido a partir do caminho relativo — inclui a subpasta para
+    distinguir arquivos de mesmo nome em pastas diferentes."""
+    parent = str(rel.parent)
+    return f"{parent}/{rel.stem}" if parent not in (".", "") else rel.stem
+
+
+def discover_dat_files(cfg: dict, station: dict) -> list[dict]:
+    """Varre ``incoming/<id>/`` (recursivo) por arquivos ``.dat``, ignorando ocultos
+    (dotfiles/dot-dirs, como faz a ingestão). Retorna, por arquivo: o caminho a gravar
+    (relativo à raiz de dados, portável), a subpasta/nome, tamanho, mtime e se já está
+    monitorado. Deliberadamente SOB DEMANDA — chamado só quando o usuário aperta o botão,
+    nunca automaticamente."""
+    base = resolve_data_path(cfg, f"incoming/{station['id']}")
+    root = data_root(cfg)
+    monitored: set[str] = set()
+    for f in station.get("files", []):
+        try:
+            monitored.add(str(resolve_data_path(cfg, f["path"])))
+        except (ValueError, KeyError):
+            pass
+
+    found: list[dict] = []
+    if not base.is_dir():
+        return found
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for name in sorted(filenames):
+            if name.startswith(".") or not name.lower().endswith(".dat"):
+                continue
+            abspath = Path(dirpath) / name
+            rel = abspath.relative_to(base)
+            try:
+                store_path = str(abspath.relative_to(root))
+            except ValueError:
+                store_path = str(abspath)
+            try:
+                st = abspath.stat()
+                size, mtime = st.st_size, st.st_mtime
+            except OSError:
+                size, mtime = None, None
+            found.append({
+                "path": store_path,
+                "relpath": str(rel),
+                "size": size,
+                "mtime": datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M") if mtime else None,
+                "monitored": str(abspath) in monitored,
+                "suggested_alias": _suggested_alias(rel),
+            })
+    return found
+
+
+def default_file_entry(path: str, alias: str | None = None) -> dict:
+    """Entrada MÍNIMA para um ``.dat`` recém-descoberto (padrões TOA5/Campbell, o
+    datalogger padrão do projeto). As variáveis ficam vazias de propósito: o usuário
+    abre 'Editar' depois para mapear colunas — é lá que a validação exige ≥1 variável."""
+    return {
+        "path": path,
+        "alias": alias or None,
+        "tail_lines": 100,
+        "window_hours": None,
+        "separator": ",",
+        "quotechar": '"',
+        "decimal": ".",
+        "skip_header_lines": 4,
+        "header_line": 2,
+        "timestamp": {"column": 0, "format": "%Y-%m-%d %H:%M:%S"},
+        "variables": [],
+    }
+
+
 # --- Validação dos formulários ----------------------------------------------------
 def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list[str]]:
     errors: list[str] = []
@@ -193,6 +266,10 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
     path = (form.get("path") or "").strip()
     if not path:
         errors.append("Informe o caminho do arquivo monitorado.")
+    # Apelido opcional (nome de exibição) — desambigua arquivos de mesmo nome em
+    # subpastas diferentes. Sempre gravamos a chave (None quando vazio) para que
+    # limpar o campo na edição realmente remova o apelido (o merge {**f, **entry}).
+    alias = (form.get("alias") or "").strip() or None
 
     def _int(field: str, default: int | None, lo: int, hi: int, label: str) -> int | None:
         raw = (form.get(field) or "").strip()
@@ -286,6 +363,7 @@ def validate_file_entry(form: dict) -> tuple[dict, list[str]]:
 
     entry = {
         "path": path,
+        "alias": alias,
         "tail_lines": tail_lines,
         "window_hours": window_hours,
         "separator": separator,

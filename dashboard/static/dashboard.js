@@ -103,6 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initCharts();
   initCompare();
   initFileForm();
+  initDiscover();
   initMapPage();
 });
 
@@ -279,7 +280,7 @@ function initMapPage() {
       // cada arquivo .dat (sensor/equipamento) é um bloco recolhível no balão
       lines.push(
         `<details class="station-tip-group" open>` +
-        `<summary class="station-tip-file">${esc(s.files[fi].id)}` +
+        `<summary class="station-tip-file">${esc(s.files[fi].alias || s.files[fi].id)}` +
         `<span class="station-tip-count">${rows.length}</span></summary>` +
         rows.join("") + `</details>`);
     });
@@ -378,6 +379,7 @@ function initMapPage() {
       block.dataset.seriesUrl = f.series_url;
       block.innerHTML =
         `<summary><span class="file-chip">${esc(f.id)}</span>` +
+        (f.alias ? `<span class="file-alias">${esc(f.alias)}</span>` : "") +
         `<span class="meta">${f.variables.length} variável(is)</span>` +
         `<span class="series-info meta"></span></summary>` +
         `<p class="series-error warn"></p>` +
@@ -642,6 +644,84 @@ function initFileForm() {
       area.innerHTML = html;
     } catch (e) {
       area.innerHTML = `<p class="warn">Falha no preview: ${esc(String(e))}</p>`;
+    }
+  });
+}
+
+/* --- Descoberta de arquivos .dat (tela Editar estação) ------------------------- */
+function fmtSize(n) {
+  if (n == null) return "—";
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1048576).toFixed(1) + " MB";
+}
+
+function initDiscover() {
+  const btn = document.getElementById("btn-discover");
+  if (!btn) return;
+  const form = document.getElementById("discover-form");
+  const results = document.getElementById("discover-results");
+  const hint = document.getElementById("discover-hint");
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = "Procurando…";
+    try {
+      const data = await (await fetch(btn.dataset.url)).json();
+      if (data.error) {
+        form.hidden = true;
+        hint.innerHTML = `<span class="warn">${esc(data.error)}</span>`;
+        return;
+      }
+      const files = data.files || [];
+      if (!files.length) {
+        form.hidden = true;
+        hint.innerHTML = `Nenhum arquivo <code>.dat</code> encontrado em ` +
+          `<code>${esc(data.base)}</code> (a busca ignora arquivos e pastas ocultos).`;
+        return;
+      }
+      let html = "<table class='table'><thead><tr><th></th>" +
+        "<th>Arquivo (subpasta / nome)</th><th>Tamanho</th><th>Modificado</th>" +
+        "<th>Apelido</th></tr></thead><tbody>";
+      files.forEach((f, i) => {
+        const dis = f.monitored ? "disabled" : "";
+        html += "<tr>" +
+          `<td><input type="checkbox" name="pick" value="${i}" ${dis}></td>` +
+          `<td><code>${esc(f.relpath)}</code>` +
+          (f.monitored ? " <small class='meta'>(já monitorado)</small>" : "") +
+          `<input type="hidden" name="path_${i}" value="${esc(f.path)}"></td>` +
+          `<td class="meta">${fmtSize(f.size)}</td>` +
+          `<td class="meta">${esc(f.mtime || "—")}</td>` +
+          `<td><input name="alias_${i}" value="${esc(f.suggested_alias || "")}" ${dis}></td>` +
+          "</tr>";
+      });
+      html += "</tbody></table>";
+      results.innerHTML = html;
+      form.hidden = false;
+      const available = files.filter((f) => !f.monitored).length;
+      hint.innerHTML = `${files.length} arquivo(s) encontrado(s), ${available} disponível(is). ` +
+        "Marque os que deseja monitorar, ajuste os apelidos e clique em " +
+        "<strong>Adicionar selecionados</strong>.";
+    } catch (e) {
+      hint.innerHTML = `<span class="warn">Falha na busca: ${esc(String(e))}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  });
+
+  document.getElementById("btn-discover-all").addEventListener("click", () => {
+    const boxes = results.querySelectorAll('input[name="pick"]:not([disabled])');
+    const turnOn = Array.from(boxes).some((b) => !b.checked);
+    boxes.forEach((b) => (b.checked = turnOn));
+  });
+
+  form.addEventListener("submit", (ev) => {
+    const any = results.querySelector('input[name="pick"]:checked');
+    if (!any) {
+      ev.preventDefault();
+      hint.innerHTML = "<span class='warn'>Marque ao menos um arquivo antes de adicionar.</span>";
     }
   });
 }

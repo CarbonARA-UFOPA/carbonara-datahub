@@ -57,6 +57,27 @@
 {% if editing %}
 <section class="card">
   <div class="page-head">
+    <h2>Descobrir arquivos <code>.dat</code> na estação</h2>
+    <button type="button" class="btn" id="btn-discover"
+            data-url="{{ url_for('api.dat_files', station_id=station['id']) }}">🔎 Procurar arquivos .dat</button>
+  </div>
+  <p class="empty" id="discover-hint">Varre <code>incoming/{{ station['id'] }}/</code> e suas
+    subpastas por arquivos <code>.dat</code> — a busca só roda quando você clica no botão.
+    Marque os que quer monitorar, defina um <strong>apelido</strong> para cada um (útil
+    quando há arquivos de mesmo nome em subpastas diferentes) e adicione. Depois use
+    <em>Editar</em> em cada um para mapear as colunas e variáveis.</p>
+  <form method="post" id="discover-form" hidden
+        action="{{ url_for('pages.files_discover_add', station_id=station['id']) }}">
+    <div id="discover-results" style="overflow-x:auto"></div>
+    <div class="form-actions">
+      <button type="button" class="btn" id="btn-discover-all">Marcar/desmarcar todos</button>
+      <button class="btn btn-primary" type="submit">Adicionar selecionados</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <div class="page-head">
     <h2>Arquivos monitorados desta estação</h2>
     <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station['id']) }}">+ Adicionar arquivo</a>
   </div>
@@ -65,7 +86,7 @@
     separador de colunas, o cabeçalho, o timestamp e as variáveis a plotar.</p>
   {% else %}
     <table class="table">
-      <thead><tr><th>Arquivo · caminho (.dat)</th><th>Separador</th><th>Linhas do final</th><th>Variáveis</th><th></th></tr></thead>
+      <thead><tr><th>Arquivo · caminho (.dat)</th><th>Apelido</th><th>Separador</th><th>Linhas do final</th><th>Variáveis</th><th></th></tr></thead>
       <tbody>
       {% for f in station['files'] %}
         <tr>
@@ -78,6 +99,7 @@
               <button class="btn" type="submit">Salvar caminho</button>
             </form>
           </td>
+          <td>{% if f.alias %}{{ f.alias }}{% else %}<span class="meta">—</span>{% endif %}</td>
           <td><code>{{ '\\t' if f.separator == '\t' else f.separator }}</code></td>
           <td>{{ f.tail_lines }}</td>
           <td><small>{{ f.variables | map(attribute='label') | join(' · ') }}</small></td>

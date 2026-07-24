@@ -169,6 +169,7 @@ def map_view():
             "files": [
                 {
                     "id": f["id"],
+                    "alias": f.get("alias"),
                     "series_url": url_for("api.file_series", station_id=s["id"], file_id=f["id"]),
                     "variables": [
                         {"label": v["label"], "unit": v.get("unit")}
@@ -277,6 +278,48 @@ def file_create(station_id):
     _save(cfg)
     flash(f"Arquivo '{entry['id']}' adicionado ao monitoramento.", "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))
+
+
+@pages.post("/stations/<station_id>/files/discover-add")
+@admin_required
+def files_discover_add(station_id):
+    """Adiciona em lote os .dat marcados na tela de descoberta como arquivos
+    monitorados. Cada um entra com config MÍNIMA (padrões TOA5 + apelido, variáveis
+    vazias) — o mapeamento de colunas/variáveis é feito depois em 'Editar'."""
+    cfg = _load()
+    station = _station_or_404(cfg, station_id)
+    existing = set()
+    for f in station.get("files", []):
+        try:
+            existing.add(str(config_store.resolve_data_path(cfg, f["path"])))
+        except (ValueError, KeyError):
+            pass
+
+    added = 0
+    for token in request.form.getlist("pick"):
+        path = (request.form.get(f"path_{token}") or "").strip()
+        if not path:
+            continue
+        try:
+            resolved = str(config_store.resolve_data_path(cfg, path))
+        except ValueError:
+            continue
+        if resolved in existing:  # não duplica um caminho já monitorado
+            continue
+        alias = (request.form.get(f"alias_{token}") or "").strip() or None
+        entry = config_store.default_file_entry(path, alias)
+        entry["id"] = config_store.unique_file_id(station, path)
+        station.setdefault("files", []).append(entry)
+        existing.add(resolved)
+        added += 1
+
+    if added:
+        _save(cfg)
+        flash(f"{added} arquivo(s) adicionado(s) ao monitoramento. Abra 'Editar' em cada "
+              "um para mapear as colunas e variáveis antes de aparecerem gráficos.", "ok")
+    else:
+        flash("Nenhum arquivo novo foi selecionado.", "error")
+    return redirect(url_for("pages.station_edit", station_id=station_id))
 
 
 @pages.get("/stations/<station_id>/files/<file_id>/edit")

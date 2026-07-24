@@ -119,6 +119,8 @@ main.wide { max-width: 97vw; }
              border-radius: 5px; padding: .02rem .5rem; font-size: .8rem; font-weight: 600;
              color: var(--accent);
              font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Apelido (nome de exibição) do arquivo, ao lado do chip do identificador. */
+.file-alias { font-weight: 600; margin-left: .35rem; }
 
 /* Comparar: uma seção por estação+arquivo, com cabeçalho divisor. */
 .cmp-group { margin: 1.2rem 0; }
