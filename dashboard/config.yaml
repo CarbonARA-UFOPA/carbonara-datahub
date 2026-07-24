@@ -999,3 +999,487 @@ stations:
       min: null
       max: null
     id: cr1k-x-ec-farm_flux_amerifluxformat
+  - path: fluxfarm/loggernet/CR1K-X-EC-FARM_Flux_CSFormat.dat
+    alias: loggernet/CR1K-X-EC-FARM_Flux_CSFormat
+    tail_lines: 100
+    window_hours: null
+    separator: ','
+    quotechar: '"'
+    decimal: .
+    skip_header_lines: 4
+    header_line: 2
+    timestamp:
+      column: 0
+      format: '%Y-%m-%d %H:%M:%S'
+    variables:
+    - column: 1
+      label: RECORD
+      unit: null
+      min: null
+      max: null
+    - column: 2
+      label: FC_mass
+      unit: null
+      min: null
+      max: null
+    - column: 3
+      label: FC_QC
+      unit: null
+      min: null
+      max: null
+    - column: 4
+      label: FC_samples
+      unit: null
+      min: null
+      max: null
+    - column: 5
+      label: LE
+      unit: null
+      min: null
+      max: null
+    - column: 6
+      label: LE_QC
+      unit: null
+      min: null
+      max: null
+    - column: 7
+      label: LE_samples
+      unit: null
+      min: null
+      max: null
+    - column: 8
+      label: H
+      unit: null
+      min: null
+      max: null
+    - column: 9
+      label: H_QC
+      unit: null
+      min: null
+      max: null
+    - column: 10
+      label: H_samples
+      unit: null
+      min: null
+      max: null
+    - column: 11
+      label: NETRAD
+      unit: null
+      min: null
+      max: null
+    - column: 12
+      label: G
+      unit: null
+      min: null
+      max: null
+    - column: 13
+      label: SG
+      unit: null
+      min: null
+      max: null
+    - column: 14
+      label: energy_closure
+      unit: null
+      min: null
+      max: null
+    - column: 15
+      label: poor_enrg_clsur
+      unit: null
+      min: null
+      max: null
+    - column: 16
+      label: Bowen_ratio
+      unit: null
+      min: null
+      max: null
+    - column: 17
+      label: TAU
+      unit: null
+      min: null
+      max: null
+    - column: 18
+      label: TAU_QC
+      unit: null
+      min: null
+      max: null
+    - column: 19
+      label: USTAR
+      unit: null
+      min: null
+      max: null
+    - column: 20
+      label: TSTAR
+      unit: null
+      min: null
+      max: null
+    - column: 21
+      label: TKE
+      unit: null
+      min: null
+      max: null
+    - column: 22
+      label: TA_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 23
+      label: RH_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 24
+      label: T_DP_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 25
+      label: e_amb
+      unit: null
+      min: null
+      max: null
+    - column: 26
+      label: e_sat_amb
+      unit: null
+      min: null
+      max: null
+    - column: 27
+      label: TA_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 28
+      label: RH_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 29
+      label: T_DP_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 30
+      label: e
+      unit: null
+      min: null
+      max: null
+    - column: 31
+      label: e_sat
+      unit: null
+      min: null
+      max: null
+    - column: 32
+      label: TA_1_1_3
+      unit: null
+      min: null
+      max: null
+    - column: 33
+      label: RH_1_1_3
+      unit: null
+      min: null
+      max: null
+    - column: 34
+      label: T_DP_1_1_3
+      unit: null
+      min: null
+      max: null
+    - column: 35
+      label: e_probe
+      unit: null
+      min: null
+      max: null
+    - column: 36
+      label: e_sat_probe
+      unit: null
+      min: null
+      max: null
+    - column: 37
+      label: H2O_density_probe
+      unit: null
+      min: null
+      max: null
+    - column: 38
+      label: PA
+      unit: null
+      min: null
+      max: null
+    - column: 39
+      label: VPD
+      unit: null
+      min: null
+      max: null
+    - column: 40
+      label: Ux
+      unit: null
+      min: null
+      max: null
+    - column: 41
+      label: Ux_SIGMA
+      unit: null
+      min: null
+      max: null
+    - column: 42
+      label: Uy
+      unit: null
+      min: null
+      max: null
+    - column: 43
+      label: Uy_SIGMA
+      unit: null
+      min: null
+      max: null
+    - column: 44
+      label: Uz
+      unit: null
+      min: null
+      max: null
+    - column: 45
+      label: Uz_SIGMA
+      unit: null
+      min: null
+      max: null
+    - column: 46
+      label: T_SONIC
+      unit: null
+      min: null
+      max: null
+    - column: 47
+      label: T_SONIC_SIGMA
+      unit: null
+      min: null
+      max: null
+    - column: 48
+      label: sonic_azimuth
+      unit: null
+      min: null
+      max: null
+    - column: 49
+      label: WS
+      unit: null
+      min: null
+      max: null
+    - column: 50
+      label: WS_RSLT
+      unit: null
+      min: null
+      max: null
+    - column: 51
+      label: WD_SONIC
+      unit: null
+      min: null
+      max: null
+    - column: 52
+      label: WD_SIGMA
+      unit: null
+      min: null
+      max: null
+    - column: 53
+      label: WD
+      unit: null
+      min: null
+      max: null
+    - column: 54
+      label: WS_MAX
+      unit: null
+      min: null
+      max: null
+    - column: 55
+      label: CO2_density
+      unit: null
+      min: null
+      max: null
+    - column: 56
+      label: CO2_density_SIGMA
+      unit: null
+      min: null
+      max: null
+    - column: 57
+      label: H2O_density
+      unit: null
+      min: null
+      max: null
+    - column: 58
+      label: H2O_density_SIGMA
+      unit: null
+      min: null
+      max: null
+    - column: 59
+      label: CO2_sig_strgth_Min
+      unit: null
+      min: null
+      max: null
+    - column: 60
+      label: H2O_sig_strgth_Min
+      unit: null
+      min: null
+      max: null
+    - column: 61
+      label: P
+      unit: null
+      min: null
+      max: null
+    - column: 62
+      label: ALB
+      unit: null
+      min: null
+      max: null
+    - column: 63
+      label: SW_IN
+      unit: null
+      min: null
+      max: null
+    - column: 64
+      label: SW_OUT
+      unit: null
+      min: null
+      max: null
+    - column: 65
+      label: LW_IN
+      unit: null
+      min: null
+      max: null
+    - column: 66
+      label: LW_OUT
+      unit: null
+      min: null
+      max: null
+    - column: 67
+      label: T_nr
+      unit: null
+      min: null
+      max: null
+    - column: 68
+      label: R_LW_in_meas
+      unit: null
+      min: null
+      max: null
+    - column: 69
+      label: R_LW_out_meas
+      unit: null
+      min: null
+      max: null
+    - column: 70
+      label: sun_azimuth
+      unit: null
+      min: null
+      max: null
+    - column: 71
+      label: sun_elevation
+      unit: null
+      min: null
+      max: null
+    - column: 72
+      label: hour_angle
+      unit: null
+      min: null
+      max: null
+    - column: 73
+      label: sun_declination
+      unit: null
+      min: null
+      max: null
+    - column: 74
+      label: air_mass_coeff
+      unit: null
+      min: null
+      max: null
+    - column: 75
+      label: daytime
+      unit: null
+      min: null
+      max: null
+    - column: 76
+      label: TS_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 77
+      label: TS_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 78
+      label: SWC_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 79
+      label: SWC_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 80
+      label: cs65x_ec_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 81
+      label: cs65x_ec_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 82
+      label: G_plate_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 83
+      label: G_plate_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 84
+      label: G_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 85
+      label: G_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 86
+      label: SG_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 87
+      label: SG_1_1_2
+      unit: null
+      min: null
+      max: null
+    - column: 88
+      label: FETCH_MAX
+      unit: null
+      min: null
+      max: null
+    - column: 89
+      label: FETCH_90
+      unit: null
+      min: null
+      max: null
+    - column: 90
+      label: FETCH_55
+      unit: null
+      min: null
+      max: null
+    - column: 91
+      label: FETCH_40
+      unit: null
+      min: null
+      max: null
+    - column: 92
+      label: UPWND_DIST_INTRST
+      unit: null
+      min: null
+      max: null
+    - column: 93
+      label: FP_DIST_INTRST
+      unit: null
+      min: null
+      max: null
+    - column: 94
+      label: FP_EQUATION
+      unit: null
+      min: null
+      max: null
+    id: cr1k-x-ec-farm_flux_csformat
