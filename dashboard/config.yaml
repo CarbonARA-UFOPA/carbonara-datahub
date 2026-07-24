@@ -999,7 +999,7 @@ stations:
       min: null
       max: null
     id: cr1k-x-ec-farm_flux_amerifluxformat
-  - path: fluxfarm/loggernet/CR1K-X-EC-FARM_Flux_CSFormat.dat
+  - path: /srv/carbonara/incoming/fluxfarm/loggernet//CR1K-X-EC-FARM_Flux_CSFormat.dat
     alias: loggernet/CR1K-X-EC-FARM_Flux_CSFormat
     tail_lines: 100
     window_hours: null
