@@ -16,13 +16,19 @@ from pathlib import Path
 
 import yaml
 
+try:  # py3.9+
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore[assignment]
+
 ID_RE = re.compile(r"^[a-z0-9_-]+$")
 INT_RE = re.compile(r"^-?\d+$")  # '--1'.lstrip('-').isdigit() é True; int('--1') lança
 
 DEFAULT_CONFIG: dict = {
     "server": {"host": "0.0.0.0", "port": 8080, "refresh_seconds": 60},
-    "data_root": "./data",           # /srv/carbonara em produção
+    "data_root": "./data",           # /srv/carbonara em produção (raiz do hub — config master)
     "connections_log": None,          # default: <data_root>/log/connections.log
+    "timezone": None,                 # fuso p/ exibir o "último sinal" (ex.: America/Santarem)
     "stale_fallback_seconds": 3600,   # espelha RSYNC_HUB_STALE
     # Login de administração (edições). null = edição liberada (dev).
     # {username: ..., password_hash: <gerado com werkzeug generate_password_hash>}
@@ -43,7 +49,7 @@ class ConfigStore:
                 raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         cfg["server"].update(raw.get("server") or {})
-        for key in ("data_root", "connections_log", "stale_fallback_seconds", "auth"):
+        for key in ("data_root", "connections_log", "timezone", "stale_fallback_seconds", "auth"):
             if raw.get(key) is not None:
                 cfg[key] = raw[key]
         cfg["stations"] = raw.get("stations") or []
@@ -108,6 +114,88 @@ def connections_log_path(cfg: dict) -> Path:
     if cfg.get("connections_log"):
         return resolve_data_path(cfg, cfg["connections_log"])
     return resolve_data_path(cfg, "log/connections.log")
+
+
+def connections_log_path_for(cfg: dict, station: dict) -> Path:
+    """Como ``connections_log_path``, mas com um resgate por estação: se o log sob o
+    ``data_root`` não existir, deriva a BASE real do hub a partir do heartbeat da estação
+    (``incoming/<id>`` → BASE) e procura ``BASE/log/connections.log`` lá. Isso faz a
+    dashboard ler o MESMO log do ``rsync-hub`` mesmo quando o ``data_root`` do config
+    aponta para outro lugar (ex.: ``./data`` em dev, mas heartbeat em ``/srv/carbonara``).
+    Um ``connections_log`` explícito no config continua tendo prioridade."""
+    p = connections_log_path(cfg)
+    if cfg.get("connections_log") or p.is_file():
+        return p
+    try:
+        derived = station_incoming_dir(cfg, station).parent.parent / "log" / "connections.log"
+        if derived.is_file():
+            return derived
+    except (ValueError, KeyError, OSError):
+        pass
+    return p
+
+
+def detect_hub_stations(cfg: dict) -> list[dict]:
+    """Detecta as estações configuradas no rsync-hub a partir da raiz do hub
+    (``data_root``). A dashboard é complementar ao rsync-hub: em vez de cadastro manual,
+    lê a lista dele. União de quatro fontes (qualquer uma basta), tolerando ausências:
+
+    - subpastas de ``incoming/``  — a estação já enviou dados/heartbeat;
+    - subpastas de ``stations/``  — par de chaves gerado no hub (``add <id>``);
+    - linhas ``serve <id>`` em ``.ssh/authorized_keys`` — modo chave;
+    - linhas ``<id>:...`` em ``rsyncd.secrets`` — modo senha.
+
+    Retorna ``[{id, in_dashboard, sources}]`` ordenado por id. É read-only e sob demanda."""
+    root = data_root(cfg)
+    existing = {s.get("id") for s in cfg.get("stations", [])}
+    sources: dict[str, set[str]] = {}
+
+    def add(sid: str, src: str) -> None:
+        sid = (sid or "").strip().lower()
+        if ID_RE.match(sid):
+            sources.setdefault(sid, set()).add(src)
+
+    def scan_subdirs(path: Path, src: str) -> None:
+        try:
+            for d in sorted(path.iterdir()):
+                if d.is_dir() and not d.name.startswith("."):
+                    add(d.name, src)
+        except OSError:
+            pass
+
+    scan_subdirs(root / "incoming", "incoming")
+    scan_subdirs(root / "stations", "stations")
+
+    ak = root / ".ssh" / "authorized_keys"
+    try:
+        if ak.is_file():
+            txt = ak.read_text(encoding="utf-8", errors="replace")
+            for m in re.finditer(r"serve\s+([A-Za-z0-9_-]+)", txt):
+                add(m.group(1), "authorized_keys")
+    except OSError:
+        pass
+
+    secrets = root / "rsyncd.secrets"
+    try:
+        if secrets.is_file():
+            for line in secrets.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and ":" in line:
+                    add(line.split(":", 1)[0], "rsyncd.secrets")
+    except OSError:
+        pass
+
+    return [
+        {"id": sid, "in_dashboard": sid in existing, "sources": sorted(sources[sid])}
+        for sid in sorted(sources)
+    ]
+
+
+def new_station_entry(station_id: str, name: str | None = None) -> dict:
+    """Estação mínima para importação: sem overrides — pastas, heartbeat e log usam os
+    locais padrão sob a raiz do hub, então mudar a config master reposiciona todas."""
+    return {"id": station_id, "name": name or station_id, "heartbeat_file": None,
+            "latitude": None, "longitude": None, "offline_window_min": None, "files": []}
 
 
 def unique_file_id(station: dict, path: str) -> str:
@@ -202,6 +290,42 @@ def default_file_entry(path: str, alias: str | None = None) -> dict:
 
 
 # --- Validação dos formulários ----------------------------------------------------
+def validate_settings(form: dict, cfg: dict) -> tuple[dict, list[str]]:
+    """Valida a configuração master: a raiz do hub (``data_root``) e ajustes globais
+    opcionais (log, fuso, fallback). É o único caminho que o usuário precisa acertar —
+    o resto (incoming/, heartbeat, log) tem locais padrão derivados da raiz."""
+    errors: list[str] = []
+    root = (form.get("data_root") or "").strip()
+    if not root:
+        errors.append("Informe a pasta raiz do hub (ex.: /srv/carbonara).")
+
+    connections_log = (form.get("connections_log") or "").strip() or None
+    timezone = (form.get("timezone") or "").strip() or None
+    if timezone:
+        if ZoneInfo is None:
+            errors.append("Fuso horário não suportado neste Python (zoneinfo ausente).")
+            timezone = None
+        else:
+            try:
+                ZoneInfo(timezone)
+            except Exception:  # noqa: BLE001 — chave inválida/ausente no banco de fusos
+                errors.append(f"Fuso horário inválido: '{timezone}' (ex.: America/Santarem).")
+                timezone = None
+
+    stale = int(cfg.get("stale_fallback_seconds") or 3600)
+    raw = (form.get("stale_fallback_seconds") or "").strip()
+    if raw:
+        try:
+            stale = int(raw)
+            if not (60 <= stale <= 86400):
+                raise ValueError
+        except ValueError:
+            errors.append("Fallback de offline: use segundos entre 60 e 86400.")
+
+    return {"data_root": root or cfg.get("data_root"), "connections_log": connections_log,
+            "timezone": timezone, "stale_fallback_seconds": stale}, errors
+
+
 def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list[str]]:
     errors: list[str] = []
     sid = (form.get("id") or "").strip().lower()

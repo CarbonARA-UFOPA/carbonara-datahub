@@ -21,6 +21,7 @@
       <a href="{{ url_for('pages.compare') }}" class="nav-link{{ ' active' if request.path.startswith('/compare') }}">Comparar</a>
       <a href="{{ url_for('pages.map_view') }}" class="nav-link{{ ' active' if request.path.startswith('/map') }}">Mapa</a>
       {% if is_admin %}
+        <a href="{{ url_for('pages.settings') }}" class="nav-link{{ ' active' if request.path.startswith('/settings') }}">Configurações</a>
         <a href="{{ url_for('pages.station_new') }}" class="btn nav-cta">+ Nova estação</a>
       {% endif %}
       {% if auth_enabled %}

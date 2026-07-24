@@ -3,6 +3,16 @@
 {% block content %}
 <h1>Estações</h1>
 
+{% if is_admin and new_count %}
+  <div class="flash flash-ok import-banner">
+    <span>🔎 <strong>{{ new_count }}</strong> estação(ões) configurada(s) no rsync-hub ainda
+      não estão na dashboard.</span>
+    <form method="post" action="{{ url_for('pages.stations_import_detected') }}">
+      <button class="btn btn-primary" type="submit">Importar do rsync-hub</button>
+    </form>
+  </div>
+{% endif %}
+
 {% if not stations %}
   <p class="empty">Nenhuma estação cadastrada ainda.
      <a href="{{ url_for('pages.station_new') }}">Cadastre a primeira</a>.</p>

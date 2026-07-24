@@ -101,7 +101,71 @@ def _station_or_404(cfg, station_id):
 def index():
     cfg = _load()
     stations = [status.station_status(cfg, s) for s in cfg["stations"]]
-    return render_template("stations.html", stations=stations, cfg=cfg)
+    # Quantas estações do rsync-hub ainda não estão na dashboard (banner de importação).
+    # Só varre para quem pode editar, e nunca deixa uma raiz mal configurada quebrar a página.
+    new_count = 0
+    if session.get("admin") or not auth_enabled(cfg):
+        try:
+            new_count = sum(1 for d in config_store.detect_hub_stations(cfg) if not d["in_dashboard"])
+        except Exception:  # noqa: BLE001
+            new_count = 0
+    return render_template("stations.html", stations=stations, cfg=cfg, new_count=new_count)
+
+
+# --- Configuração master + detecção de estações do rsync-hub ----------------------
+@pages.get("/settings")
+@admin_required
+def settings():
+    cfg = _load()
+    detected = []
+    try:
+        detected = config_store.detect_hub_stations(cfg)
+    except Exception:  # noqa: BLE001
+        pass
+    return render_template("settings.html", cfg=cfg, detected=detected)
+
+
+@pages.post("/settings")
+@admin_required
+def settings_save():
+    cfg = _load()
+    updated, errors = config_store.validate_settings(request.form, cfg)
+    if errors:
+        for e in errors:
+            flash(e, "error")
+        return render_template("settings.html", cfg={**cfg, **updated}, detected=[]), 400
+    cfg["data_root"] = updated["data_root"]
+    cfg["connections_log"] = updated["connections_log"]
+    cfg["timezone"] = updated["timezone"]
+    cfg["stale_fallback_seconds"] = updated["stale_fallback_seconds"]
+    _save(cfg)
+    flash("Configuração master salva. Pastas, heartbeat e log passam a derivar da nova raiz.", "ok")
+    return redirect(url_for("pages.settings"))
+
+
+@pages.post("/stations/import-detected")
+@admin_required
+def stations_import_detected():
+    cfg = _load()
+    try:
+        detected = config_store.detect_hub_stations(cfg)
+    except Exception as exc:  # noqa: BLE001
+        flash(f"Falha ao detectar estações do rsync-hub: {exc}", "error")
+        return redirect(url_for("pages.index"))
+    added = 0
+    for d in detected:
+        if d["in_dashboard"]:
+            continue
+        cfg["stations"].append(config_store.new_station_entry(d["id"]))
+        added += 1
+    if added:
+        _save(cfg)
+        flash(f"{added} estação(ões) importada(s) do rsync-hub. Pastas e heartbeat usam os "
+              "locais padrão sob a raiz do hub — abra cada uma para adicionar arquivos "
+              "de monitoramento.", "ok")
+    else:
+        flash("Nenhuma estação nova detectada no rsync-hub.", "ok")
+    return redirect(url_for("pages.index"))
 
 
 @pages.get("/compare")

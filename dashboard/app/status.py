@@ -105,10 +105,16 @@ def station_status(cfg: dict, station: dict) -> dict:
     except (ValueError, OSError):
         pass
 
-    incoming_dir = config_store.resolve_data_path(cfg, f"incoming/{station['id']}")
+    # Pasta incoming e log ancorados no heartbeat (pai do .carbonara-status = incoming
+    # real da estação), não no data_root — assim a dashboard lê os MESMOS caminhos que o
+    # rsync-hub mesmo quando o data_root do config aponta para outro lugar.
+    try:
+        incoming_dir = config_store.station_incoming_dir(cfg, station)
+    except (ValueError, KeyError):
+        incoming_dir = config_store.resolve_data_path(cfg, f"incoming/{station['id']}")
     data_mtime = _latest_data_mtime(incoming_dir)
     try:
-        log_path = config_store.connections_log_path(cfg)
+        log_path = config_store.connections_log_path_for(cfg, station)
     except ValueError:
         log_path = Path("/nonexistent")
     last_event, last_connect = _last_events(log_path, station["id"])

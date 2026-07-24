@@ -122,6 +122,13 @@ main.wide { max-width: 97vw; }
 /* Apelido (nome de exibição) do arquivo, ao lado do chip do identificador. */
 .file-alias { font-weight: 600; margin-left: .35rem; }
 
+/* Banner "estações do rsync-hub ainda não importadas" (topo da lista de estações). */
+.import-banner { display: flex; align-items: center; justify-content: space-between;
+                 gap: 1rem; flex-wrap: wrap; }
+.import-banner form { margin: 0; }
+/* Bloco "Ajustes avançados" recolhível na página de configurações. */
+.adv > summary { cursor: pointer; font-weight: 600; margin: .4rem 0; }
+
 /* Comparar: uma seção por estação+arquivo, com cabeçalho divisor. */
 .cmp-group { margin: 1.2rem 0; }
 .cmp-group-head { display: flex; align-items: baseline; gap: .6rem; margin: 0 0 .6rem;

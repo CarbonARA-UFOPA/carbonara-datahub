@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Configurações · CARBONARA{% endblock %}
+{% block content %}
+<h1>Configurações</h1>
+
+<section class="card help-card">
+  A dashboard é <strong>complementar ao rsync-hub</strong>: você só precisa apontar a
+  <strong>raiz do hub</strong> aqui. As demais localizações — <code>incoming/&lt;id&gt;/</code>,
+  o heartbeat <code>.carbonara-status</code> e o <code>log/connections.log</code> — têm
+  locais padrão derivados dessa raiz. Se a raiz mudar (ex.: sair de
+  <code>/srv/carbonara</code>), altere só aqui e tudo acompanha.
+</section>
+
+<form method="post" class="card form" action="{{ url_for('pages.settings_save') }}">
+  <label>Pasta raiz do hub (rsync-hub)
+    <input name="data_root" required value="{{ cfg.data_root or '' }}"
+           placeholder="ex.: /srv/carbonara">
+    <small>Onde ficam <code>incoming/</code>, <code>archive/</code>, <code>log/</code> e
+    <code>stations/</code>. Caminho absoluto (produção) ou relativo à pasta do
+    <code>config.yaml</code> (dev usa <code>./data</code>).</small>
+  </label>
+
+  <details class="adv">
+    <summary>Ajustes avançados (opcionais)</summary>
+
+    <label>Log de conexões (override)
+      <input name="connections_log" value="{{ cfg.connections_log or '' }}"
+             placeholder="vazio = &lt;raiz&gt;/log/connections.log (padrão)">
+      <small>Só se o <code>connections.log</code> do rsync-hub não estiver no local padrão.</small>
+    </label>
+
+    <label>Fuso horário de exibição
+      <input name="timezone" value="{{ cfg.timezone or '' }}"
+             placeholder="ex.: America/Santarem (vazio = fuso do processo)">
+      <small>Afeta apenas a EXIBIÇÃO do "último sinal". O status (online/offline) é
+      calculado em epoch, imune a fuso.</small>
+    </label>
+
+    <label>Fallback de offline (segundos)
+      <input name="stale_fallback_seconds" type="number" min="60" max="86400"
+             value="{{ cfg.stale_fallback_seconds or 3600 }}">
+      <small>Janela usada só quando a estação não tem heartbeat com <code>interval_min</code>.
+      Espelha o <code>RSYNC_HUB_STALE</code> (padrão 3600 = 1 h).</small>
+    </label>
+  </details>
+
+  <div class="form-actions">
+    <button class="btn btn-primary" type="submit">Salvar configuração master</button>
+    <a class="btn" href="{{ url_for('pages.index') }}">Voltar</a>
+  </div>
+</form>
+
+<section class="card">
+  <div class="page-head">
+    <h2>Estações detectadas no rsync-hub</h2>
+    {% if detected | selectattr('in_dashboard', 'equalto', false) | list %}
+      <form method="post" action="{{ url_for('pages.stations_import_detected') }}">
+        <button class="btn btn-primary" type="submit">Importar as que faltam</button>
+      </form>
+    {% endif %}
+  </div>
+  {% if not detected %}
+    <p class="empty">Nenhuma estação detectada sob <code>{{ cfg.data_root }}</code>.
+      Confira a raiz do hub acima (procuramos em <code>incoming/</code>,
+      <code>stations/</code>, <code>.ssh/authorized_keys</code> e
+      <code>rsyncd.secrets</code>).</p>
+  {% else %}
+    <table class="table">
+      <thead><tr><th>Estação</th><th>Fontes</th><th>Na dashboard?</th></tr></thead>
+      <tbody>
+      {% for d in detected %}
+        <tr>
+          <td><strong>{{ d.id }}</strong></td>
+          <td><small>{{ d.sources | join(' · ') }}</small></td>
+          <td>
+            {% if d.in_dashboard %}<span style="color:var(--green)">✓ sim</span>
+            {% else %}<span class="meta">— ainda não</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+{% endblock %}
