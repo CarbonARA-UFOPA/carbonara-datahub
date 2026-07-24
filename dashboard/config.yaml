@@ -677,3 +677,10 @@ stations:
     window_hours: null
     strip_regex: '"m -125'
   offline_window_min: null
+- id: fluxfarm
+  name: fluxfarm
+  heartbeat_file: /srv/carbonara/incoming/fluxfarm/.carbonara-status
+  latitude: -2.686364653392554
+  longitude: -54.53922342877982
+  offline_window_min: null
+  files: []
