@@ -129,13 +129,21 @@ def _suggested_alias(rel: Path) -> str:
     return f"{parent}/{rel.stem}" if parent not in (".", "") else rel.stem
 
 
+def station_incoming_dir(cfg: dict, station: dict) -> Path:
+    """Pasta ``incoming/<id>/`` da estação. Ancorada no arquivo de watchdog
+    (heartbeat) cadastrado: seu diretório-pai É a pasta incoming da estação — assim
+    a busca respeita um caminho ABSOLUTO configurado (ex.: /srv/carbonara/incoming/<id>)
+    em vez do data_root do dashboard, que em dev aponta para ./data."""
+    return heartbeat_path(cfg, station).parent
+
+
 def discover_dat_files(cfg: dict, station: dict) -> list[dict]:
-    """Varre ``incoming/<id>/`` (recursivo) por arquivos ``.dat``, ignorando ocultos
-    (dotfiles/dot-dirs, como faz a ingestão). Retorna, por arquivo: o caminho a gravar
-    (relativo à raiz de dados, portável), a subpasta/nome, tamanho, mtime e se já está
-    monitorado. Deliberadamente SOB DEMANDA — chamado só quando o usuário aperta o botão,
-    nunca automaticamente."""
-    base = resolve_data_path(cfg, f"incoming/{station['id']}")
+    """Varre a pasta incoming da estação (recursivo) por arquivos ``.dat``, ignorando
+    ocultos (dotfiles/dot-dirs, como faz a ingestão). Retorna, por arquivo: o caminho a
+    gravar (relativo à raiz de dados quando possível, senão absoluto), a subpasta/nome,
+    tamanho, mtime e se já está monitorado. Deliberadamente SOB DEMANDA — chamado só
+    quando o usuário aperta o botão, nunca automaticamente."""
+    base = station_incoming_dir(cfg, station)
     root = data_root(cfg)
     monitored: set[str] = set()
     for f in station.get("files", []):

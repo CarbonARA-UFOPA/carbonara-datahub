@@ -61,8 +61,10 @@
     <button type="button" class="btn" id="btn-discover"
             data-url="{{ url_for('api.dat_files', station_id=station['id']) }}">🔎 Procurar arquivos .dat</button>
   </div>
-  <p class="empty" id="discover-hint">Varre <code>incoming/{{ station['id'] }}/</code> e suas
-    subpastas por arquivos <code>.dat</code> — a busca só roda quando você clica no botão.
+  <p class="empty" id="discover-hint">Varre a pasta da estação — o diretório do
+    <strong>Arquivo de watchdog</strong> cadastrado acima (ex.:
+    <code>/srv/carbonara/incoming/{{ station['id'] }}/</code>) — e suas subpastas por
+    arquivos <code>.dat</code>. A busca só roda quando você clica no botão.
     Marque os que quer monitorar, defina um <strong>apelido</strong> para cada um (útil
     quando há arquivos de mesmo nome em subpastas diferentes) e adicione. Depois use
     <em>Editar</em> em cada um para mapear as colunas e variáveis.</p>

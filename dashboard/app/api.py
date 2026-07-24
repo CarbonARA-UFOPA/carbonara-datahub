@@ -40,7 +40,7 @@ def dat_files(station_id: str):
     if not station:
         return jsonify({"error": f"Estação '{station_id}' não encontrada."}), 404
     try:
-        base = config_store.resolve_data_path(cfg, f"incoming/{station_id}")
+        base = config_store.station_incoming_dir(cfg, station)
         files = config_store.discover_dat_files(cfg, station)
     except Exception as exc:  # noqa: BLE001 — erro de varredura vira mensagem, não 500
         return jsonify({"error": f"Falha ao varrer a pasta: {exc}"}), 500
