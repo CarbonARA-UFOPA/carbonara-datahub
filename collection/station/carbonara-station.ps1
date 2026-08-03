@@ -175,15 +175,45 @@ function New-Label([string[]]$Existing, [string]$Path) {
 }
 
 # Lista normalizada das pastas configuradas. Migra config antiga (uma única DataDir).
+# SEMPRE devolve entradas com Path/Label ESCALARES, e SEM "return , $folders": os
+# chamadores embrulham em @(...), e a vírgula faria @() re-embrulhar a lista (aninhando).
+# Com 1 pasta o aninhamento passava despercebido (member enumeration), mas com 2+ o
+# item 0 virava a lista inteira e Path/Label viravam ARRAYS — era o "System.Object[]"
+# no menu/destino, e um Add-Folder gravava esse aninhamento no config.json. Por isso
+# este leitor também RECUPERA configs já gravadas assim: achata um nível de lista e
+# desfaz Path que veio como coleção ou como caminhos COLADOS ("C:\a C:\b"), refazendo
+# o rótulo quando ele se perdeu junto.
 function Get-Folders($Cfg) {
     $folders = @()
+    $labels  = @()
     if ($Cfg.PSObject.Properties.Name -contains 'Folders' -and $Cfg.Folders) {
-        foreach ($f in @($Cfg.Folders)) {
-            $folders += [pscustomobject]@{
-                Path         = [string]$f.Path
-                Label        = [string]$f.Label
-                FileExcludes = @($f.FileExcludes | Where-Object { $_ })
-                DirExcludes  = @($f.DirExcludes  | Where-Object { $_ })
+        foreach ($item in @($Cfg.Folders)) {
+            # $item pode ser UMA pasta ou uma LISTA de pastas (config aninhada pelo bug).
+            foreach ($f in @($item)) {
+                if ($null -eq $f) { continue }
+                # Path como coleção (member enumeration devolve array) e/ou caminhos
+                # colados numa string só: ':' é proibido em nomes NTFS, então quebrar
+                # antes de cada '<letra>:\' separa com segurança.
+                $paths = @(@($f.Path) | ForEach-Object { "$_" -split '\s+(?=[A-Za-z]:[\\/])' } |
+                           ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                $lbls  = @(@($f.Label) | ForEach-Object { "$_" })
+                $fexc  = @($f.FileExcludes | Where-Object { $_ } | ForEach-Object { [string]$_ })
+                $dexc  = @($f.DirExcludes  | Where-Object { $_ } | ForEach-Object { [string]$_ })
+                for ($i = 0; $i -lt $paths.Count; $i++) {
+                    # Mantém o rótulo original quando dá para parear com o caminho —
+                    # ele nomeia o sub-diretório já existente no servidor.
+                    $lbl = if ($i -lt $lbls.Count -and $paths.Count -eq $lbls.Count) { $lbls[$i] } else { '' }
+                    if (-not $lbl -or $lbl -notmatch '^[A-Za-z0-9_-]+$' -or $labels -contains $lbl) {
+                        $lbl = New-Label $labels $paths[$i]
+                    }
+                    $labels += $lbl
+                    $folders += [pscustomobject]@{
+                        Path         = $paths[$i]
+                        Label        = $lbl
+                        FileExcludes = $fexc
+                        DirExcludes  = $dexc
+                    }
+                }
             }
         }
     }
@@ -194,13 +224,26 @@ function Get-Folders($Cfg) {
             FileExcludes = @(); DirExcludes = @()
         }
     }
-    return , $folders
+    return $folders
 }
 
 # Grava a lista de pastas no config e persiste (remove o DataDir legado).
+# Reduz cada entrada a Path/Label ESCALARES antes de gravar: uma coleção que escape
+# para o JSON reapareceria como "System.Object[]" nos menus e no destino do rsync.
 function Set-Folders($Cfg, $Folders) {
-    if ($Cfg.PSObject.Properties.Name -contains 'Folders') { $Cfg.Folders = @($Folders) }
-    else { $Cfg | Add-Member -NotePropertyName Folders -NotePropertyValue @($Folders) -Force }
+    $clean = @(foreach ($item in @($Folders)) {
+        foreach ($f in @($item)) {   # tolera lista aninhada recebida de código antigo
+            if ($null -eq $f -or -not [string]$f.Path) { continue }
+            [pscustomobject]@{
+                Path         = [string]$f.Path
+                Label        = [string]$f.Label
+                FileExcludes = @($f.FileExcludes | Where-Object { $_ } | ForEach-Object { [string]$_ })
+                DirExcludes  = @($f.DirExcludes  | Where-Object { $_ } | ForEach-Object { [string]$_ })
+            }
+        }
+    })
+    if ($Cfg.PSObject.Properties.Name -contains 'Folders') { $Cfg.Folders = $clean }
+    else { $Cfg | Add-Member -NotePropertyName Folders -NotePropertyValue $clean -Force }
     if ($Cfg.PSObject.Properties.Name -contains 'DataDir') { $Cfg.PSObject.Properties.Remove('DataDir') }
     Save-Config $Cfg
 }
