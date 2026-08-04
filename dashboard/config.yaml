@@ -11,9 +11,9 @@ auth:
   password_hash: scrypt:32768:8:1$Y8azd3pSABrjsI7m$6dab69b533ec7eacb1d2205574c4cf573766564ea82d847d4e8d2ad0ebfb0fe5807dcdc204fabb3580407d3976ea2e35739d89baf87de46505b7f07639d1addf
 stations:
 - id: eddyfarm
-  name: eddyfarm
-  latitude: -2.6840254232150995
-  longitude: -54.53497627398874
+  name: Radiometro JPL
+  latitude: -2.6792
+  longitude: -54.533
   heartbeat_file: /srv/carbonara/incoming/eddyfarm/.carbonara-status
   files:
   - path: /srv/carbonara/incoming/eddyfarm/loggernet/CR1000_Proc3K.dat
@@ -1483,3 +1483,24 @@ stations:
       min: null
       max: null
     id: cr1k-x-ec-farm_flux_csformat
+- id: profsfo
+  name: Perfil Meteo_Soil
+  heartbeat_file: null
+  latitude: -2.679653
+  longitude: -54.533591
+  offline_window_min: null
+  files: []
+- id: km67
+  name: km67
+  heartbeat_file: null
+  latitude: null
+  longitude: null
+  offline_window_min: null
+  files: []
+- id: profkm67
+  name: profkm67
+  heartbeat_file: null
+  latitude: null
+  longitude: null
+  offline_window_min: null
+  files: []
