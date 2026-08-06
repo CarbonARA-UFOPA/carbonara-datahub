@@ -47,13 +47,28 @@ listen_addr() {  # host:porta do config.yaml (best-effort, só para exibir)
 }
 
 venv_python_ok() { [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "" 2>/dev/null; }
+venv_pip_ok()    { venv_python_ok && "$VENV/bin/python" -m pip --version >/dev/null 2>&1; }
 venv_deps_ok()   { venv_python_ok && "$VENV/bin/python" -c "import flask, yaml" 2>/dev/null; }
 
-ensure_python() {  # garante o .venv COM as dependências; ecoa o caminho do python
-    # Pronto = o python do venv roda E importa as dependências. Cobre todos os
-    # estados intermediários: venv inexistente; venv quebrado (copiado de outro
-    # SO / criação interrompida) → recria; venv são mas SEM as dependências
-    # (um 'pip install' anterior falhou, ex.: sem internet na hora) → completa.
+create_venv() {
+    command -v python3 >/dev/null 2>&1 || die "python3 não encontrado — instale-o: sudo apt-get install python3 python3-venv"
+    echo "criando o ambiente Python em $VENV …" >&2
+    if ! python3 -m venv "$VENV" >&2; then
+        # No Debian/Ubuntu sem o pacote python3-venv a criação falha NO MEIO,
+        # deixando um venv parcial (python presente, pip ausente) — apaga o
+        # resto para a próxima tentativa começar limpa.
+        rm -rf "$VENV"
+        die "falha ao criar o venv — instale o suporte e rode de novo:
+       sudo apt-get install python3-venv python3-pip"
+    fi
+}
+
+ensure_python() {  # garante o .venv COM pip E as dependências; ecoa o python dele
+    # Pronto = o python do venv roda, tem pip e importa as dependências. Cobre os
+    # estados intermediários já vistos em campo: venv inexistente; venv quebrado
+    # (outro SO / criação interrompida) → recria; venv SEM pip (criação abortada
+    # pela falta do python3-venv) → ensurepip ou recriação; venv sem as
+    # dependências (pip install anterior falhou) → completa a instalação.
     if venv_deps_ok; then
         echo "$VENV/bin/python"; return 0
     fi
@@ -62,11 +77,19 @@ ensure_python() {  # garante o .venv COM as dependências; ecoa o caminho do pyt
             echo "o ambiente $VENV está quebrado/incompleto — recriando…" >&2
             rm -rf "$VENV"
         fi
-        command -v python3 >/dev/null 2>&1 || die "python3 não encontrado — instale-o (ex.: sudo apt-get install python3 python3-venv)"
-        echo "criando o ambiente Python em $VENV …" >&2
-        python3 -m venv "$VENV" >&2 \
-            || die "falha ao criar o venv — no Debian/Ubuntu instale: sudo apt-get install python3-venv"
+        create_venv
     fi
+    if ! venv_pip_ok; then
+        echo "o venv está sem pip — tentando reparar (ensurepip)…" >&2
+        "$VENV/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+        if ! venv_pip_ok; then
+            echo "sem conserto — recriando o venv do zero…" >&2
+            rm -rf "$VENV"
+            create_venv
+        fi
+    fi
+    venv_pip_ok || die "o venv continua sem pip — instale o suporte e rode de novo:
+       sudo apt-get install python3-venv python3-pip"
     echo "instalando as dependências da dashboard (Flask, PyYAML)…" >&2
     "$VENV/bin/python" -m pip install --quiet --upgrade pip >&2 || true
     "$VENV/bin/python" -m pip install --quiet -r "$HERE/requirements.txt" >&2 \
