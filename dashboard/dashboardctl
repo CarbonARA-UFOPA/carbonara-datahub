@@ -46,23 +46,32 @@ listen_addr() {  # host:porta do config.yaml (best-effort, só para exibir)
     echo "http://$addr:${port:-8080}"
 }
 
-ensure_python() {  # garante o .venv com as dependências; ecoa o caminho do python
-    # Venv válido = o python dele roda de verdade (não basta existir: um .venv
-    # copiado de outra máquina/SO ou de uma criação interrompida fica quebrado).
-    if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "" 2>/dev/null; then
+venv_python_ok() { [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "" 2>/dev/null; }
+venv_deps_ok()   { venv_python_ok && "$VENV/bin/python" -c "import flask, yaml" 2>/dev/null; }
+
+ensure_python() {  # garante o .venv COM as dependências; ecoa o caminho do python
+    # Pronto = o python do venv roda E importa as dependências. Cobre todos os
+    # estados intermediários: venv inexistente; venv quebrado (copiado de outro
+    # SO / criação interrompida) → recria; venv são mas SEM as dependências
+    # (um 'pip install' anterior falhou, ex.: sem internet na hora) → completa.
+    if venv_deps_ok; then
         echo "$VENV/bin/python"; return 0
     fi
-    if [ -d "$VENV" ]; then
-        echo "o ambiente $VENV está quebrado/incompleto — recriando…" >&2
-        rm -rf "$VENV"
+    if ! venv_python_ok; then
+        if [ -d "$VENV" ]; then
+            echo "o ambiente $VENV está quebrado/incompleto — recriando…" >&2
+            rm -rf "$VENV"
+        fi
+        command -v python3 >/dev/null 2>&1 || die "python3 não encontrado — instale-o (ex.: sudo apt-get install python3 python3-venv)"
+        echo "criando o ambiente Python em $VENV …" >&2
+        python3 -m venv "$VENV" >&2 \
+            || die "falha ao criar o venv — no Debian/Ubuntu instale: sudo apt-get install python3-venv"
     fi
-    command -v python3 >/dev/null 2>&1 || die "python3 não encontrado — instale-o (ex.: sudo apt-get install python3 python3-venv)"
-    echo "primeira execução: criando o ambiente Python em $VENV …" >&2
-    python3 -m venv "$VENV" >&2 \
-        || die "falha ao criar o venv — no Debian/Ubuntu instale: sudo apt-get install python3-venv"
-    "$VENV/bin/pip" install --quiet --upgrade pip >&2 || true
-    "$VENV/bin/pip" install --quiet -r "$HERE/requirements.txt" >&2 \
-        || die "falha ao instalar as dependências (veja acima) — precisa de internet na primeira vez"
+    echo "instalando as dependências da dashboard (Flask, PyYAML)…" >&2
+    "$VENV/bin/python" -m pip install --quiet --upgrade pip >&2 || true
+    "$VENV/bin/python" -m pip install --quiet -r "$HERE/requirements.txt" >&2 \
+        || die "falha ao instalar as dependências (veja as mensagens acima — precisa de acesso à internet/PyPI)"
+    venv_deps_ok || die "instalei, mas as dependências continuam não importáveis — veja as mensagens acima"
     echo "ambiente pronto." >&2
     echo "$VENV/bin/python"
 }
