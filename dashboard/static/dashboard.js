@@ -181,8 +181,15 @@ function initCompare() {
       const v = data.variables[it.idx];
       if (!v) { problems.push(`${src}: variável não encontrada na série`); return; }
       if (!data.epochs) { problems.push(`${src}: recarregue a dashboard no servidor (API sem eixo de tempo comum)`); return; }
+      // Alinha no MINUTO (a resolução exibida): dataloggers gravam com segundos
+      // diferentes entre si (09:00:15 vs 09:00:47) e, com o epoch exato, o mesmo
+      // minuto virava dois instantes — linhas "duplicadas" na tabela, com valor de
+      // um lado e "—" do outro. Se uma série tiver mais de um ponto no mesmo
+      // minuto, prevalece o último (a ordem do forEach é cronológica).
       const pts = new Map();
-      data.epochs.forEach((e, j) => { if (e != null) pts.set(e, v.values[j]); });
+      data.epochs.forEach((e, j) => {
+        if (e != null) pts.set(Math.floor(e / 60) * 60, v.values[j]);
+      });
       if (!pts.size) { problems.push(`${src}: nenhum timestamp reconhecido`); return; }
       const unit = v.unit ? ` (${v.unit})` : "";
       series.push({

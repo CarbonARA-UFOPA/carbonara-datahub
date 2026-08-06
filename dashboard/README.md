@@ -59,7 +59,10 @@ python run.py                          # http://localhost:8080
   variável, com unidade) e clicar nela oculta/mostra a série. O eixo de tempo é a
   **união dos instantes** de todos os arquivos (campo `epochs` da API de séries) —
   séries com amostragens diferentes se alinham pelo tempo real, com `spanGaps` ligando
-  os pontos de cada uma. Passar o mouse mostra uma **linha vertical** travada no
+  os pontos de cada uma. O alinhamento é na **resolução do minuto** (a mesma exibida):
+  dataloggers gravam com segundos diferentes entre si (09:00:15 vs 09:00:47) e, sem
+  isso, o mesmo minuto viraria dois instantes — linhas "duplicadas" na tabela. Se uma
+  série tiver mais de um ponto no mesmo minuto, prevalece o último. Passar o mouse mostra uma **linha vertical** travada no
   instante mais próximo com a leitura de **todas** as séries (tooltip próprio — o
   nativo omitiria séries sem ponto exato no instante): valor exato quando a série tem
   ponto ali, senão o último valor anterior com o horário dele ao lado. Abaixo do
