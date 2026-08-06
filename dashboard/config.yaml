@@ -1601,6 +1601,110 @@ stations:
       min: null
       max: null
     id: k67cpec_time_series
+  - path: incoming/km67/loggernet/K67CPEC_Time_Series.dat
+    alias: loggernet/K67CPEC_Time_Series
+    tail_lines: 100
+    window_hours: null
+    separator: ','
+    quotechar: '"'
+    decimal: .
+    skip_header_lines: 4
+    header_line: 2
+    timestamp:
+      column: 0
+      format: '%Y-%m-%d %H:%M:%S'
+    variables:
+    - column: 1
+      label: RECORD
+      unit: null
+      min: null
+      max: null
+    - column: 2
+      label: Ux
+      unit: null
+      min: null
+      max: null
+    - column: 3
+      label: Uy
+      unit: null
+      min: null
+      max: null
+    - column: 4
+      label: Uz
+      unit: null
+      min: null
+      max: null
+    - column: 5
+      label: T_SONIC
+      unit: null
+      min: null
+      max: null
+    - column: 6
+      label: diag_sonic
+      unit: null
+      min: null
+      max: null
+    - column: 7
+      label: CO2_mixratio
+      unit: null
+      min: null
+      max: null
+    - column: 8
+      label: H2O_mixratio
+      unit: null
+      min: null
+      max: null
+    - column: 9
+      label: diag_irga
+      unit: null
+      min: null
+      max: null
+    - column: 10
+      label: TA_1_1_1
+      unit: null
+      min: null
+      max: null
+    - column: 11
+      label: T_cell
+      unit: null
+      min: null
+      max: null
+    - column: 12
+      label: PA_cell
+      unit: null
+      min: null
+      max: null
+    - column: 13
+      label: CO2_sig_strgth
+      unit: null
+      min: null
+      max: null
+    - column: 14
+      label: H2O_sig_strgth
+      unit: null
+      min: null
+      max: null
+    - column: 15
+      label: PA_diff
+      unit: null
+      min: null
+      max: null
+    - column: 16
+      label: PA
+      unit: null
+      min: null
+      max: null
+    - column: 17
+      label: pump_flow
+      unit: null
+      min: null
+      max: null
+    - column: 18
+      label: sampling_regime
+      unit: null
+      min: null
+      max: null
+    id: k67cpec_time_series-2
 - id: profkm67
   name: profkm67
   heartbeat_file: null
