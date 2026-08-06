@@ -146,43 +146,240 @@ async function loadSeries(block) {
   }
 }
 
-/* --- Tela Comparar: várias estações, uma variável por gráfico ------------------ */
+/* --- Tela Comparar: TODAS as séries selecionadas num único gráfico -------------- */
+/* Cada arquivo tem seus próprios timestamps; o eixo comum é a UNIÃO dos instantes
+   (epochs da API), com null onde uma série não tem ponto (spanGaps liga a linha).
+   A legenda identifica a origem: estação · arquivo · variável (unidade). */
 function initCompare() {
-  const canvases = document.querySelectorAll(".cmp-canvas[data-series-url]");
-  if (!canvases.length) return;
-  const refresh = () => {
+  const cfgEl = document.getElementById("cmp-config");
+  const canvas = document.getElementById("cmp-one");
+  if (!cfgEl || !canvas) return;
+  let items;
+  try { items = JSON.parse(cfgEl.textContent || "[]"); } catch (e) { items = []; }
+  if (!items.length) return;
+  const card = canvas.closest(".cmp-single");
+  const errEl = card.querySelector(".series-error");
+  const infoEl = card.querySelector(".series-info");
+
+  const refresh = async () => {
     // Um fetch por arquivo, mesmo com várias variáveis dele selecionadas.
     const byUrl = new Map();
-    canvases.forEach((c) => {
-      const url = c.dataset.seriesUrl;
-      if (!byUrl.has(url)) byUrl.set(url, []);
-      byUrl.get(url).push(c);
-    });
-    byUrl.forEach(async (group, url) => {
-      let data;
-      try {
-        data = await (await fetch(url)).json();
-      } catch (e) {
-        group.forEach((c) => setCmpError(c, "Falha ao buscar os dados: " + e));
-        return;
-      }
-      group.forEach((c) => {
-        if (data.error) { setCmpError(c, data.error); return; }
-        const v = data.variables[parseInt(c.dataset.var, 10)];
-        if (!v) { setCmpError(c, "Variável não encontrada na série."); return; }
-        setCmpError(c, (data.problems || []).join(" · "));
-        makeOrUpdateChart(c, data.timestamps, v,
-                          PALETTE[parseInt(c.dataset.color, 10) % PALETTE.length]);
+    items.forEach((it) => byUrl.set(it.series_url, null));
+    await Promise.all([...byUrl.keys()].map(async (url) => {
+      try { byUrl.set(url, await (await fetch(url)).json()); }
+      catch (e) { byUrl.set(url, { error: "falha ao buscar os dados: " + e }); }
+    }));
+
+    const problems = [], series = [];
+    let generatedAt = null;
+    items.forEach((it) => {
+      const src = `${it.sname} · ${it.fid}`;
+      const data = byUrl.get(it.series_url);
+      if (!data || data.error) { problems.push(`${src}: ${data ? data.error : "sem resposta"}`); return; }
+      (data.problems || []).forEach((p) => problems.push(`${src}: ${p}`));
+      generatedAt = data.generated_at || generatedAt;
+      const v = data.variables[it.idx];
+      if (!v) { problems.push(`${src}: variável não encontrada na série`); return; }
+      if (!data.epochs) { problems.push(`${src}: recarregue a dashboard no servidor (API sem eixo de tempo comum)`); return; }
+      const pts = new Map();
+      data.epochs.forEach((e, j) => { if (e != null) pts.set(e, v.values[j]); });
+      if (!pts.size) { problems.push(`${src}: nenhum timestamp reconhecido`); return; }
+      const unit = v.unit ? ` (${v.unit})` : "";
+      series.push({
+        it, v, pts,
+        keys: [...pts.keys()].sort((a, b) => a - b),  // p/ busca binária no cursor
+        color: PALETTE[it.color % PALETTE.length],
+        fullLabel: `${it.sname} · ${it.fid} · ${v.label}${unit}`,
+        unit: v.unit || "",
       });
     });
+    errEl.textContent = problems.join(" · ");
+    if (!series.length) return;
+
+    // Eixo comum: união de todos os instantes, ordenada.
+    const all = new Set();
+    series.forEach((s) => s.pts.forEach((_, e) => all.add(e)));
+    const epochs = [...all].sort((a, b) => a - b);
+    const p2 = (n) => String(n).padStart(2, "0");
+    const labels = epochs.map((e) => {
+      const d = new Date(e * 1000);
+      return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    });
+    const datasets = series.map((s) => ({
+      label: s.fullLabel,
+      data: epochs.map((e) => (s.pts.has(e) ? s.pts.get(e) : null)),
+      borderColor: s.color, backgroundColor: s.color + "22",
+      borderWidth: 1.5, pointRadius: 0, spanGaps: true, fill: false, tension: 0.15,
+    }));
+    infoEl.textContent = `${series.length} série(s) · ${epochs.length} instantes no eixo comum` +
+      (generatedAt ? ` · atualizado ${generatedAt}` : "");
+
+    canvas.$cmp = { epochs, series };  // lido pelo cursor (linha vertical) e handlers
+    renderCmpTable(epochs, series);
+
+    if (canvas._chart) {
+      const ch = canvas._chart;
+      ch.data.labels = labels;
+      ch.data.datasets = datasets;
+      ch.update("none");
+      return;
+    }
+    canvas._chart = new Chart(canvas, {
+      type: "line",
+      plugins: [cmpCrosshairPlugin],
+      data: { labels, datasets },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        // tooltip nativo desligado: a leitura sob o cursor é a caixinha própria
+        // (#cmp-tip), que mostra TODAS as séries — inclusive as sem ponto exato
+        // no instante (o tooltip nativo omite datasets com null).
+        plugins: { legend: { display: true, position: "bottom" }, tooltip: { enabled: false } },
+        scales: {
+          x: {
+            ticks: { autoSkip: false },
+            // mesmos ticks ancorados no ÚLTIMO ponto usados nos demais gráficos
+            afterBuildTicks: (axis) => {
+              const n = (axis.chart.data.labels || []).length;
+              if (!n) return;
+              const step = Math.max(1, Math.ceil(n / 10));
+              const idx = [];
+              for (let i = n - 1; i >= 0; i -= step) idx.unshift(i);
+              axis.ticks = idx.map((i) => ({ value: i }));
+            },
+          },
+        },
+      },
+    });
+    installCmpCursor(canvas);
   };
   refresh();
   setInterval(refresh, (window.REFRESH_SECONDS || 60) * 1000);
 }
 
-function setCmpError(canvas, msg) {
-  const el = canvas.closest(".cmp-block").querySelector(".series-error");
-  if (el) el.textContent = msg || "";
+/* Formatação compartilhada da tela Comparar */
+function cmpFmtNum(v) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return (Math.round(v * 100) / 100).toLocaleString("pt-BR");
+}
+function cmpFmtEpoch(e, withYear) {
+  const d = new Date(e * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  const dia = `${p(d.getDate())}/${p(d.getMonth() + 1)}${withYear ? "/" + d.getFullYear() : ""}`;
+  return `${dia} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+/* Último ponto da série em t OU ANTES (busca binária) — o "valor vigente". */
+function cmpLastAtOrBefore(s, t) {
+  const k = s.keys;
+  let lo = 0, hi = k.length - 1, ans = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (k[m] <= t) { ans = m; lo = m + 1; } else hi = m - 1;
+  }
+  return ans < 0 ? null : { e: k[ans], v: s.pts.get(k[ans]) };
+}
+
+/* Linha vertical no instante sob o cursor (desligada quando o mouse sai). */
+const cmpCrosshairPlugin = {
+  id: "cmpCrosshair",
+  afterDatasetsDraw(chart) {
+    const x = chart.$crossX;
+    if (x == null) return;
+    const area = chart.chartArea, ctx = chart.ctx;
+    if (x < area.left || x > area.right) return;
+    ctx.save();
+    ctx.strokeStyle = "rgba(40, 60, 50, .45)";
+    ctx.setLineDash([5, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, area.top); ctx.lineTo(x, area.bottom); ctx.stroke();
+    ctx.restore();
+  },
+};
+
+/* Cursor da tela Comparar: segue o mouse, trava no instante mais próximo do eixo
+   comum e mostra a leitura de TODAS as séries naquele momento. Série sem ponto
+   exato exibe o último valor anterior, com o horário dele ao lado. */
+function installCmpCursor(canvas) {
+  const tip = document.getElementById("cmp-tip");
+  if (!tip) return;
+  const chart = () => canvas._chart;
+
+  canvas.addEventListener("mousemove", (ev) => {
+    const ch = chart(), cmp = canvas.$cmp;
+    if (!ch || !cmp || !cmp.epochs.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = ev.clientX - rect.left;
+    const area = ch.chartArea;
+    if (px < area.left || px > area.right) { hideCmpCursor(canvas); return; }
+    let idx = Math.round(ch.scales.x.getValueForPixel(px));
+    idx = Math.max(0, Math.min(cmp.epochs.length - 1, idx));
+    const t = cmp.epochs[idx];
+
+    ch.$crossX = ch.scales.x.getPixelForValue(idx);
+    ch.draw();
+
+    let html = `<div class="cmp-tip-title">${esc(cmpFmtEpoch(t, true))}</div>`;
+    cmp.series.forEach((s) => {
+      const hit = s.pts.has(t) ? { e: t, v: s.pts.get(t) } : cmpLastAtOrBefore(s, t);
+      const val = hit ? cmpFmtNum(hit.v) : "—";
+      const unit = s.unit ? ` ${esc(s.unit)}` : "";
+      const carried = hit && hit.e !== t
+        ? ` <span class="carried">(${esc(cmpFmtEpoch(hit.e, false))})</span>` : "";
+      html += `<div class="cmp-tip-row">` +
+        `<span class="cmp-dot" style="background:${s.color}"></span>` +
+        `<span>${esc(s.it.sname)} · ${esc(s.v.label)}</span>` +
+        `<span class="val">${val}${unit}${carried}</span></div>`;
+    });
+    tip.innerHTML = html;
+    tip.hidden = false;
+    // caixinha do lado oposto ao cursor para não cobrir a linha
+    const box = canvas.parentElement.getBoundingClientRect();
+    const tw = tip.offsetWidth || 260;
+    const naDireita = px + 16 + tw > box.width;
+    tip.style.left = naDireita ? `${Math.max(0, px - 16 - tw)}px` : `${px + 16}px`;
+  });
+  canvas.addEventListener("mouseleave", () => hideCmpCursor(canvas));
+}
+
+function hideCmpCursor(canvas) {
+  const tip = document.getElementById("cmp-tip");
+  if (tip) tip.hidden = true;
+  const ch = canvas._chart;
+  if (ch && ch.$crossX != null) { ch.$crossX = null; ch.draw(); }
+}
+
+/* Tabela "Valores comparados": um instante do eixo comum por linha (recente
+   primeiro), uma coluna por série; célula vazia = série sem ponto no instante. */
+function renderCmpTable(epochs, series) {
+  const table = document.getElementById("cmp-table");
+  if (!table) return;
+  const note = document.getElementById("cmp-table-note");
+  const MAX_ROWS = 200;
+  const total = epochs.length;
+  const n = Math.min(total, MAX_ROWS);
+
+  let html = "<thead><tr><th>Data/hora</th>";
+  series.forEach((s) => {
+    html += `<th><span class="cmp-dot" style="background:${s.color}"></span> ` +
+            `${esc(s.fullLabel)}</th>`;
+  });
+  html += "</tr></thead><tbody>";
+  for (let i = total - 1; i >= total - n; i--) {
+    const t = epochs[i];
+    html += `<tr><td><small>${esc(cmpFmtEpoch(t, true))}</small></td>`;
+    series.forEach((s) => {
+      html += `<td class="num">${s.pts.has(t) ? cmpFmtNum(s.pts.get(t)) : "—"}</td>`;
+    });
+    html += "</tr>";
+  }
+  html += "</tbody>";
+  table.innerHTML = html;
+  if (note) {
+    note.textContent = total > n
+      ? `— mostrando os ${n} instantes mais recentes de ${total} (mais recente primeiro); ` +
+        `“—” = a série não tem ponto naquele instante`
+      : "— um instante por linha (mais recente primeiro); “—” = a série não tem ponto naquele instante";
+  }
 }
 
 

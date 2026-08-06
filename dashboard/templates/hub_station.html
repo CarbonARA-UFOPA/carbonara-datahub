@@ -91,11 +91,56 @@
     <code>incoming/{{ entry.id }}/</code> e as credenciais em
     <code>stations/{{ entry.id }}/</code> são preservados (comportamento do rsync-hub).</p>
   <form method="post" action="{{ url_for('hub.station_remove', station_id=entry.id) }}"
-        onsubmit="return confirm('Revogar o acesso da estação {{ entry.id }}? Ela deixará de conseguir enviar dados.');">
+        onsubmit="return confirm('Revogar o acesso da estação {{ entry.id }}? Ela deixará de conseguir enviar dados (os dados no servidor são preservados).');">
     <button class="btn btn-danger" type="submit" {% if not info.can_write %}disabled
       title="indisponível: gerenciamento em modo somente leitura"{% endif %}>
       Revogar acesso de {{ entry.id }}
     </button>
   </form>
+</section>
+
+<section class="card danger-card">
+  <div class="page-head"><h2>⚠ Excluir estação definitivamente</h2></div>
+  <div class="flash flash-error">
+    <strong>Ação IRREVERSÍVEL — não há lixeira.</strong> Além de revogar o acesso,
+    isto <strong>APAGA do servidor</strong> tudo desta estação:
+    <code>incoming/{{ entry.id }}/</code> (dados recebidos),
+    <code>archive/{{ entry.id }}/</code> (dados já processados/arquivados),
+    <code>quarantine/{{ entry.id }}/</code> e
+    <code>stations/{{ entry.id }}/</code> (chaves e instruções — a estação não
+    conseguirá se reconectar nem com a chave antiga). Se ela estiver cadastrada no
+    monitoramento do dashboard, o cadastro também é removido.
+    <br>Para manter os dados e só cortar o envio, use <em>Revogar acesso</em> acima.
+    Considere <a href="{{ url_for('hub.files', area='archive', subpath=entry.id) }}">baixar
+    os arquivos</a> antes.
+  </div>
+  <form method="post" action="{{ url_for('hub.station_purge', station_id=entry.id) }}"
+        onsubmit="return confirm('ÚLTIMA CONFIRMAÇÃO: excluir DEFINITIVAMENTE a estação {{ entry.id }} e apagar todos os seus dados do servidor? Não há como desfazer.');">
+    <label>Para liberar o botão, digite o id da estação (<code>{{ entry.id }}</code>):
+      <input name="confirm_name" id="purge-confirm-name" autocomplete="off"
+             placeholder="{{ entry.id }}" {% if not info.can_write %}disabled{% endif %}>
+    </label>
+    <div class="form-actions">
+      <button class="btn btn-danger" type="submit" id="purge-btn" disabled
+        {% if not info.can_write %}title="indisponível: gerenciamento em modo somente leitura"{% endif %}>
+        Excluir {{ entry.id }} e apagar os dados do servidor
+      </button>
+    </div>
+  </form>
+  <script>
+    (function () {
+      var inp = document.getElementById("purge-confirm-name");
+      var btn = document.getElementById("purge-btn");
+      if (!inp || !btn) return;
+      var esperado = {{ entry.id | tojson }};
+      var podeEscrever = {{ (info.can_write or false) | tojson }};
+      function sync() { btn.disabled = !podeEscrever || inp.value.trim() !== esperado; }
+      inp.addEventListener("input", sync);
+      sync();
+    })();
+  </script>
+  <p class="meta">A digitação é reconferida no servidor — sem o nome exato, nada é
+    apagado. Se o hub tiver dados no banco (pilha de ingestão), as linhas já
+    inseridas no TimescaleDB não são afetadas.</p>
 </section>
 {% endblock %}

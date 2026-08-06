@@ -199,22 +199,13 @@ def compare():
             "idx": idx,
             "label": var["label"],
             "unit": var.get("unit"),
-            "color": len(selected),  # índice global de cor, estável entre grupos
+            "color": len(selected),  # índice global de cor, estável entre séries
+            "series_url": url_for("api.file_series", station_id=sid, file_id=fid),
         })
         sel_set.add(token)
-    # Agrupa por estação+arquivo: cada arquivo .dat pode ser um sensor/equipamento
-    # diferente — os gráficos saem em seções separadas para não misturar as fontes.
-    groups, by_key = [], {}
-    for item in selected:
-        key = (item["sid"], item["fid"])
-        g = by_key.get(key)
-        if g is None:
-            g = {"sid": item["sid"], "sname": item["sname"], "fid": item["fid"], "items": []}
-            by_key[key] = g
-            groups.append(g)
-        g["items"].append(item)
-    return render_template("compare.html", cfg=cfg, selected=selected,
-                           sel_set=sel_set, groups=groups)
+    # Todas as séries vão num ÚNICO gráfico com eixo de tempo comum (mesclado no
+    # cliente via os epochs da API); a legenda identifica estação · arquivo · variável.
+    return render_template("compare.html", cfg=cfg, selected=selected, sel_set=sel_set)
 
 
 @pages.get("/map")

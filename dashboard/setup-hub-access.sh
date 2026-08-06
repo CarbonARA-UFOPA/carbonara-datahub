@@ -69,7 +69,7 @@ cat > "$TMP" <<EOF
 # gerado por dashboard/setup-hub-access.sh em $(date -u +%FT%TZ) — pode regerar rodando-o de novo.
 # Permite à dashboard CARBONARA executar SOMENTE os subcomandos de gerência do
 # rsync-hub (autorizar/revogar estações e migrar a raiz de dados), sem senha.
-$DASH_USER ALL=(root) NOPASSWD: $BIN add *, $BIN remove *, $BIN move-root *
+$DASH_USER ALL=(root) NOPASSWD: $BIN add *, $BIN remove *, $BIN purge *, $BIN move-root *
 EOF
 if ! visudo -cf "$TMP" >/dev/null 2>&1; then
     rm -f "$TMP"

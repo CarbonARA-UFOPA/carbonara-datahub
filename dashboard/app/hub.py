@@ -47,7 +47,7 @@ def sudoers_hint(bin_path: str | None) -> str:
     dashboard/setup-hub-access.sh instala em /etc/sudoers.d/)."""
     b = bin_path or "/usr/local/bin/rsync-hub"
     user = os.environ.get("USER") or "usuario-da-dashboard"
-    return f"{user} ALL=(root) NOPASSWD: {b} add *, {b} remove *, {b} move-root *"
+    return f"{user} ALL=(root) NOPASSWD: {b} add *, {b} remove *, {b} purge *, {b} move-root *"
 
 
 def hub_base(cfg: dict) -> Path:
@@ -277,6 +277,18 @@ def remove_station(cfg: dict, sid: str) -> tuple[bool, str]:
     if not valid_hub_id(sid):
         return False, "id inválido."
     return _run_hub(cfg, ["remove", sid])
+
+
+def purge_station(cfg: dict, sid: str) -> tuple[bool, str]:
+    """``rsync-hub purge <id> --confirmo`` — EXCLUSÃO DEFINITIVA: revoga o acesso e
+    apaga do servidor incoming/, archive/, quarantine/ e stations/ da estação.
+
+    A confirmação digitada (nome da estação) é validada na ROTA, antes de chegar
+    aqui — este código só roda depois dela. Irreversível; timeout maior porque
+    apagar um archive/ grande pode demorar."""
+    if not valid_hub_id(sid):
+        return False, "id inválido."
+    return _run_hub(cfg, ["purge", sid, "--confirmo"], timeout=600)
 
 
 # --- Credenciais da estação (stations/<id>/) --------------------------------------

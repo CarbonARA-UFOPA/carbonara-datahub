@@ -26,7 +26,8 @@
 #   sudo ./rsync-hub add <id> <pub>      # autoriza com chave pública já existente
 #   sudo ./rsync-hub add <id> --senha    # autoriza por USUÁRIO+SENHA (rsync daemon:873;
 #                                        #   simples no cliente, dados sem criptografia)
-#   sudo ./rsync-hub remove <id>         # revoga o acesso da estação
+#   sudo ./rsync-hub remove <id>         # revoga o acesso da estação (dados preservados)
+#   sudo ./rsync-hub purge <id>          # EXCLUI definitivamente (acesso + TODOS os dados)
 #   sudo ./rsync-hub move-root <novo>    # MIGRA a raiz inteira (dados+chaves+conf) para
 #                                        #   outra pasta; a antiga fica como cópia de segurança
 #        ./rsync-hub list                # lista estações autorizadas
@@ -41,7 +42,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-06.2"
+RSYNC_HUB_VERSION="2026-08-06.3"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -569,31 +570,78 @@ add_station_wizard() {  # versão guiada do add: escolhe o modo de autenticaçã
     return "$rc"
 }
 
+revoke_access() {  # $1=id — revoga chave E senha; rc 0 = algo foi revogado
+    rv_id="$1"; rv_any=1
+    if [ -f "$AUTHKEYS" ] && grep -qF "serve $rv_id\"" "$AUTHKEYS"; then
+        grep -vF "serve $rv_id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" || true
+        mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
+        echo "estação '$rv_id': acesso por CHAVE revogado."
+        rv_any=0
+    fi
+    if [ -f "$RSYNCD_SECRETS" ] && grep -q "^$rv_id:" "$RSYNCD_SECRETS"; then
+        grep -v "^$rv_id:" "$RSYNCD_SECRETS" > "$RSYNCD_SECRETS.tmp" || true
+        mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 644 "$RSYNCD_SECRETS"
+        rebuild_rsyncd_conf
+        echo "estação '$rv_id': acesso por USUÁRIO+SENHA revogado."
+        rv_any=0
+    fi
+    return "$rv_any"
+}
+
 remove_station() {
     need_root
     id="${1:-}"; [ -n "$id" ] || die "uso: rsync-hub remove <id>"
     valid_id "$id"
-    revoked=0
-    if [ -f "$AUTHKEYS" ] && grep -qF "serve $id\"" "$AUTHKEYS"; then
-        grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" || true
-        mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
-        echo "estação '$id': acesso por CHAVE revogado."
-        revoked=1
-    fi
-    if [ -f "$RSYNCD_SECRETS" ] && grep -q "^$id:" "$RSYNCD_SECRETS"; then
-        grep -v "^$id:" "$RSYNCD_SECRETS" > "$RSYNCD_SECRETS.tmp" || true
-        mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 644 "$RSYNCD_SECRETS"
-        rebuild_rsyncd_conf
-        echo "estação '$id': acesso por USUÁRIO+SENHA revogado."
-        revoked=1
-    fi
-    if [ "$revoked" = 1 ]; then
+    if revoke_access "$id"; then
         echo "dados preservados em $INCOMING/$id."
         [ -d "$BASE/stations/$id" ] && \
             echo "chaves/instruções mantidas em $BASE/stations/$id — apague a pasta se não for reativar."
     else
         echo "estação '$id' não estava autorizada."
     fi
+}
+
+station_dirs() {  # $1=id — ecoa (uma por linha) as pastas da estação que EXISTEM.
+    # Únicos alvos legítimos de um purge; nunca nada fora destas quatro.
+    for sd_d in "$INCOMING/$1" "$BASE/archive/$1" "$BASE/quarantine/$1" "$BASE/stations/$1"; do
+        [ -e "$sd_d" ] && printf '%s\n' "$sd_d"
+    done
+    return 0
+}
+
+purge_station() {   # purge <id> [--confirmo] — revoga o acesso E APAGA os dados
+    need_root
+    id="${1:-}"; ok="${2:-}"
+    [ -n "$id" ] || die "uso: rsync-hub purge <id> [--confirmo]"
+    valid_id "$id"
+    dirs="$(station_dirs "$id")"
+    if [ -z "$dirs" ] && ! { [ -f "$AUTHKEYS" ] && grep -qF "serve $id\"" "$AUTHKEYS"; } \
+       && ! { [ -f "$RSYNCD_SECRETS" ] && grep -q "^$id:" "$RSYNCD_SECRETS" 2>/dev/null; }; then
+        echo "estação '$id': nada a excluir (sem autorização e sem pastas)."
+        return 0
+    fi
+    echo "EXCLUSÃO DEFINITIVA da estação '$id' — revoga o acesso E APAGA do servidor:"
+    if [ -n "$dirs" ]; then
+        printf '%s\n' "$dirs" | while IFS= read -r d; do
+            echo "  $(du -sh "$d" 2>/dev/null | cut -f1)	$d"
+        done
+    else
+        echo "  (nenhuma pasta em disco — só a autorização)"
+    fi
+    echo "Isto é IRREVERSÍVEL: dados recebidos, arquivados, em quarentena e as"
+    echo "chaves/instruções da estação serão apagados. Não há lixeira."
+    if [ "$ok" != "--confirmo" ]; then
+        is_tty || die "sem terminal: confirme com  rsync-hub purge $id --confirmo"
+        printf 'digite o id da estação para confirmar> '
+        read -r typed || exit 1
+        [ "$typed" = "$id" ] || die "confirmação não confere ('$typed' != '$id') — NADA foi apagado"
+    fi
+    revoke_access "$id" || true
+    # Reconsulta as pastas (uma sessão em andamento pode ter recriado incoming/<id>).
+    station_dirs "$id" | while IFS= read -r d; do
+        rm -rf "$d" && echo "apagado: $d"
+    done
+    echo "estação '$id' excluída definitivamente."
 }
 
 move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
@@ -921,6 +969,9 @@ uso:
   sudo rsync-hub add <id> --senha    autoriza por USUÁRIO+SENHA (rsync daemon, porta $RSYNCD_PORT;
                                      mais simples no cliente, mas dados SEM criptografia)
   sudo rsync-hub remove <id>         revoga o acesso da estação (dados preservados)
+  sudo rsync-hub purge <id>          EXCLUI a estação DEFINITIVAMENTE: revoga o acesso e
+                                     APAGA incoming/archive/quarantine/stations dela
+                                     (pede para digitar o id; irreversível)
   sudo rsync-hub move-root <novo>    MIGRA a raiz inteira (dados+chaves+conf) para outra
                                      pasta; a antiga fica intacta como cópia de segurança
        rsync-hub list                lista as estações autorizadas
@@ -955,6 +1006,7 @@ case "${1:-}" in
              if [ "${2:-}" = "--senha" ]; then add_station_pw "${1:-}" "${3:-}"
              else add_station "$@"; fi ;;
     remove)  shift; remove_station "$@" ;;
+    purge)   shift; purge_station "$@" ;;
     move-root) shift; move_root "$@" ;;
     list)    list_stations ;;
     monitor) monitor ;;

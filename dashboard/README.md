@@ -54,9 +54,22 @@ python run.py                          # http://localhost:8080
 - **Gráficos por variável** das últimas N linhas de cada arquivo monitorado (tail
   eficiente — o arquivo nunca é lido inteiro), com auto-atualização.
 - **Tela Comparar** (`/compare`): selecione variáveis de quaisquer estações/arquivos já
-  configurados (checkboxes) e veja os gráficos lado a lado, com auto-atualização. A
-  seleção fica na querystring (`?sel=<estação>:<arquivo>:<índice>`), então uma
-  combinação pode ser favoritada/compartilhada como URL.
+  configurados (checkboxes) e veja **todas as séries num único gráfico**, com
+  auto-atualização; a legenda identifica a origem de cada uma (estação · arquivo ·
+  variável, com unidade) e clicar nela oculta/mostra a série. O eixo de tempo é a
+  **união dos instantes** de todos os arquivos (campo `epochs` da API de séries) —
+  séries com amostragens diferentes se alinham pelo tempo real, com `spanGaps` ligando
+  os pontos de cada uma. Passar o mouse mostra uma **linha vertical** travada no
+  instante mais próximo com a leitura de **todas** as séries (tooltip próprio — o
+  nativo omitiria séries sem ponto exato no instante): valor exato quando a série tem
+  ponto ali, senão o último valor anterior com o horário dele ao lado. Abaixo do
+  gráfico, a tabela **Valores comparados** lista um instante do eixo comum por linha
+  (mais recente primeiro, teto de 200 linhas), uma coluna por série; "—" = sem ponto
+  naquele instante. Todas dividem o mesmo eixo y (grandezas de escalas muito
+  diferentes ficam achatadas — compare o comparável); os limites físicos/trechos
+  vermelhos são das telas por estação, não desta. A seleção fica na querystring
+  (`?sel=<estação>:<arquivo>:<índice>`), então uma combinação pode ser
+  favoritada/compartilhada como URL.
 - **Tela Mapa** (`/map`, somente visualização): estações com coordenadas cadastradas
   aparecem como marcadores coloridos pelo status (mesmas cores da lista); clicar em uma
   abre uma **subjanela (modal)** sobre o mapa com os gráficos dos arquivos cadastrados
@@ -120,6 +133,15 @@ no terminal, sem sair da dashboard:
 - **Credenciais**: ver a chave pública, a linha do `authorized_keys` e o
   `INSTRUCOES.txt`; **baixar** a chave privada/instruções de `stations/<id>/`
   (leitura direta — a política do hub os mantém legíveis sem sudo).
+- **Excluir estação definitivamente** (zona de perigo na página da estação):
+  além de revogar, **apaga do servidor** `incoming/`, `archive/`, `quarantine/` e
+  `stations/` da estação (via `rsync-hub purge <id>`) e a remove do cadastro do
+  dashboard. Gate triplo: digitar o id exato da estação para destravar o botão,
+  diálogo de confirmação, e **revalidação da digitação no servidor** (o JS é só
+  conveniência). Irreversível — a UI sugere baixar os arquivos antes; linhas já
+  inseridas no TimescaleDB não são afetadas. *Instalações que rodaram o
+  `setup-hub-access.sh` antes desta versão precisam rodá-lo de novo* (a regra
+  sudoers ganhou o subcomando `purge`).
 - **Kit de ativação (.zip)** — botão "Baixar kit da estação" (na página da estação e
   na listagem): um pacote único com tudo o que o operador leva para a máquina da
   estação — credenciais de `stations/<id>/` (chave privada, `.pub`, `INSTRUCOES.txt`),

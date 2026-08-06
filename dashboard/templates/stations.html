@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% block head %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endblock %}
 {% block content %}
-<h1>Estações</h1>
+<div class="page-head">
+  <h1>Estações</h1>
+  {% if is_admin %}
+    <a class="btn btn-primary" href="{{ url_for('pages.station_new') }}">+ Nova estação</a>
+  {% endif %}
+</div>
 
 {% if is_admin and new_count %}
   <div class="flash flash-ok import-banner">

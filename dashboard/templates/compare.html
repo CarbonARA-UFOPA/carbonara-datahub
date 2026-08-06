@@ -46,31 +46,32 @@
 </details>
 
 {% if selected %}
-{# uma seção por estação+arquivo: cada .dat pode ser um equipamento diferente #}
-{% for g in groups %}
-<section class="cmp-group">
-  <h2 class="cmp-group-head">
-    <span class="cmp-station">{{ g.sname }}</span>
-    <span class="file-chip">{{ g.fid }}</span>
-    <small class="meta">{{ g['items'] | length }} variável(is)</small>
+{# TODAS as séries num único gráfico, com eixo de tempo comum (mesclado no cliente
+   a partir dos epochs da API). A legenda identifica estação · arquivo · variável. #}
+<section class="card cmp-single">
+  <h2>Comparação
+    <small class="meta">{{ selected | length }} série(s) · legenda: estação · arquivo · variável
+      — clique numa legenda para ocultar/mostrar a série</small>
   </h2>
-  <div class="charts cmp-grid">
-    {% for s in g['items'] %}
-      <section class="card cmp-block">
-        <h2>
-          <span class="cmp-var">{{ s.label }}{% if s.unit %} <small>({{ s.unit }})</small>{% endif %}</span>
-        </h2>
-        <p class="series-error warn"></p>
-        <div class="chart-box">
-          <canvas class="cmp-canvas" height="110"
-                  data-series-url="{{ url_for('api.file_series', station_id=s.sid, file_id=s.fid) }}"
-                  data-var="{{ s.idx }}" data-color="{{ s.color }}"></canvas>
-        </div>
-      </section>
-    {% endfor %}
+  <p class="series-error warn"></p>
+  <div class="chart-box cmp-one-box">
+    <canvas id="cmp-one"></canvas>
+    {# leitura de TODAS as séries no instante sob o cursor (acompanha a linha vertical) #}
+    <div id="cmp-tip" class="cmp-tip" hidden></div>
+  </div>
+  <p class="series-info meta"></p>
+</section>
+
+<section class="card">
+  <h2>Valores comparados
+    <small class="meta" id="cmp-table-note">— um instante por linha (mais recente primeiro);
+      “—” = a série não tem ponto naquele instante</small>
+  </h2>
+  <div class="cmp-table-wrap">
+    <table class="table cmp-table" id="cmp-table"></table>
   </div>
 </section>
-{% endfor %}
+<script id="cmp-config" type="application/json">{{ selected | tojson }}</script>
 {% elif cfg.stations %}
 <p class="empty">Nenhuma variável selecionada ainda.</p>
 {% else %}

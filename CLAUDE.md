@@ -99,7 +99,10 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   generates the station's keypair on the hub under `$BASE/stations/<id>/` (private key +
   pubkey stay there, plus a personalized `INSTRUCOES.txt` the operator carries to the
   station) — `stations/` is deliberately outside `incoming/` (stations can write there and
-  ingestion sweeps it). `add <id> <pubkey>` authorizes an existing key. Also `remove <id>`,
+  ingestion sweeps it). `add <id> <pubkey>` authorizes an existing key. Also `remove <id>`
+  (revoke only, data preserved), `purge <id> [--confirmo]` (revoke AND `rm -rf` the
+  station's incoming/archive/quarantine/stations dirs — nothing else; a TTY asks to
+  TYPE the station id, non-TTY requires `--confirmo` — the dashboard's calling form),
   `list`, and `cliente` (prints client-setup instructions). Run without args it opens an
   interactive menu (the guided "add" accepts ENTER = generate, a path, or a pasted line).
   `move-root <new> [--confirmo]` migrates the ENTIRE base to another dir — never a
@@ -364,8 +367,11 @@ computes live station status. Viewing is open; edits require the admin login
   600 and the `.sh` as executable. Writes (authorize/revoke stations) shell out to the
   **installed `rsync-hub`** via `sudo -n` (never reimplement its key/rsyncd logic);
   `dashboard/setup-hub-access.sh` (run once as root on the server) installs the
-  sudoers rule restricted to `add`/`remove`/`move-root` — validated with `visudo -cf`
-  before install; without it the page degrades to read-only with the hint on screen.
+  sudoers rule restricted to `add`/`remove`/`purge`/`move-root` — validated with
+  `visudo -cf` before install; without it the page degrades to read-only with the
+  hint on screen. Station deletion (`POST /hub/stations/<id>/purge`) re-validates
+  the typed station name server-side (the JS unlock is convenience only) and, on
+  success, also drops the station from the dashboard's own config.
   Moving the data root lives as a card in *Configurações* → POST `/hub/move-root`
   (`rsync-hub move-root <new> --confirmo`, long timeout); on success the dashboard
   updates its own `data_root`, while compose `.env` remains a manual follow-up (shown

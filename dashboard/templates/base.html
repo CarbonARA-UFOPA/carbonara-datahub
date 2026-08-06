@@ -23,7 +23,6 @@
       {% if is_admin %}
         <a href="{{ url_for('hub.index') }}" class="nav-link{{ ' active' if request.path.startswith('/hub') }}">Coleta</a>
         <a href="{{ url_for('pages.settings') }}" class="nav-link{{ ' active' if request.path.startswith('/settings') }}">Configurações</a>
-        <a href="{{ url_for('pages.station_new') }}" class="btn nav-cta">+ Nova estação</a>
       {% endif %}
       {% if auth_enabled %}
         {% if is_admin %}

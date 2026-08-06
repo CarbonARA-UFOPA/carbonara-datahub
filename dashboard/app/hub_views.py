@@ -121,6 +121,34 @@ def station_remove(station_id):
                     else url_for("hub.station", station_id=station_id))
 
 
+@hub_pages.post("/stations/<station_id>/purge")
+@admin_required
+def station_purge(station_id):
+    """EXCLUSÃO DEFINITIVA da estação (revoga + apaga dados do servidor). Gate
+    duplo: o formulário exige digitar o id da estação e ESTA rota revalida a
+    digitação — o JavaScript que habilita o botão é só conveniência, a barreira
+    real é aqui. Sucesso também remove a estação do cadastro do dashboard."""
+    cfg = _load()
+    typed = (request.form.get("confirm_name") or "").strip()
+    if typed != station_id:
+        flash("Exclusão NÃO executada: o nome digitado "
+              f"('{typed or '—'}') não confere com '{station_id}'. Nada foi apagado.",
+              "error")
+        return redirect(url_for("hub.station", station_id=station_id))
+    ok, out = hub.purge_station(cfg, station_id)
+    if ok:
+        cfg2 = _load()
+        if any(s.get("id") == station_id for s in cfg2.get("stations", [])):
+            cfg2["stations"] = [s for s in cfg2["stations"] if s.get("id") != station_id]
+            current_app.store.save(cfg2)
+            flash(f"'{station_id}' também foi removida do cadastro de monitoramento "
+                  "do dashboard.", "ok")
+    flash(out or ("Estação excluída." if ok else "Falha na exclusão."),
+          "ok" if ok else "error")
+    return redirect(url_for("hub.index") if ok
+                    else url_for("hub.station", station_id=station_id))
+
+
 @hub_pages.post("/move-root")
 @admin_required
 def move_root():

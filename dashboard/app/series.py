@@ -121,6 +121,7 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
                 )
             rows = rows[start:]
             timestamps = timestamps[start:]
+            dts = dts[start:]  # mantém dts alinhado com rows (epochs abaixo indexam por linha)
 
     strip_re = _compile_strip(fcfg)
     variables = []
@@ -153,6 +154,10 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         "decimated": len(keep) < len(rows),
         "last_reading": last_dt.strftime("%d/%m/%Y %H:%M") if last_dt else None,
         "timestamps": [timestamps[i] for i in keep],
+        # Instante real de cada ponto (epoch, s) — permite ao cliente juntar séries de
+        # ARQUIVOS DIFERENTES num eixo de tempo comum (tela Comparar). None = linha
+        # cujo timestamp não casou o formato.
+        "epochs": [int(dts[i].timestamp()) if dts[i] is not None else None for i in keep],
         "variables": [
             {**v, "values": [v["values"][i] for i in keep]} for v in variables
         ],
