@@ -41,6 +41,19 @@ def create_app(config_path: str) -> Flask:
     app.register_blueprint(api, url_prefix="/api")
     app.register_blueprint(hub_pages, url_prefix="/hub")
 
+    @app.url_defaults
+    def _static_cache_bust(endpoint, values):
+        """Anexa ?v=<mtime> a todo estático: depois de um git pull + reinício, o
+        navegador SEMPRE busca o dashboard.js/style.css novos — sem depender de
+        Ctrl+Shift+R (cache do navegador/proxy servindo JS velho é a causa clássica
+        de 'a correção não chegou')."""
+        if endpoint == "static" and "filename" in values:
+            p = Path(app.static_folder) / values["filename"]
+            try:
+                values["v"] = int(p.stat().st_mtime)
+            except OSError:
+                pass
+
     @app.context_processor
     def _globals():
         from flask import session

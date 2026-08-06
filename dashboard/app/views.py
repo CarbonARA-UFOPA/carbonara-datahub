@@ -183,6 +183,8 @@ def compare():
     cfg = _load()
     selected, sel_set = [], set()
     for token in request.args.getlist("sel"):
+        if token in sel_set:   # mesmo token repetido na URL não vira série duplicada
+            continue
         parts = token.split(":", 2)
         if len(parts) != 3 or not parts[2].isdigit():
             continue
