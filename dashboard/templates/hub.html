@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Coleta (rsync-hub) · CARBONARA{% endblock %}
+{% block content %}
+<h1>Coleta — gerenciamento do rsync-hub</h1>
+
+<section class="card help-card">
+  Esta tela administra a <strong>coleta</strong> (o rsync-hub) pela dashboard:
+  autorizar e revogar estações, ver/baixar credenciais e navegar pelos arquivos
+  recebidos. As operações de escrita executam o próprio <code>rsync-hub</code>
+  no host — a lógica de chaves continua num lugar só.
+</section>
+
+{% if not info.can_write %}
+<div class="flash flash-error">
+  <strong>Gerenciamento em modo somente leitura.</strong>
+  {% if not info.bin %}
+    O executável <code>rsync-hub</code> não foi encontrado neste host — prepare-o com
+    <code>sudo ./collection/rsync-hub install</code>.
+  {% else %}
+    A dashboard não tem permissão para executar <code>{{ info.bin }}</code> como root
+    sem senha. Rode no servidor:
+    <pre class="mono">sudo dashboard/setup-hub-access.sh &lt;usuario-que-roda-a-dashboard&gt;</pre>
+    (ou libere manualmente no <code>visudo</code>: <code>{{ info.sudoers_hint }}</code>)
+  {% endif %}
+  Enquanto isso, listagem, credenciais e downloads continuam funcionando.
+</div>
+{% endif %}
+
+{% if info.base_mismatch %}
+<div class="flash flash-error">
+  Atenção: a dashboard lê de <code>{{ info.base }}</code>, mas o rsync-hub instalado
+  usa <code>{{ info.conf_base }}</code> (em <code>/etc/rsync-hub.conf</code>). As
+  operações de escrita valem para a BASE do rsync-hub — alinhe a raiz em
+  <a href="{{ url_for('pages.settings') }}">Configurações</a>.
+</div>
+{% endif %}
+
+<section class="card">
+  <div class="page-head"><h2>Navegar pelos arquivos</h2></div>
+  <p>
+    {% for slug, (sub, label) in areas.items() %}
+      <a class="btn" href="{{ url_for('hub.files', area=slug) }}">{{ label }}</a>
+    {% endfor %}
+  </p>
+  <p class="meta">Base do hub: <code>{{ info.base }}</code>
+    {% if info.version %} · rsync-hub <code>{{ info.version }}</code>{% endif %}
+    {% if info.bin %} · executável: <code>{{ info.bin }}</code>{% endif %}
+  </p>
+</section>
+
+<section class="card">
+  <div class="page-head"><h2>Estações autorizadas no hub</h2></div>
+  {% if not stations %}
+    <p class="empty">Nenhuma estação detectada sob <code>{{ info.base }}</code>.
+      Autorize a primeira no formulário abaixo.</p>
+  {% else %}
+    <table class="table">
+      <thead><tr>
+        <th>Estação</th><th>Autenticação</th><th>Credenciais no hub</th>
+        <th>Na dashboard?</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for s in stations %}
+        <tr>
+          <td><strong><a href="{{ url_for('hub.station', station_id=s.id) }}">{{ s.id }}</a></strong></td>
+          <td><small>
+            {% if s.key_mode %}chave SSH{% endif %}
+            {%- if s.key_mode and s.pw_mode %} · {% endif %}
+            {%- if s.pw_mode %}usuário+senha{% endif %}
+            {%- if not s.key_mode and not s.pw_mode %}<span class="meta">nenhuma (só dados)</span>{% endif %}
+          </small></td>
+          <td><small>{% if s.has_creds %}✓ stations/{{ s.id }}/{% else %}<span class="meta">—</span>{% endif %}</small></td>
+          <td>
+            {% if s.in_dashboard %}<span style="color:var(--green)">✓ sim</span>
+            {% else %}<span class="meta">— ainda não</span>{% endif %}
+          </td>
+          <td class="ta-right">
+            {% if s.incoming %}
+              <a class="btn btn-sm" href="{{ url_for('hub.files', area='incoming', subpath=s.id) }}">arquivos</a>
+            {% endif %}
+            <a class="btn btn-sm" href="{{ url_for('hub.station_kit', station_id=s.id) }}"
+               title="chave + INSTRUCOES.txt + cliente, num .zip">⬇ kit</a>
+            <a class="btn btn-sm" href="{{ url_for('hub.station', station_id=s.id) }}">gerenciar</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="page-head"><h2>Autorizar nova estação</h2></div>
+  <form method="post" class="form" action="{{ url_for('hub.station_add') }}"
+        {% if not info.can_write %}title="indisponível: veja o aviso acima"{% endif %}>
+    <label>Identificador da estação
+      <input name="id" required pattern="[a-z0-9][a-z0-9_]{1,30}"
+             placeholder="ex.: flona01" {% if not info.can_write %}disabled{% endif %}>
+      <small>Minúsculas, dígitos e <code>_</code> (mesma regra do rsync-hub).</small>
+    </label>
+
+    <label>Modo de autenticação
+      <select name="mode" id="hub-add-mode" {% if not info.can_write %}disabled{% endif %}>
+        <option value="chave">Chave SSH (recomendado — criptografado, porta 22)</option>
+        <option value="senha">Usuário + senha (rsync daemon, porta 873 — dados SEM criptografia)</option>
+      </select>
+    </label>
+
+    <label data-mode="chave">Chave pública da estação (opcional)
+      <textarea name="pubkey" rows="2" placeholder="vazio = GERAR o par aqui no hub (fica em stations/&lt;id&gt;/ com o INSTRUCOES.txt) · ou cole a linha 'ssh-ed25519 AAAA…'"
+                {% if not info.can_write %}disabled{% endif %}></textarea>
+    </label>
+
+    <label data-mode="senha" hidden>Senha (opcional)
+      <input name="password" autocomplete="off"
+             placeholder="vazio = gerar uma senha aleatória" {% if not info.can_write %}disabled{% endif %}>
+      <small>Sem <code>:</code> nem espaços. A senha final fica no
+      <code>INSTRUCOES.txt</code> da estação. Este modo exige a porta 873/tcp aberta
+      até a estação e o tráfego de dados NÃO é criptografado.</small>
+    </label>
+
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>
+        Autorizar estação
+      </button>
+    </div>
+  </form>
+</section>
+
+<script>
+  (function () {
+    var sel = document.getElementById("hub-add-mode");
+    if (!sel) return;
+    function sync() {
+      document.querySelectorAll("[data-mode]").forEach(function (el) {
+        el.hidden = el.getAttribute("data-mode") !== sel.value;
+      });
+    }
+    sel.addEventListener("change", sync);
+    sync();
+  })();
+</script>
+{% endblock %}

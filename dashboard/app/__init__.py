@@ -34,10 +34,12 @@ def create_app(config_path: str) -> Flask:
     app.store = ConfigStore(config_path)
 
     from .api import api
+    from .hub_views import hub_pages
     from .views import pages
 
     app.register_blueprint(pages)
     app.register_blueprint(api, url_prefix="/api")
+    app.register_blueprint(hub_pages, url_prefix="/hub")
 
     @app.context_processor
     def _globals():

@@ -14,9 +14,29 @@ própria UI (escrita atômica) ou à mão.
 
 ## Rodar
 
+No servidor, use o utilitário `dashboardctl` — ele cria o ambiente Python sozinho
+na primeira vez e deixa a dashboard rodando em segundo plano (**pode fechar a
+janela do SSH que ela continua no ar**):
+
 ```bash
 cd dashboard
 cp config.example.yaml config.yaml     # ajuste data_root (/srv/carbonara em produção)
+./dashboardctl iniciar                 # sobe em segundo plano (venv automático)
+./dashboardctl status                  # rodando? endereço + últimas linhas do log
+./dashboardctl reiniciar               # após atualizar o código
+./dashboardctl parar                   # desliga
+./dashboardctl log                     # acompanha o log ao vivo
+sudo ./dashboardctl servico            # opcional: vira serviço systemd — além do
+                                       # SSH, sobrevive a um REBOOT do servidor
+```
+
+Depois do `servico`, o controle passa a ser `sudo systemctl start|stop|restart
+carbonara-dashboard` (o próprio utilitário avisa) e logs via
+`journalctl -u carbonara-dashboard -f`.
+
+Execução manual (dev), sem o utilitário:
+
+```bash
 pip install -r requirements.txt
 python run.py                          # http://localhost:8080
 # opções: --config outro.yaml --host 0.0.0.0 --port 8080
@@ -74,6 +94,65 @@ python run.py                          # http://localhost:8080
 Dicas para `.dat` TOA5 (Campbell/LoggerNet): 4 linhas de cabeçalho (`skip_header_lines: 4`),
 nomes das colunas na linha 2 (`header_line: 2`), separador `,`, aspas `"`.
 Valores `NAN`/`±7999` viram lacunas no gráfico.
+
+## Gerenciamento da coleta (página **Coleta**, só admin)
+
+A página `/hub` administra o **rsync-hub** pela interface — o mesmo que o admin faria
+no terminal, sem sair da dashboard:
+
+- **Autorizar estação** (modo chave: gera o par no hub ou cola uma `.pub`; modo
+  usuário+senha: porta 873, senha opcional — vazia = gerada), **revogar acesso** e
+  **migrar a raiz de dados**. As escritas executam o **próprio `rsync-hub`** (nada é
+  reimplementado): direto se a dashboard rodar como root, senão via `sudo -n`.
+  Para habilitar, rode **uma vez no servidor**:
+
+  ```bash
+  sudo ./dashboard/setup-hub-access.sh <usuario-que-roda-a-dashboard>
+  ```
+
+  Ele instala/atualiza o `rsync-hub` em `/usr/local/bin` e grava em
+  `/etc/sudoers.d/carbonara-dashboard` uma regra NOPASSWD **restrita aos
+  subcomandos** `add`/`remove`/`move-root` (validada com `visudo -cf` antes de
+  instalar — nunca dá shell root nem `install`). Sem a regra (ou sem o rsync-hub),
+  a página degrada para **somente leitura** com a instrução na tela. O executável é
+  procurado em `/usr/local/bin/rsync-hub` e no PATH; `rsync_hub_bin` no config.yaml
+  força outro.
+- **Credenciais**: ver a chave pública, a linha do `authorized_keys` e o
+  `INSTRUCOES.txt`; **baixar** a chave privada/instruções de `stations/<id>/`
+  (leitura direta — a política do hub os mantém legíveis sem sudo).
+- **Kit de ativação (.zip)** — botão "Baixar kit da estação" (na página da estação e
+  na listagem): um pacote único com tudo o que o operador leva para a máquina da
+  estação — credenciais de `stations/<id>/` (chave privada, `.pub`, `INSTRUCOES.txt`),
+  os clientes de `collection/station/` (o `.ps1` vai byte a byte, preservando o BOM
+  UTF-8 obrigatório) e um `LEIA-ME.txt` gerado. No zip, a chave privada sai `600` e o
+  `.sh` executável. Estação sem credenciais no hub (chave gerada na própria estação)
+  ainda ganha o kit com cliente + LEIA-ME.
+- **Navegador de arquivos** (`incoming/`, `archive/`, `quarantine/`, `stations/`):
+  listar com tamanho/data e **baixar** qualquer arquivo. Sempre **somente leitura** —
+  a dashboard nunca move/apaga; quem move `incoming/ → archive/|quarantine/` é a
+  ingestão. Dotfiles (heartbeat, `.rsync-parcial/`) aparecem marcados como ocultos.
+
+- **Mover a raiz de dados** (card em *Configurações*): migra a raiz **inteira** do
+  hub para outra pasta via `rsync-hub move-root <novo>` — copia tudo preservando
+  dono/permissões (`rsync -aH`, duas passadas), muda o home da conta de serviço (o
+  sshd acha o `authorized_keys` por ele), regrava `/etc/rsync-hub.conf` e
+  regenera/reinicia o rsyncd. Só a raiz completa é movível — mover `incoming/`
+  sozinho quebraria os invariantes do hub. A raiz **antiga fica intacta** com um
+  `RAIZ-MIGRADA.txt` (remoção manual, depois de conferir). **As estações não
+  precisam de nenhuma mudança**: o destino é decidido pelo servidor a cada conexão
+  (o `serve` lê o `/etc/rsync-hub.conf`), então os envios caem na nova raiz
+  automaticamente. Pendência manual só para quem roda a pilha Docker do projeto
+  (banco/ingestão/FTP): ajustar `CARBONARA_ROOT` no `.env` e `docker compose up -d`
+  — containers congelam o caminho montado quando sobem (o comando e a UI explicam;
+  o `data_root` do dashboard é atualizado automaticamente quando a migração parte
+  da UI). Para volumes muito grandes,
+  prefira o terminal: `sudo rsync-hub move-root /nova/raiz` (idealmente com
+  `docker compose stop ingestion` antes).
+
+Diferente do resto da dashboard, aqui **até a visualização exige login** — as páginas
+expõem credenciais e download de dados. Se `/etc/rsync-hub.conf` apontar para uma BASE
+diferente do `data_root` do config, a página avisa (as escritas valem para a BASE do
+rsync-hub).
 
 ## Limites (por desenho)
 

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}{{ entry.id }} · Coleta · CARBONARA{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Estação <code>{{ entry.id }}</code> — coleta</h1>
+  <a class="btn" href="{{ url_for('hub.index') }}">← Voltar ao gerenciamento</a>
+</div>
+
+<section class="card">
+  <div class="page-head"><h2>Situação no hub</h2></div>
+  <table class="table">
+    <tbody>
+      <tr><th>Autenticação por chave SSH</th>
+          <td>{% if entry.key_mode %}<span style="color:var(--green)">✓ autorizada</span>
+              {% else %}<span class="meta">não</span>{% endif %}</td></tr>
+      <tr><th>Autenticação por usuário+senha</th>
+          <td>{% if entry.pw_mode %}<span style="color:var(--green)">✓ autorizada</span> (rsync daemon, porta 873)
+              {% else %}<span class="meta">não</span>{% endif %}</td></tr>
+      <tr><th>Fontes detectadas</th><td><small>{{ entry.sources | join(' · ') }}</small></td></tr>
+      {% if st %}
+      <tr><th>Status ao vivo</th>
+          <td>{{ st.status }}{% if st.last_signal %} · último sinal: {{ st.last_signal }}{% endif %}</td></tr>
+      {% endif %}
+      <tr><th>Na dashboard?</th>
+          <td>{% if entry.in_dashboard %}
+                <a href="{{ url_for('pages.station_detail', station_id=entry.id) }}">✓ sim — abrir monitoramento</a>
+              {% else %}<span class="meta">ainda não — importe em
+                <a href="{{ url_for('pages.settings') }}">Configurações</a></span>{% endif %}</td></tr>
+    </tbody>
+  </table>
+  <p>
+    {% if entry.incoming %}
+      <a class="btn" href="{{ url_for('hub.files', area='incoming', subpath=entry.id) }}">Arquivos recebidos</a>
+    {% endif %}
+    <a class="btn" href="{{ url_for('hub.files', area='archive', subpath=entry.id) }}">Arquivados</a>
+    <a class="btn" href="{{ url_for('hub.files', area='quarantine', subpath=entry.id) }}">Quarentena</a>
+  </p>
+</section>
+
+<section class="card">
+  <div class="page-head">
+    <h2>Credenciais (stations/{{ entry.id }}/)</h2>
+    <a class="btn btn-primary" href="{{ url_for('hub.station_kit', station_id=entry.id) }}">
+      ⬇ Baixar kit da estação (.zip)</a>
+  </div>
+  <p class="meta">O kit reúne num pacote só tudo o que o operador leva para a máquina da
+    estação: a chave, o <code>INSTRUCOES.txt</code> (passo a passo de ativação) e o
+    cliente de coleta (Linux e Windows), com um LEIA-ME.</p>
+  {% if not creds.exists %}
+    <p class="empty">Sem credenciais guardadas no hub para esta estação
+      (a chave foi gerada na própria estação, ou o modo é usuário+senha antigo).</p>
+  {% else %}
+    <table class="table">
+      <thead><tr><th>Arquivo</th><th>Tamanho</th><th>Modificado</th><th></th></tr></thead>
+      <tbody>
+      {% for f in creds.files %}
+        <tr>
+          <td><code>{{ f.name }}</code></td>
+          <td>{{ f.size | hsize }}</td>
+          <td><small>{{ f.mtime }}</small></td>
+          <td class="ta-right">
+            <a class="btn btn-sm" href="{{ url_for('hub.download', area='stations', subpath=entry.id ~ '/' ~ f.name) }}">baixar</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="meta">A chave <em>privada</em> (<code>{{ entry.id }}_key</code>) é a que o operador
+      leva para a máquina da estação; a <code>.pub</code> permanece aqui (já autorizada).</p>
+  {% endif %}
+
+  {% if creds.pubkey %}
+    <h3>Chave pública</h3>
+    <pre class="mono">{{ creds.pubkey }}</pre>
+  {% endif %}
+  {% if ak_line %}
+    <h3>Linha no authorized_keys (comando forçado)</h3>
+    <pre class="mono">{{ ak_line }}</pre>
+  {% endif %}
+  {% if creds.instrucoes %}
+    <details>
+      <summary><strong>INSTRUCOES.txt</strong> (ativação da estação — pode conter a senha)</summary>
+      <pre class="mono">{{ creds.instrucoes }}</pre>
+    </details>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="page-head"><h2>Revogar acesso</h2></div>
+  <p class="meta">Revoga chave <em>e</em> senha desta estação no hub. Os dados em
+    <code>incoming/{{ entry.id }}/</code> e as credenciais em
+    <code>stations/{{ entry.id }}/</code> são preservados (comportamento do rsync-hub).</p>
+  <form method="post" action="{{ url_for('hub.station_remove', station_id=entry.id) }}"
+        onsubmit="return confirm('Revogar o acesso da estação {{ entry.id }}? Ela deixará de conseguir enviar dados.');">
+    <button class="btn btn-danger" type="submit" {% if not info.can_write %}disabled
+      title="indisponível: gerenciamento em modo somente leitura"{% endif %}>
+      Revogar acesso de {{ entry.id }}
+    </button>
+  </form>
+</section>
+{% endblock %}

@@ -10,6 +10,9 @@ __pycache__/
 ingestion/config.yaml
 processing/config.yaml
 dashboard/.secret_key
+dashboard/.venv/
+dashboard/.dashboard.pid
+dashboard/dashboard.log
 
 # Dados locais de desenvolvimento
 data/

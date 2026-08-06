@@ -51,6 +51,45 @@
 </form>
 
 <section class="card">
+  <div class="page-head"><h2>Mover a raiz de dados (avançado)</h2></div>
+  <p class="meta">Migra a raiz <strong>inteira</strong> do hub — <code>incoming/</code>,
+    <code>archive/</code>, <code>quarantine/</code>, <code>stations/</code> (chaves),
+    log e configuração — para outra pasta, executando <code>rsync-hub move-root</code>
+    no host. O comando copia preservando dono/permissões, muda o home da conta de
+    serviço, regrava <code>/etc/rsync-hub.conf</code> e reinicia o rsyncd; a raiz
+    <strong>antiga fica intacta</strong> como cópia de segurança (a remoção é manual,
+    depois de conferir). Só a raiz completa é movível — <code>incoming/</code> sozinho
+    quebraria os invariantes do hub (home do sshd, caminhos do rsyncd).</p>
+  {% if hub_info and hub_info.can_write %}
+    <form method="post" class="form" action="{{ url_for('hub.move_root') }}"
+          onsubmit="return confirm('Migrar a raiz de dados AGORA? A cópia pode demorar; não feche esta página até terminar.');">
+      <label>Nova raiz (caminho absoluto)
+        <input name="new_root" required pattern="/.*" placeholder="ex.: /dados/carbonara">
+        <small>Raiz atual: <code>{{ hub_info.conf_base or hub_info.base }}</code>.
+          Ideal antes de migrar: <code>docker compose stop ingestion</code>.</small>
+      </label>
+      <label><input type="checkbox" name="ack" required>
+        Entendi que as <strong>estações não precisam de nenhuma mudança</strong>
+        (o servidor decide o destino a cada conexão) e que, <em>somente se</em> este
+        servidor rodar a pilha Docker do projeto (banco/ingestão/FTP), preciso ao
+        final ajustar <code>CARBONARA_ROOT</code> no <code>.env</code> e rodar
+        <code>docker compose up -d</code>. A raiz do dashboard é atualizada
+        automaticamente.
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-danger" type="submit">Migrar raiz de dados</button>
+      </div>
+    </form>
+    <p class="meta">Para volumes muito grandes, prefira o terminal (a página não
+      precisa ficar aberta): <code>sudo rsync-hub move-root /nova/raiz</code>.</p>
+  {% else %}
+    <p class="empty">Indisponível: o gerenciamento está em modo somente leitura
+      (veja a página <a href="{{ url_for('hub.index') }}">Coleta</a>). Habilite
+      rodando no servidor: <code>sudo dashboard/setup-hub-access.sh &lt;usuario-da-dashboard&gt;</code>.</p>
+  {% endif %}
+</section>
+
+<section class="card">
   <div class="page-head">
     <h2>Estações detectadas no rsync-hub</h2>
     {% if detected | selectattr('in_dashboard', 'equalto', false) | list %}

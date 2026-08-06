@@ -68,8 +68,18 @@ h2 { font-size: 1.05rem; margin: .2rem 0; }
 .btn:hover { border-color: var(--accent); }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn-danger { color: var(--red); }
+.btn-sm { padding: .15rem .55rem; font-size: .8rem; }
 
-.flash { padding: .6rem 1rem; border-radius: 8px; margin: .6rem 0; }
+/* Gerenciamento da coleta (/hub) */
+.ta-right { text-align: right; }
+pre.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                  font-size: .8rem; }
+pre.mono { background: #f6f8f7; border: 1px solid var(--line); border-radius: 7px;
+           padding: .6rem .8rem; overflow-x: auto; white-space: pre-wrap;
+           word-break: break-all; }
+
+/* pre-line: a saída do rsync-hub (multi-linha) chega via flash e deve manter as quebras */
+.flash { padding: .6rem 1rem; border-radius: 8px; margin: .6rem 0; white-space: pre-line; }
 .flash-ok { background: #e4f5ea; border: 1px solid #bfe5cd; }
 .flash-error { background: #fdeaea; border: 1px solid #f2c4c4; }
 .warn { color: var(--red); }

@@ -23,7 +23,7 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
-from . import config_store, status
+from . import config_store, hub, status
 
 pages = Blueprint("pages", __name__)
 
@@ -122,7 +122,8 @@ def settings():
         detected = config_store.detect_hub_stations(cfg)
     except Exception:  # noqa: BLE001
         pass
-    return render_template("settings.html", cfg=cfg, detected=detected)
+    return render_template("settings.html", cfg=cfg, detected=detected,
+                           hub_info=hub.hub_info(cfg))
 
 
 @pages.post("/settings")
@@ -133,7 +134,8 @@ def settings_save():
     if errors:
         for e in errors:
             flash(e, "error")
-        return render_template("settings.html", cfg={**cfg, **updated}, detected=[]), 400
+        return render_template("settings.html", cfg={**cfg, **updated}, detected=[],
+                               hub_info=None), 400
     cfg["data_root"] = updated["data_root"]
     cfg["connections_log"] = updated["connections_log"]
     cfg["timezone"] = updated["timezone"]

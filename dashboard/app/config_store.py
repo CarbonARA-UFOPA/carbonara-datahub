@@ -30,6 +30,7 @@ DEFAULT_CONFIG: dict = {
     "connections_log": None,          # default: <data_root>/log/connections.log
     "timezone": None,                 # fuso p/ exibir o "último sinal" (ex.: America/Santarem)
     "stale_fallback_seconds": 3600,   # espelha RSYNC_HUB_STALE
+    "rsync_hub_bin": None,            # override do executável rsync-hub (gerenciamento)
     # Login de administração (edições). null = edição liberada (dev).
     # {username: ..., password_hash: <gerado com werkzeug generate_password_hash>}
     "auth": None,
@@ -49,7 +50,8 @@ class ConfigStore:
                 raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         cfg["server"].update(raw.get("server") or {})
-        for key in ("data_root", "connections_log", "timezone", "stale_fallback_seconds", "auth"):
+        for key in ("data_root", "connections_log", "timezone", "stale_fallback_seconds",
+                    "rsync_hub_bin", "auth"):
             if raw.get(key) is not None:
                 cfg[key] = raw[key]
         cfg["stations"] = raw.get("stations") or []

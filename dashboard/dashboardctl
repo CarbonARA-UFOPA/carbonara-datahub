@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# dashboardctl — liga/desliga/reinicia a dashboard CARBONARA e a mantém rodando
+# mesmo depois de fechar a janela do SSH (nohup + sessão própria + PID file).
+#
+# Uso (de qualquer pasta):
+#   ./dashboardctl iniciar     sobe a dashboard em segundo plano (cria o ambiente
+#                              Python .venv/ sozinho na primeira vez)
+#   ./dashboardctl parar       desliga
+#   ./dashboardctl reiniciar   desliga e sobe de novo
+#   ./dashboardctl status      está rodando? em qual endereço? últimas linhas do log
+#   ./dashboardctl log         acompanha o log ao vivo (Ctrl-C sai)
+#   ./dashboardctl servico     (opcional, root+systemd) instala como serviço do
+#                              sistema — além de sobreviver ao SSH, volta sozinha
+#                              após REINICIAR o servidor
+#
+# Aliases em inglês aceitos: start | stop | restart | logs.
+# Argumentos extras de 'iniciar' vão para o run.py (ex.: iniciar --port 9090).
+set -eu
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PIDFILE="$HERE/.dashboard.pid"
+LOGFILE="$HERE/dashboard.log"
+VENV="$HERE/.venv"
+UNIT=/etc/systemd/system/carbonara-dashboard.service
+
+die() { echo "erro: $*" >&2; exit 1; }
+
+# --- utilidades --------------------------------------------------------------------
+pid_alive() {  # $1=pid — vivo E é mesmo o run.py da dashboard (não um PID reciclado)
+    [ -n "${1:-}" ] || return 1
+    kill -0 "$1" 2>/dev/null || return 1
+    ps -p "$1" -o command= 2>/dev/null | grep -q "run\.py" || return 1
+}
+
+current_pid() { cat "$PIDFILE" 2>/dev/null || true; }
+
+unit_active() {
+    [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 \
+        && systemctl is-active carbonara-dashboard >/dev/null 2>&1
+}
+
+listen_addr() {  # host:porta do config.yaml (best-effort, só para exibir)
+    port="$(sed -n 's/^[[:space:]]*port:[[:space:]]*\([0-9]*\).*/\1/p' "$HERE/config.yaml" 2>/dev/null | head -1)"
+    addr="$(hostname -I 2>/dev/null | awk 'NF{print $1; exit}')"
+    [ -n "$addr" ] || addr="$(hostname 2>/dev/null || echo localhost)"
+    echo "http://$addr:${port:-8080}"
+}
+
+ensure_python() {  # garante o .venv com as dependências; ecoa o caminho do python
+    # Venv válido = o python dele roda de verdade (não basta existir: um .venv
+    # copiado de outra máquina/SO ou de uma criação interrompida fica quebrado).
+    if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "" 2>/dev/null; then
+        echo "$VENV/bin/python"; return 0
+    fi
+    if [ -d "$VENV" ]; then
+        echo "o ambiente $VENV está quebrado/incompleto — recriando…" >&2
+        rm -rf "$VENV"
+    fi
+    command -v python3 >/dev/null 2>&1 || die "python3 não encontrado — instale-o (ex.: sudo apt-get install python3 python3-venv)"
+    echo "primeira execução: criando o ambiente Python em $VENV …" >&2
+    python3 -m venv "$VENV" >&2 \
+        || die "falha ao criar o venv — no Debian/Ubuntu instale: sudo apt-get install python3-venv"
+    "$VENV/bin/pip" install --quiet --upgrade pip >&2 || true
+    "$VENV/bin/pip" install --quiet -r "$HERE/requirements.txt" >&2 \
+        || die "falha ao instalar as dependências (veja acima) — precisa de internet na primeira vez"
+    echo "ambiente pronto." >&2
+    echo "$VENV/bin/python"
+}
+
+# --- comandos ----------------------------------------------------------------------
+iniciar() {
+    unit_active && die "a dashboard roda como SERVIÇO do sistema — use: sudo systemctl start|stop|restart carbonara-dashboard"
+    pid="$(current_pid)"
+    if pid_alive "$pid"; then
+        echo "já está rodando (pid $pid) — $(listen_addr)"
+        return 0
+    fi
+    rm -f "$PIDFILE"
+    [ -f "$HERE/config.yaml" ] || echo "aviso: $HERE/config.yaml não existe — copie o config.example.yaml (a dashboard sobe com defaults)."
+    PY="$(ensure_python)"
+    # nohup + sessão própria (setsid, quando existir) + stdin fechado: o processo se
+    # desprende do terminal — fechar a janela do SSH não o derruba.
+    if command -v setsid >/dev/null 2>&1; then
+        nohup setsid "$PY" "$HERE/run.py" "$@" >>"$LOGFILE" 2>&1 </dev/null &
+    else
+        nohup "$PY" "$HERE/run.py" "$@" >>"$LOGFILE" 2>&1 </dev/null &
+    fi
+    pid=$!
+    echo "$pid" > "$PIDFILE"
+    sleep 2
+    if pid_alive "$pid"; then
+        echo "dashboard no ar (pid $pid) — $(listen_addr)"
+        echo "log: $LOGFILE   ·   pode fechar o SSH, ela continua rodando."
+        echo "para voltar sozinha após um REBOOT do servidor: sudo $0 servico"
+    else
+        rm -f "$PIDFILE"
+        echo "não subiu — últimas linhas do log:" >&2
+        tail -n 15 "$LOGFILE" >&2 || true
+        exit 1
+    fi
+}
+
+parar() {
+    unit_active && die "a dashboard roda como SERVIÇO do sistema — use: sudo systemctl stop carbonara-dashboard"
+    pid="$(current_pid)"
+    if ! pid_alive "$pid"; then
+        rm -f "$PIDFILE"
+        echo "não estava rodando."
+        return 0
+    fi
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pid_alive "$pid" || break
+        sleep 1
+    done
+    if pid_alive "$pid"; then
+        echo "não terminou com TERM — forçando (KILL)…"
+        kill -9 "$pid" 2>/dev/null || true
+        sleep 1
+    fi
+    rm -f "$PIDFILE"
+    echo "dashboard desligada."
+}
+
+status() {
+    if unit_active; then
+        echo "rodando como SERVIÇO do sistema (systemd) — $(listen_addr)"
+        systemctl status carbonara-dashboard --no-pager -n 5 2>/dev/null || true
+        return 0
+    fi
+    pid="$(current_pid)"
+    if pid_alive "$pid"; then
+        echo "RODANDO (pid $pid) — $(listen_addr)"
+    else
+        [ -n "$pid" ] && { echo "(PID file órfão removido)"; rm -f "$PIDFILE"; }
+        echo "PARADA."
+    fi
+    if [ -f "$LOGFILE" ]; then
+        echo "--- últimas linhas de $LOGFILE ---"
+        tail -n 8 "$LOGFILE" || true
+    fi
+}
+
+servico() {
+    [ "$(id -u)" = 0 ] || die "requer root: sudo $0 servico"
+    [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 \
+        || die "este host não usa systemd — fique com iniciar/parar (sobrevivem ao SSH, não ao reboot)"
+    # Sobe como o DONO da pasta da dashboard (nunca root): mesmas permissões que o
+    # uso manual, e o sudo restrito do setup-hub-access continua valendo para ele.
+    user="$(stat -c %U "$HERE" 2>/dev/null || echo root)"
+    [ "$user" != root ] || die "a pasta $HERE pertence ao root — chown para o usuário que deve rodar a dashboard e rode de novo"
+    PY="$(ensure_python)"
+    # Se estava rodando em segundo plano manual, derruba para o serviço assumir.
+    pid="$(current_pid)"
+    if pid_alive "$pid"; then kill "$pid" 2>/dev/null || true; rm -f "$PIDFILE"; fi
+    cat > "$UNIT" <<EOF
+[Unit]
+Description=Dashboard de Monitoramento CARBONARA
+After=network.target
+
+[Service]
+User=$user
+WorkingDirectory=$HERE
+ExecStart=$PY $HERE/run.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now carbonara-dashboard
+    sleep 2
+    if systemctl is-active carbonara-dashboard >/dev/null 2>&1; then
+        echo "serviço instalado e no ar (usuário: $user) — $(listen_addr)"
+        echo "daqui em diante: sudo systemctl start|stop|restart carbonara-dashboard"
+        echo "logs: journalctl -u carbonara-dashboard -f"
+    else
+        echo "serviço instalado mas não subiu — veja: systemctl status carbonara-dashboard" >&2
+        exit 1
+    fi
+}
+
+case "${1:-}" in
+    iniciar|start)     shift; iniciar "$@" ;;
+    parar|stop)        shift; parar ;;
+    reiniciar|restart) shift; parar; iniciar "$@" ;;
+    status)            status ;;
+    log|logs)          [ -f "$LOGFILE" ] || die "sem log ainda ($LOGFILE)"; exec tail -n 50 -f "$LOGFILE" ;;
+    servico|service)   servico ;;
+    *) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

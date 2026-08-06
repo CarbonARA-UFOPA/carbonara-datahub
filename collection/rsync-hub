@@ -27,6 +27,8 @@
 #   sudo ./rsync-hub add <id> --senha    # autoriza por USUÁRIO+SENHA (rsync daemon:873;
 #                                        #   simples no cliente, dados sem criptografia)
 #   sudo ./rsync-hub remove <id>         # revoga o acesso da estação
+#   sudo ./rsync-hub move-root <novo>    # MIGRA a raiz inteira (dados+chaves+conf) para
+#                                        #   outra pasta; a antiga fica como cópia de segurança
 #        ./rsync-hub list                # lista estações autorizadas
 #        ./rsync-hub monitor             # fica rodando, mostrando as conexões (Ctrl-C sai)
 #        ./rsync-hub status              # mostra o status uma vez
@@ -39,7 +41,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-07-23.2"
+RSYNC_HUB_VERSION="2026-08-06.2"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -137,13 +139,17 @@ create_host() {   # o miolo do install: conta de serviço + pastas + arquivos
 }
 
 save_conf() {     # persiste as escolhas para os próximos usos (inclusive o serve via sshd)
+    # Escrita ATÔMICA (tmp + mv na mesma pasta): o serve roda a CADA conexão de
+    # estação e faz source deste arquivo — um '>' direto teria uma janela de conf
+    # parcial (BASE ausente => defaults errados) bem no meio de um move-root.
     if { echo "# gerado por 'rsync-hub install' em $(date -u +%FT%TZ)"
          echo "BASE=$BASE"
          echo "HUB_USER=$HUB_USER"
-         echo "RRSYNC=$RRSYNC"; } > "$CONF_FILE" 2>/dev/null; then
-        chmod 644 "$CONF_FILE"
+         echo "RRSYNC=$RRSYNC"; } > "$CONF_FILE.tmp" 2>/dev/null \
+       && chmod 644 "$CONF_FILE.tmp" && mv "$CONF_FILE.tmp" "$CONF_FILE"; then
         echo "configuração gravada em $CONF_FILE."
     else
+        rm -f "$CONF_FILE.tmp" 2>/dev/null || true
         echo "aviso: não consegui gravar $CONF_FILE — defina CARBONARA_ROOT/HUB_USER no ambiente."
     fi
 }
@@ -351,9 +357,14 @@ rsyncd_listening() {  # o daemon está escutando na porta?
     fi
 }
 
+has_systemd() {  # systemd PRESENTE E RODANDO (PID 1) — só o binário não basta:
+                 # num container/chroot o systemctl existe mas 'daemon-reload' falha.
+    command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
 ensure_rsyncd() {   # deixa o daemon no ar (config e senhas são relidos a cada conexão)
     rebuild_rsyncd_conf
-    if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+    if has_systemd; then
         cat > /etc/systemd/system/carbonara-rsyncd.service <<EOF
 [Unit]
 Description=CARBONARA rsync daemon (estações com usuário+senha)
@@ -585,6 +596,121 @@ remove_station() {
     fi
 }
 
+move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
+    # Por que a raiz inteira (e nunca só incoming/): o hub deriva TUDO da BASE —
+    # INCOMING=$BASE/incoming, o home da conta de serviço É a BASE (o sshd acha o
+    # authorized_keys por ele), e o rsyncd.conf/unit systemd embutem caminhos
+    # absolutos. Mover um pedaço quebraria esses invariantes; mover a BASE mantém
+    # o modelo com uma variável só. A raiz antiga NUNCA é apagada por este comando.
+    need_root
+    new="${1:-}"; ok="${2:-}"
+    [ -n "$new" ] || die "uso: rsync-hub move-root <novo_caminho_absoluto> [--confirmo]"
+    case "$new" in /*) : ;; *) die "use um caminho ABSOLUTO (começando com /)" ;; esac
+    new="$(printf '%s' "$new" | sed 's:/*$::')"
+    [ -n "$new" ] || die "não dá para usar '/' como raiz"
+    # Sem espaços/aspas/':'/'\' no caminho: eles quebrariam o rsyncd.conf gerado
+    # (path= não tem escape), o INSTRUCOES e invocações citadas — mesma restrição
+    # prática do install.
+    case "$new" in
+        *[\ \	]*|*\'*|*\"*|*:*|*\\*) die "o novo caminho não pode conter espaços, aspas, ':' ou '\\'" ;;
+    esac
+    old="$BASE"
+    [ "$new" != "$old" ] || die "o novo caminho é igual à raiz atual ($old)"
+    case "$new/" in "$old"/*) die "o novo caminho fica DENTRO da raiz atual ($old)" ;; esac
+    case "$old/" in "$new"/*) die "a raiz atual ($old) fica dentro do novo caminho" ;; esac
+    [ -d "$old" ] || die "raiz atual não existe: $old (confira $CONF_FILE)"
+    command -v rsync >/dev/null 2>&1 || die "'rsync' é necessário para copiar os dados"
+    id "$HUB_USER" >/dev/null 2>&1 || die "conta '$HUB_USER' não existe — rode: sudo rsync-hub install"
+    if [ -e "$new" ]; then
+        [ -d "$new" ] || die "o destino existe e não é uma pasta: $new"
+        [ -z "$(ls -A "$new" 2>/dev/null)" ] || die "o destino existe e NÃO está vazio: $new"
+    fi
+
+    echo "Mover a raiz do hub:  $old  →  $new"
+    echo "  - copia TUDO (incoming/, archive/, stations/, .ssh/, log/…) preservando dono/permissões;"
+    echo "  - muda o home da conta '$HUB_USER' (o sshd lê o authorized_keys por ele);"
+    echo "  - regrava $CONF_FILE e regenera/reinicia o rsyncd (se o modo senha estiver em uso);"
+    echo "  - a raiz antiga é PRESERVADA como cópia de segurança (remoção só manual)."
+    if [ "$ok" != "--confirmo" ]; then
+        is_tty || die "sem terminal: confirme com  rsync-hub move-root $new --confirmo"
+        ask_yn "Confirmar a migração agora?" n || { echo "cancelado — nada foi alterado."; exit 1; }
+    fi
+
+    # Destino com o mesmo dono/modo da raiz atual; e a conta de serviço PRECISA
+    # alcançá-lo (pais com o+x) — mesmo requisito de sempre do sshd/rrsync.
+    install -d "$new"
+    chown --reference="$old" "$new" 2>/dev/null || chown "$HUB_USER:$HUB_USER" "$new"
+    chmod --reference="$old" "$new" 2>/dev/null || chmod 755 "$new"
+    su -s /bin/sh -c "test -r '$new' && test -x '$new'" "$HUB_USER" 2>/dev/null || \
+        die "a conta '$HUB_USER' não consegue acessar $new — alguma pasta do caminho sem 'o+x'? (nada foi migrado)"
+
+    echo "[1/4] copiando os dados (primeira passada — pode demorar)…"
+    rsync -aH "$old"/ "$new"/ || die "cópia falhou — NADA foi alterado; a raiz continua $old"
+
+    echo "[2/4] trocando a configuração para a nova raiz…"
+    # Ordem deliberada: home primeiro (se falhar — ex.: estação conectada agora —
+    # nada mudou e dá para tentar de novo); depois o conf, que redireciona o serve.
+    usermod -d "$new" "$HUB_USER" 2>/dev/null || \
+        die "não consegui mudar o home de '$HUB_USER' (alguma estação enviando agora?) — tente de novo; a raiz continua $old"
+    BASE="$new"; derive_paths; save_conf
+    grep -q "BASE=$new" "$CONF_FILE" 2>/dev/null || \
+        echo "AVISO: confira $CONF_FILE — deveria conter BASE=$new"
+
+    echo "[3/4] sincronização final (pega o que chegou durante a cópia)…"
+    rsync -aH "$old"/ "$new"/ || echo "AVISO: a passada final falhou — compare $old e $new manualmente"
+
+    echo "[4/4] serviços…"
+    rm -f "$new/rsyncd.pid" "$new/rsyncd.lock"   # cópias do daemon antigo (stale)
+    if [ -s "$RSYNCD_SECRETS" ]; then
+        if has_systemd; then
+            ensure_rsyncd
+            systemctl restart carbonara-rsyncd 2>/dev/null || true
+        else
+            # Sem systemd: derruba o daemon antigo e ESPERA ele soltar a porta —
+            # o kill é assíncrono e o daemon novo morreria com "address in use".
+            mr_pid="$(cat "$old/rsyncd.pid" 2>/dev/null || true)"
+            if [ -n "$mr_pid" ]; then
+                kill "$mr_pid" 2>/dev/null || true
+                for _ in 1 2 3 4 5; do
+                    kill -0 "$mr_pid" 2>/dev/null || break
+                    sleep 1
+                done
+            fi
+            ensure_rsyncd
+        fi
+        echo "  rsyncd (modo senha) regenerado para a nova raiz e reiniciado."
+    else
+        echo "  (modo senha não está em uso — nada a fazer no rsyncd.)"
+    fi
+
+    cat > "$old/RAIZ-MIGRADA.txt" <<EOF
+Esta raiz foi MIGRADA para: $new
+em $(date -u +%FT%TZ), por 'rsync-hub move-root' (v$RSYNC_HUB_VERSION).
+
+Os envios novos já chegam na nova raiz. Esta pasta ficou como cópia de segurança:
+depois de conferir que está tudo certo (recepção E ingestão na nova raiz),
+ela pode ser removida manualmente.
+EOF
+
+    echo
+    echo "===== Migração concluída: $old → $new ====="
+    echo
+    echo "As ESTAÇÕES não precisam de NENHUMA mudança: o destino delas é decidido pelo"
+    echo "servidor a cada conexão (o serve lê $CONF_FILE), então os próximos envios já"
+    echo "caem na nova raiz automaticamente — chave e senha."
+    echo
+    echo "Pendências (manuais) só nos CONSUMIDORES da raiz, se você os usa:"
+    echo "  1. SE este servidor roda a pilha Docker do projeto (banco/ingestão/FTP —"
+    echo "     confira com 'docker compose ps' na pasta do repositório): ajuste"
+    echo "     CARBONARA_ROOT=$new no arquivo .env e rode 'docker compose up -d';"
+    echo "     containers congelam o caminho montado quando sobem. Não usa Docker"
+    echo "     aqui? Ignore este item."
+    echo "  2. dashboard: ajuste a raiz em Configurações para $new"
+    echo "     (se a migração foi disparada pela dashboard, isso já foi feito)."
+    echo "  3. confira uma recepção na nova raiz; só então remova a raiz antiga"
+    echo "     (ficou intacta, com um RAIZ-MIGRADA.txt de aviso)."
+}
+
 list_stations() {
     any=0
     if [ -f "$AUTHKEYS" ] && grep -q 'serve ' "$AUTHKEYS"; then
@@ -795,6 +921,8 @@ uso:
   sudo rsync-hub add <id> --senha    autoriza por USUÁRIO+SENHA (rsync daemon, porta $RSYNCD_PORT;
                                      mais simples no cliente, mas dados SEM criptografia)
   sudo rsync-hub remove <id>         revoga o acesso da estação (dados preservados)
+  sudo rsync-hub move-root <novo>    MIGRA a raiz inteira (dados+chaves+conf) para outra
+                                     pasta; a antiga fica intacta como cópia de segurança
        rsync-hub list                lista as estações autorizadas
        rsync-hub monitor             modo ao vivo: quem conectou e o que chegou (Ctrl-C sai)
        rsync-hub status              uma leitura do status
@@ -827,6 +955,7 @@ case "${1:-}" in
              if [ "${2:-}" = "--senha" ]; then add_station_pw "${1:-}" "${3:-}"
              else add_station "$@"; fi ;;
     remove)  shift; remove_station "$@" ;;
+    move-root) shift; move_root "$@" ;;
     list)    list_stations ;;
     monitor) monitor ;;
     status)  print_status ;;

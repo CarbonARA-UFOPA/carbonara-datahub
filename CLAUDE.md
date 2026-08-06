@@ -102,6 +102,15 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   ingestion sweeps it). `add <id> <pubkey>` authorizes an existing key. Also `remove <id>`,
   `list`, and `cliente` (prints client-setup instructions). Run without args it opens an
   interactive menu (the guided "add" accepts ENTER = generate, a path, or a pasted line).
+  `move-root <new> [--confirmo]` migrates the ENTIRE base to another dir — never a
+  subset: INCOMING derives from BASE, the service account's **home IS the base** (sshd
+  finds authorized_keys through it → `usermod -d`), and rsyncd.conf/systemd unit embed
+  absolute paths. Flow: preflight (absolute, not nested either way, empty target,
+  service account can traverse) → `rsync -aH` copy → switch home+conf → delta pass →
+  regenerate/restart rsyncd → `RAIZ-MIGRADA.txt` marker in the old root, which is
+  **never deleted** (manual, after verifying). It prints the manual follow-ups
+  (compose `.env` `CARBONARA_ROOT` + `up -d`, dashboard data_root); `--confirmo` is
+  required without a TTY (that's how the dashboard invokes it).
 - **Password mode (second auth path)** — `add <id> --senha [senha]` authorizes a station
   via the **rsync daemon** (port 873) instead of SSH: user = station id, secrets in
   `$BASE/rsyncd.secrets` (600, source of truth), `$BASE/rsyncd.conf` fully regenerated
@@ -344,6 +353,30 @@ computes live station status. Viewing is open; edits require the admin login
   way (datalogger `.dat`s grow unbounded). Campbell `NAN`/`±7999` become `None` (gaps).
 - Chart.js is **vendored** in `dashboard/static/` (no CDN — the host may be offline).
 - Read-only over the data: removing stations/files from the dashboard never touches disk.
+- **Hub management page** (`/hub`, blueprint `app/hub_views.py` + logic `app/hub.py`):
+  admin-only (even viewing — it exposes credentials/downloads). Reads (station list,
+  `stations/<id>/` credentials, file browser over `incoming/`/`archive/`/`quarantine/`/
+  `stations/` with downloads) go straight to the filesystem — the hub's open read
+  policy makes that sudo-less. The per-station "kit de ativação" ZIP
+  (`/hub/stations/<id>/kit`) bundles `stations/<id>/` credentials + the
+  `collection/station/` clients + a generated LEIA-ME — files are copied byte-for-byte
+  (the `.ps1` BOM invariant), with external_attr modes so the private key extracts as
+  600 and the `.sh` as executable. Writes (authorize/revoke stations) shell out to the
+  **installed `rsync-hub`** via `sudo -n` (never reimplement its key/rsyncd logic);
+  `dashboard/setup-hub-access.sh` (run once as root on the server) installs the
+  sudoers rule restricted to `add`/`remove`/`move-root` — validated with `visudo -cf`
+  before install; without it the page degrades to read-only with the hint on screen.
+  Moving the data root lives as a card in *Configurações* → POST `/hub/move-root`
+  (`rsync-hub move-root <new> --confirmo`, long timeout); on success the dashboard
+  updates its own `data_root`, while compose `.env` remains a manual follow-up (shown
+  to the admin). File browsing stays strictly read-only (no
+  delete/move — ingestion owns the `incoming/ → archive|quarantine` lifecycle), and
+  `safe_resolve` blocks path traversal (resolved path must stay under the area root).
+- Lifecycle: `dashboard/dashboardctl` (`iniciar|parar|reiniciar|status|log|servico`,
+  English aliases accepted) — background run via nohup+setsid+PID file (survives SSH
+  disconnect), auto-creates `.venv/` on first start, `servico` installs a systemd
+  unit `carbonara-dashboard` running as the dashboard dir's owner (never root) and
+  hands control to systemctl (start/stop refuse while the unit is active).
 - This is the admin slice of a future full dashboard that will read from TimescaleDB.
 
 ## Data model (TimescaleDB)
