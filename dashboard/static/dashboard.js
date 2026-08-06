@@ -214,8 +214,16 @@ function initMapPage() {
       maxZoom: 19,
       attribution: "Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics",
     });
+  // O servidor do OpenTopoMap é lento e essa é a camada inicial, então pedimos os
+  // tiles um nível de zoom ABAIXO e os desenhamos em 512px (tileSize + zoomOffset):
+  // 1/4 das requisições por tela — metade da resolução, carregamento bem mais rápido.
+  // maxZoom 18 com zoomOffset -1 => zoom de URL 17, o máximo que o OpenTopoMap serve.
   const relevo = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
-    maxZoom: 17,
+    maxZoom: 18,
+    tileSize: 512,
+    zoomOffset: -1,
+    keepBuffer: 1,          // menos tiles fora da tela (padrão: 2)
+    updateWhenZooming: false, // não busca tiles intermediários durante a animação
     attribution: 'Map data: &copy; OpenStreetMap · SRTM | Style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
   });
 
@@ -228,7 +236,7 @@ function initMapPage() {
 
   const located = stations.filter((s) => s.latitude != null && s.longitude != null);
   if (!located.length) {
-    map.setView([-3.5, -55.0], 5); // Amazônia central como enquadramento padrão
+    map.setView([-3.5, -55.0], 6); // Amazônia central como enquadramento padrão
   }
 
   // Tooltip do marcador: cabeçalho (nome + status) e rodapé (última leitura)
@@ -350,7 +358,7 @@ function initMapPage() {
   });
   if (located.length) {
     const bounds = L.latLngBounds(located.map((s) => [s.latitude, s.longitude]));
-    map.fitBounds(bounds.pad(0.3), { maxZoom: 9 });
+    map.fitBounds(bounds.pad(0.15), { maxZoom: 11 });
   }
 
   // Subjanela (modal) com os gráficos da estação clicada (mesma API de séries do detalhe).
