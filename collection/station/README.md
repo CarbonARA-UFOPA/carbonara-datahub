@@ -99,6 +99,21 @@ Os filtros valem só na *seleção* do que enviar — as pastas locais continuam
 Alterar filtros ou pastas **reconfigura automaticamente** o que os próximos ciclos
 sincronizam; rode `schedule` de novo se quiser mudar o intervalo.
 
+## Agendamento robusto (cópia estável + vigilância)
+
+Ao agendar, o cliente **instala uma cópia do próprio script num caminho estável** e é
+essa cópia que o cron/Agendador executa — Linux: `~/.local/bin/carbonara-station.sh`;
+Windows: `%LOCALAPPDATA%\carbonara-station\bin\carbonara-station.ps1`. Assim, mesmo que
+o arquivo original tenha vindo de um pendrive ou da pasta Downloads e saia do lugar, o
+envio automático não quebra. Essa instalação **não pede administrador** (vai para o
+perfil do usuário); se não houver permissão, o cliente **avisa na hora** e agenda a
+cópia atual — nesse caso, não mova nem apague o arquivo.
+
+O `status` também **vigia o agendamento**: cada ciclo de envio grava um carimbo local e,
+se o último ciclo estiver além de 2× o intervalo agendado (ou o script agendado tiver
+sumido, no Linux), o `status` mostra um **ATENÇÃO** dizendo que o envio automático pode
+não estar executando e como corrigir.
+
 ## Como o envio funciona
 
 - **As pastas locais NUNCA são alteradas** — nada é movido nem apagado; o propósito é
@@ -165,7 +180,8 @@ administrador, ele **oferece elevar** (aparece o aviso do Windows/UAC). Aceitand
   você estiver logado** — o próprio cliente avisa isso em letras claras. Para virar SYSTEM
   depois, refaça o `schedule` e aceite elevar.
 
-Confira com `status` (mostra se a tarefa está ativa) e pelos carimbos em `envios.log`.
+Confira com `status` (mostra se a tarefa está ativa **e se o último ciclo aconteceu no
+prazo esperado**) e pelos carimbos em `envios.log`.
 
 > Se você tinha configurado com uma versão anterior e a rotina parava ao fechar a janela,
 > rode o `schedule` de novo e **aceite elevar** — a tarefa é recriada como SYSTEM.
