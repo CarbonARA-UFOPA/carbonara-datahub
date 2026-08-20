@@ -1623,3 +1623,10 @@ stations:
   longitude: null
   offline_window_min: null
   files: []
+- id: walkuptower
+  name: walkuptower
+  heartbeat_file: null
+  latitude: null
+  longitude: null
+  offline_window_min: null
+  files: []
