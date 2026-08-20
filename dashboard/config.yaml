@@ -6,6 +6,7 @@ data_root: /srv/carbonara/
 connections_log: null
 timezone: null
 stale_fallback_seconds: 3600
+rsync_hub_bin: null
 auth:
   username: carbonara
   password_hash: scrypt:32768:8:1$Y8azd3pSABrjsI7m$6dab69b533ec7eacb1d2205574c4cf573766564ea82d847d4e8d2ad0ebfb0fe5807dcdc204fabb3580407d3976ea2e35739d89baf87de46505b7f07639d1addf
@@ -1493,114 +1494,10 @@ stations:
 - id: km67
   name: km67
   heartbeat_file: null
-  latitude: null
-  longitude: null
+  latitude: -2.8865
+  longitude: -54.9203
   offline_window_min: null
   files:
-  - path: incoming/km67/loggernet/data/K67CPEC_Time_Series.dat
-    alias: loggernet/data/K67CPEC_Time_Series
-    tail_lines: 100
-    window_hours: null
-    separator: ','
-    quotechar: '"'
-    decimal: .
-    skip_header_lines: 4
-    header_line: 2
-    timestamp:
-      column: 0
-      format: '%Y-%m-%d %H:%M:%S'
-    variables:
-    - column: 1
-      label: RECORD
-      unit: null
-      min: null
-      max: null
-    - column: 2
-      label: Ux
-      unit: null
-      min: null
-      max: null
-    - column: 3
-      label: Uy
-      unit: null
-      min: null
-      max: null
-    - column: 4
-      label: Uz
-      unit: null
-      min: null
-      max: null
-    - column: 5
-      label: T_SONIC
-      unit: null
-      min: null
-      max: null
-    - column: 6
-      label: diag_sonic
-      unit: null
-      min: null
-      max: null
-    - column: 7
-      label: CO2_mixratio
-      unit: null
-      min: null
-      max: null
-    - column: 8
-      label: H2O_mixratio
-      unit: null
-      min: null
-      max: null
-    - column: 9
-      label: diag_irga
-      unit: null
-      min: null
-      max: null
-    - column: 10
-      label: TA_1_1_1
-      unit: null
-      min: null
-      max: null
-    - column: 11
-      label: T_cell
-      unit: null
-      min: null
-      max: null
-    - column: 12
-      label: PA_cell
-      unit: null
-      min: null
-      max: null
-    - column: 13
-      label: CO2_sig_strgth
-      unit: null
-      min: null
-      max: null
-    - column: 14
-      label: H2O_sig_strgth
-      unit: null
-      min: null
-      max: null
-    - column: 15
-      label: PA_diff
-      unit: null
-      min: null
-      max: null
-    - column: 16
-      label: PA
-      unit: null
-      min: null
-      max: null
-    - column: 17
-      label: pump_flow
-      unit: null
-      min: null
-      max: null
-    - column: 18
-      label: sampling_regime
-      unit: null
-      min: null
-      max: null
-    id: k67cpec_time_series
   - path: incoming/km67/loggernet/K67CPEC_Time_Series.dat
     alias: loggernet/K67CPEC_Time_Series
     tail_lines: 100
@@ -1714,6 +1611,13 @@ stations:
   files: []
 - id: ftir_farm
   name: ftir_farm
+  heartbeat_file: null
+  latitude: null
+  longitude: null
+  offline_window_min: null
+  files: []
+- id: ftir_flona
+  name: ftir_flona
   heartbeat_file: null
   latitude: null
   longitude: null
