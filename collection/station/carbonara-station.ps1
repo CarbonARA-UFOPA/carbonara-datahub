@@ -67,6 +67,11 @@ $ConfFile   = Join-Path $ConfDir 'config.json'
 $LogFile    = Join-Path $ConfDir 'envios.log'
 $StateFile  = Join-Path $ConfDir 'sent.state'   # o que já foi enviado: rótulo/caminho<TAB>tamanho:mtime
 $TaskName   = 'CarbonaraStationSend'
+# O Agendador de Tarefas congela o caminho do script na tarefa — se o setup rodou de um
+# pendrive/Downloads e o arquivo sair do lugar, o envio para em silêncio. Por isso o
+# agendamento instala a cópia em execução num caminho ESTÁVEL do perfil do usuário e
+# agenda a cópia instalada (não requer administrador; SYSTEM lê o perfil normalmente).
+$InstallBin = Join-Path $env:LOCALAPPDATA 'carbonara-station\bin\carbonara-station.ps1'
 $DefaultHubHost = '200.139.13.53'   # servidor central do projeto (padrão sugerido no setup)
 $CwRsyncDir = 'C:\cwrsync'
 $CwRsyncUrl = 'https://itefix.net/sites/default/files/2026-06/cwrsync_6.4.8_x64_free.zip'
@@ -761,6 +766,12 @@ function Invoke-Send {
     catch { $mtx = New-Object System.Threading.Mutex($false, 'CarbonaraStationSend') }
     if (-not $mtx.WaitOne(0)) { Write-Host 'outro envio já está em andamento — saindo.'; return }
     try {
+        # Carimbo do ciclo: o 'status' compara o mtime deste marcador com o intervalo
+        # agendado para denunciar uma tarefa que existe mas não está executando.
+        try {
+            New-Item -ItemType Directory -Force -Path $ConfDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $ConfDir '.last-send') -Value (Get-Date -Format o)
+        } catch { }
         # Sinal de vida ANTES de tudo: mesmo sem dados novos o servidor sabe que a
         # estação está viva (e qual é o seu ciclo). Falha aqui não interrompe o envio.
         if (-not (Send-Heartbeat $cfg)) {
@@ -863,6 +874,7 @@ function Invoke-Purge {
     }
     foreach ($f in @($ConfFile, $StateFile, $LogFile,
                      (Join-Path $ConfDir '.carbonara-status'),
+                     (Join-Path $ConfDir '.last-send'),
                      (Join-Path $ConfDir 'files-from.txt'))) {
         Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
     }
@@ -966,9 +978,31 @@ function Show-FoldersMenu {
 # A rotina de envio é uma TAREFA do Windows — vive independente desta janela. O ideal é
 # rodar como SYSTEM: continua com a janela FECHADA, sem ninguém logado e APÓS REINICIAR.
 # Isso exige administrador; se não for o caso, o Install-Schedule oferece elevar (UAC).
+# Instala a cópia em execução em $InstallBin e devolve o caminho que a tarefa deve usar.
+# Copy-Item copia byte a byte — preserva o BOM UTF-8 obrigatório deste arquivo.
+function Install-Self {
+    if ([string]::Equals($PSCommandPath, $InstallBin, 'OrdinalIgnoreCase')) { return $InstallBin }
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $InstallBin) | Out-Null
+        Copy-Item -LiteralPath $PSCommandPath -Destination $InstallBin -Force
+        Write-Host ("instalado em {0} — a tarefa agendada usa esta cópia (a original pode" -f $InstallBin)
+        Write-Host 'ser movida ou apagada sem quebrar o envio).'
+        return $InstallBin
+    } catch {
+        Write-Host ("aviso: não consegui instalar em {0} ({1})." -f $InstallBin, $_.Exception.Message)
+        Write-Host ("a tarefa vai apontar para a cópia atual ({0});" -f $PSCommandPath)
+        Write-Host 'NÃO mova nem apague este arquivo, ou o envio para.'
+        return $PSCommandPath
+    }
+}
+
 function Install-Schedule([string]$Every) {  # instala/substitui a tarefa de envio periódico
     $minutes = [int]$Every
     if ($minutes -lt 1) { $minutes = 10 }
+
+    # Verificação prévia, ANTES de mexer no Agendador: instala a cópia estável (isto não
+    # pede administrador — vai para o perfil do usuário) e é ELA que a tarefa executa.
+    $scriptPath = Install-Self
 
     # Sem admin: oferece re-executar ELEVADO para criar a tarefa como SYSTEM (o modo que
     # sobrevive a fechar a janela, deslogar e reiniciar). Passa -Every para não reperguntar.
@@ -977,7 +1011,7 @@ function Install-Schedule([string]$Every) {  # instala/substitui a tarefa de env
         Write-Host 'Para o envio continuar com a janela FECHADA, sem login e APÓS REINICIAR, a'
         Write-Host 'tarefa precisa rodar como SYSTEM — isso pede administrador (aparece o aviso UAC).'
         if (Ask-YesNo 'Elevar agora e instalar como SYSTEM (recomendado)?' $true) {
-            $a = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" schedule -ConfigDir `"$ConfDir`" -Every $minutes"
+            $a = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" schedule -ConfigDir `"$ConfDir`" -Every $minutes"
             try {
                 Start-Process -FilePath 'powershell.exe' -ArgumentList $a -Verb RunAs -Wait
             } catch {
@@ -1000,7 +1034,7 @@ function Install-Schedule([string]$Every) {  # instala/substitui a tarefa de env
     $asSystem = Test-IsAdmin
     # Ação: 'send' OCULTO (sem piscar janela), apontando para ESTA configuração.
     # -ConfigDir fixa a config (a tarefa SYSTEM tem outro %LOCALAPPDATA%).
-    $tr = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`" send -ConfigDir `"$ConfDir`""
+    $tr = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" send -ConfigDir `"$ConfDir`""
     # Invoke-NativeQuiet escapa as aspas internas do /TR como \" — obrigatório quando o
     # caminho do script tem espaços (ex.: C:\Users\Km67 Eddy System\...).
     $argv = @('/Create', '/F', '/SC', 'MINUTE', '/MO', "$minutes", '/TN', $TaskName)
@@ -1075,6 +1109,22 @@ function Invoke-Status {
     $r = Invoke-Native 'schtasks.exe' @('/Query', '/TN', $TaskName)
     if ($r.Code -eq 0) {
         Write-Host ("agenda:    tarefa '{0}' ativa (Agendador de Tarefas)" -f $TaskName)
+        # Vigilância ativa: o último ciclo (marcador gravado pelo 'send') aconteceu
+        # dentro do esperado (2 intervalos + folga)? Independe do idioma do schtasks.
+        $iv = [int]$cfg.SendEveryMin; if ($iv -lt 1) { $iv = 60 }
+        $marker = Join-Path $ConfDir '.last-send'
+        if (Test-Path -LiteralPath $marker) {
+            $age = [int]((Get-Date) - (Get-Item -LiteralPath $marker).LastWriteTime).TotalMinutes
+            if ($age -gt ($iv * 2 + 2)) {
+                Write-Host ("  ATENÇÃO: último ciclo de envio há {0} min (esperado a cada {1} min)" -f $age, $iv)
+                Write-Host '  — a tarefa pode não estar executando (script movido? tarefa que só roda'
+                Write-Host '  logado?). Refaça: .\carbonara-station.ps1 schedule (e aceite ELEVAR).'
+            } else {
+                Write-Host ("  último ciclo: há {0} min (dentro do esperado)." -f $age)
+            }
+        } else {
+            Write-Host ("  (nenhum ciclo executado ainda — o primeiro ocorre em até {0} min.)" -f $iv)
+        }
     } else {
         Write-Host "agenda:    (não agendado — use 'schedule')"
     }

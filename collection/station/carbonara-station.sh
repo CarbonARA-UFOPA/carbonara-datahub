@@ -52,6 +52,37 @@ F_PATH=(); F_LABEL=(); F_FEXC=(); F_DEXC=()
 die()      { echo "erro: $*" >&2; exit 1; }
 self_path(){ readlink -f "$0" 2>/dev/null || echo "$0"; }
 
+# O cron congela o caminho do script no momento do agendamento — se o setup rodou de um
+# pendrive/Downloads e o arquivo sair do lugar, o envio para em silêncio. Por isso o
+# agendamento instala a cópia em execução num caminho ESTÁVEL e agenda a cópia instalada
+# (mesmo padrão do rsync-hub no servidor). Não requer administrador: fica no perfil.
+INSTALL_BIN="${CARBONARA_STATION_BIN:-$HOME/.local/bin/carbonara-station.sh}"
+
+install_self() {  # instala a cópia em execução em $INSTALL_BIN e ecoa o caminho a agendar
+    self="$(self_path)"
+    [ "$self" = "$INSTALL_BIN" ] && { printf '%s\n' "$self"; return 0; }
+    dir="$(dirname "$INSTALL_BIN")"
+    if ! mkdir -p "$dir" 2>/dev/null || [ ! -w "$dir" ]; then
+        echo "aviso: sem permissão de escrita em $dir — o agendamento vai apontar para a" >&2
+        echo "cópia atual ($self). NÃO mova nem apague este arquivo, ou o envio para." >&2
+        printf '%s\n' "$self"; return 0
+    fi
+    if ! cmp -s "$self" "$INSTALL_BIN" 2>/dev/null; then
+        if cp "$self" "$INSTALL_BIN.tmp" 2>/dev/null \
+           && chmod 755 "$INSTALL_BIN.tmp" 2>/dev/null \
+           && mv "$INSTALL_BIN.tmp" "$INSTALL_BIN" 2>/dev/null; then
+            echo "instalado em $INSTALL_BIN — o agendamento usa esta cópia (a original pode" >&2
+            echo "ser movida ou apagada sem quebrar o envio)." >&2
+        else
+            rm -f "$INSTALL_BIN.tmp" 2>/dev/null || true
+            echo "aviso: não consegui gravar $INSTALL_BIN — o agendamento vai apontar para a" >&2
+            echo "cópia atual ($self). NÃO mova nem apague este arquivo, ou o envio para." >&2
+            printf '%s\n' "$self"; return 0
+        fi
+    fi
+    printf '%s\n' "$INSTALL_BIN"
+}
+
 ask() { # $1=pergunta $2=default → ecoa a resposta (Enter aceita o default)
     if [ -n "${2:-}" ]; then printf '%s [%s]: ' "$1" "$2" >&2; else printf '%s: ' "$1" >&2; fi
     read -r a || a=""
@@ -471,6 +502,9 @@ send() {
         return 0
     fi
     [ -f "$STATE" ] || : > "$STATE"
+    # Carimbo do ciclo: o 'status' compara com o intervalo agendado para denunciar um
+    # agendamento que existe mas não está executando (script movido, cron parado, …).
+    date +%s > "$CONF_DIR/.last-send" 2>/dev/null || true
     # Sinal de vida ANTES de tudo: mesmo sem dados novos o servidor sabe que a
     # estação está viva (e qual é o seu ciclo). Falha aqui não interrompe o envio.
     if ! send_heartbeat; then
@@ -657,11 +691,14 @@ folders_menu() {
 # --- Agendamento (cron) ---------------------------------------------------------------
 schedule_install() {  # $1 = intervalo em minutos (instala/substitui a entrada no cron)
     iv="$1"
+    # Verificação prévia: aqui nada exige administrador — o agendamento vai para o cron
+    # DO USUÁRIO e a cópia estável para o perfil ($INSTALL_BIN). Só o crontab é requisito.
     command -v crontab >/dev/null 2>&1 || die "crontab não encontrado nesta máquina"
-    self="$(self_path)"
+    self="$(install_self)"
     ( crontab -l 2>/dev/null | grep -vF "$CRON_TAG" || true
       echo "*/$iv * * * * $self send >> $LOGF 2>&1 $CRON_TAG" ) | crontab -
     echo "ok: envio automático ativo a cada $iv min (cron do usuário $(id -un))."
+    echo "    script agendado: $self"
     echo "para remover: $(basename "$0") unschedule"
 }
 
@@ -698,7 +735,7 @@ purge_config() {
         echo "  agendamento (cron) removido."
     fi
     rm -f "$CONF" "$FOLDERS" "$STATE" "$LOGF" \
-          "$CONF_DIR/.carbonara-status" "$CONF_DIR/.lock"
+          "$CONF_DIR/.carbonara-status" "$CONF_DIR/.last-send" "$CONF_DIR/.lock"
     echo "ok: configuração e agendamento removidos — rode 'setup' para configurar de novo."
 }
 
@@ -721,7 +758,30 @@ status() {
     rm -f "$scan"
     echo "arquivos:  $total no total · $pend novo(s)/alterado(s) a sincronizar"
     if crontab -l 2>/dev/null | grep -qF "$CRON_TAG"; then
-        echo "agenda:    $(crontab -l 2>/dev/null | grep -F "$CRON_TAG" | awk '{print $1}') (cron)"
+        line="$(crontab -l 2>/dev/null | grep -F "$CRON_TAG" | head -n 1)"
+        echo "agenda:    $(echo "$line" | awk '{print $1}') (cron)"
+        # Vigilância ativa: o caminho agendado ainda existe? E o último ciclo (carimbo
+        # gravado pelo 'send') aconteceu dentro do esperado (2 intervalos + folga)?
+        sched="$(echo "$line" | awk '{print $6}')"
+        if [ -n "$sched" ] && [ ! -x "$sched" ]; then
+            echo "  ATENÇÃO: o script agendado sumiu ($sched) — o envio automático está"
+            echo "  QUEBRADO. Rode 'schedule' de novo para reinstalar e reagendar."
+        fi
+        iv="$(echo "$line" | awk '{print $1}' | tr -cd '0-9')"
+        { [ -n "$iv" ] && [ "$iv" -gt 0 ]; } || iv=60
+        if [ -f "$CONF_DIR/.last-send" ]; then
+            last="$(cat "$CONF_DIR/.last-send" 2>/dev/null || echo 0)"
+            case "$last" in ''|*[!0-9]*) last=0 ;; esac
+            age=$(( $(date +%s) - last ))
+            if [ "$age" -gt $(( iv * 120 + 120 )) ]; then
+                echo "  ATENÇÃO: último ciclo de envio há $(( age / 60 )) min (esperado a cada"
+                echo "  $iv min) — o agendamento pode não estar executando. Veja: tail $LOGF"
+            else
+                echo "  último ciclo: há $(( age / 60 )) min (dentro do esperado)."
+            fi
+        else
+            echo "  (nenhum ciclo executado ainda — o primeiro ocorre em até $iv min.)"
+        fi
     else
         echo "agenda:    (não agendado — use 'schedule')"
     fi

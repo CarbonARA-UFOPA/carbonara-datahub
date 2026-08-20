@@ -247,6 +247,22 @@ age are eligible; dotfiles/dot-dirs are skipped (matches the hub's ingestion rul
 failure the affected folder's state is untouched. Config lives per user
 (`~/.config/carbonara-station/` / `%LOCALAPPDATA%\carbonara-station\`).
 
+**Stable-copy scheduling + watchdog (keep in sync across both clients):** cron/Task
+Scheduler freeze the script path at schedule time, so `schedule` first **self-installs
+the running copy to a stable path** and schedules THAT copy — Linux
+`~/.local/bin/carbonara-station.sh` (`install_self`, override via
+`CARBONARA_STATION_BIN`), Windows
+`%LOCALAPPDATA%\carbonara-station\bin\carbonara-station.ps1` (`Install-Self`;
+`Copy-Item` is byte-for-byte, preserving the `.ps1` BOM — never rewrite the copy with
+text APIs). This install needs NO admin (it lives in the user profile); on write
+failure the client warns loudly and schedules the running copy instead (telling the
+user not to move it). The elevated Windows re-run and the task `/TR` both point at the
+installed copy. Watchdog: every `send` stamps `<confdir>/.last-send` (content = epoch
+on Linux, mtime used on Windows — locale-independent, no schtasks output parsing);
+`status` warns when the schedule exists but the last cycle is older than
+`2×interval + 2 min`, and (Linux) when the scheduled path is gone. `purge` removes the
+marker along with the rest of the config.
+
 Windows scheduling (`Install-Schedule`): the routine is a Task Scheduler task that lives
 independently of the interactive window — the goal is that it keeps sending with the
 window CLOSED, with nobody logged on, and AFTER REBOOT. That requires running as SYSTEM
