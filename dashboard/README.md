@@ -156,6 +156,11 @@ no terminal, sem sair da dashboard:
   listar com tamanho/data e **baixar** qualquer arquivo. Sempre **somente leitura** —
   a dashboard nunca move/apaga; quem move `incoming/ → archive/|quarantine/` é a
   ingestão. Dotfiles (heartbeat, `.rsync-parcial/`) aparecem marcados como ocultos.
+  O mesmo navegador é alcançável pela aba **Estações → Editar** (card *Arquivos desta
+  estação no servidor*), já posicionado em `incoming/<id>/` e com atalhos para
+  *Arquivados* e *Quarentena*; o botão "voltar" retorna à estação de origem. Esse card
+  só é renderizado para administrador — as rotas do navegador continuam `admin_required`,
+  então visitante sem login não vê nem alcança nada.
 
 - **Mover a raiz de dados** (card em *Configurações*): migra a raiz **inteira** do
   hub para outra pasta via `rsync-hub move-root <novo>` — copia tudo preservando

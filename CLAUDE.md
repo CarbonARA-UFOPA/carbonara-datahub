@@ -394,6 +394,14 @@ computes live station status. Viewing is open; edits require the admin login
   to the admin). File browsing stays strictly read-only (no
   delete/move — ingestion owns the `incoming/ → archive|quarantine` lifecycle), and
   `safe_resolve` blocks path traversal (resolved path must stay under the area root).
+  The browser is also reachable from *Estações → Editar* (a card linking to
+  `hub.files` at `incoming/<id>/`, plus archive/quarantine): the card renders only
+  under `{% if is_admin %}` and the `/hub` routes stay `admin_required`, so a
+  logged-out visitor sees nothing — keep both guards. `hub.files` accepts an optional
+  `?estacao=<id>` that only changes the "back" button (validated with
+  `valid_hub_id`, rebuilt via `url_for` — never a caller-supplied URL, so no open
+  redirect); it is threaded through the breadcrumb/area/subfolder links so the origin
+  survives navigation.
 - Lifecycle: `dashboard/dashboardctl` (`iniciar|parar|reiniciar|status|log|servico`,
   English aliases accepted) — background run via nohup+setsid+PID file (survives SSH
   disconnect), auto-creates `.venv/` on first start, `servico` installs a systemd

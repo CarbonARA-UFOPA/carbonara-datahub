@@ -345,9 +345,10 @@ def file_create(station_id):
 @pages.post("/stations/<station_id>/files/discover-add")
 @admin_required
 def files_discover_add(station_id):
-    """Adiciona em lote os .dat marcados na tela de descoberta como arquivos
-    monitorados. Cada um entra com config MÍNIMA (padrões TOA5 + apelido, variáveis
-    vazias) — o mapeamento de colunas/variáveis é feito depois em 'Editar'."""
+    """Adiciona em lote os arquivos marcados na listagem da estação (de qualquer
+    extensão) como arquivos monitorados. Cada um entra com config MÍNIMA (padrões
+    TOA5 + apelido, variáveis vazias) — o mapeamento de colunas/variáveis é feito
+    depois em 'Editar'."""
     cfg = _load()
     station = _station_or_404(cfg, station_id)
     existing = set()

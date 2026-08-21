@@ -55,21 +55,54 @@
 </form>
 
 {% if editing %}
+{% if is_admin %}
+{# Navegação nas pastas do hub — MESMA tela da aba Coleta (blueprint hub.files, que é
+   admin-only). Só é renderizado para administrador: os links levam a listagens e
+   downloads de arquivos do servidor, que não podem vazar para visitante sem login. #}
 <section class="card">
   <div class="page-head">
-    <h2>Descobrir arquivos <code>.dat</code> na estação</h2>
-    <button type="button" class="btn" id="btn-discover"
-            data-url="{{ url_for('api.dat_files', station_id=station['id']) }}">🔎 Procurar arquivos .dat</button>
+    <h2>Arquivos desta estação no servidor</h2>
+    <a class="btn btn-primary"
+       href="{{ url_for('hub.files', area='incoming', subpath=station['id'], estacao=station['id']) }}">
+      📁 Navegar nos arquivos recebidos</a>
   </div>
-  <p class="empty" id="discover-hint">Varre a pasta da estação — o diretório do
+  <p class="empty">Abre o mesmo navegador de arquivos da aba <strong>Coleta</strong>, já
+    posicionado em <code>incoming/{{ station['id'] }}/</code>. Navegação
+    <strong>somente leitura</strong> (listar e baixar) — a dashboard nunca apaga nem move
+    arquivos do hub.</p>
+  <p>
+    <a class="btn" href="{{ url_for('hub.files', area='archive', subpath=station['id'], estacao=station['id']) }}">Arquivados</a>
+    <a class="btn" href="{{ url_for('hub.files', area='quarantine', subpath=station['id'], estacao=station['id']) }}">Quarentena</a>
+    <a class="btn" href="{{ url_for('hub.station', station_id=station['id']) }}">Gerenciar na Coleta</a>
+  </p>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="page-head">
+    <h2>Arquivos e pastas da estação</h2>
+    <button type="button" class="btn" id="btn-discover"
+            data-url="{{ url_for('api.station_files', station_id=station['id']) }}">🔎 Listar arquivos da estação</button>
+  </div>
+  <p class="empty" id="discover-hint">Lista <strong>todos os arquivos</strong> (de qualquer
+    extensão) e as <strong>subpastas</strong> da pasta da estação — o diretório do
     <strong>Arquivo de watchdog</strong> cadastrado acima (ex.:
-    <code>/srv/carbonara/incoming/{{ station['id'] }}/</code>) — e suas subpastas por
-    arquivos <code>.dat</code>. A busca só roda quando você clica no botão.
-    Marque os que quer monitorar, defina um <strong>apelido</strong> para cada um (útil
-    quando há arquivos de mesmo nome em subpastas diferentes) e adicione. Depois use
+    <code>/srv/carbonara/incoming/{{ station['id'] }}/</code>). Arquivos e pastas
+    <strong>ocultos são ignorados</strong> (heartbeat, <code>.rsync-parcial/</code>).
+    A listagem só roda quando você clica no botão.
+    Use o filtro para restringir por texto ou extensão (ex.: <code>.dat</code>), marque os
+    que quer monitorar, defina um <strong>apelido</strong> para cada um (útil quando há
+    arquivos de mesmo nome em subpastas diferentes) e adicione. Depois use
     <em>Editar</em> em cada um para mapear as colunas e variáveis.</p>
   <form method="post" id="discover-form" hidden
         action="{{ url_for('pages.files_discover_add', station_id=station['id']) }}">
+    {# Filtro 100% client-side (dashboard.js): só esconde linhas, não refaz a listagem
+       nem desmarca o que já foi selecionado. #}
+    <label class="discover-filter">Filtrar
+      <input type="text" id="discover-filter" autocomplete="off"
+             placeholder="texto ou extensão — ex.: .dat, meteo, subpasta/">
+    </label>
+    <p class="meta" id="discover-count"></p>
     <div id="discover-results" style="overflow-x:auto"></div>
     <div class="form-actions">
       <button type="button" class="btn" id="btn-discover-all">Marcar/desmarcar todos</button>
@@ -88,7 +121,7 @@
     separador de colunas, o cabeçalho, o timestamp e as variáveis a plotar.</p>
   {% else %}
     <table class="table">
-      <thead><tr><th>Arquivo · caminho (.dat)</th><th>Apelido</th><th>Separador</th><th>Linhas do final</th><th>Variáveis</th><th></th></tr></thead>
+      <thead><tr><th>Arquivo · caminho</th><th>Apelido</th><th>Separador</th><th>Linhas do final</th><th>Variáveis</th><th></th></tr></thead>
       <tbody>
       {% for f in station['files'] %}
         <tr>

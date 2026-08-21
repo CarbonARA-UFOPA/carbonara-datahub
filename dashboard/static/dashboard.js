@@ -860,7 +860,7 @@ function initFileForm() {
   });
 }
 
-/* --- Descoberta de arquivos .dat (tela Editar estação) ------------------------- */
+/* --- Listagem dos arquivos da estação (tela Editar estação) -------------------- */
 function fmtSize(n) {
   if (n == null) return "—";
   if (n < 1024) return n + " B";
@@ -874,11 +874,32 @@ function initDiscover() {
   const form = document.getElementById("discover-form");
   const results = document.getElementById("discover-results");
   const hint = document.getElementById("discover-hint");
+  const filter = document.getElementById("discover-filter");
+  const count = document.getElementById("discover-count");
+
+  /* Filtro puro client-side: casa o texto digitado contra o caminho relativo e a
+     extensão (guardados em data-search) e esconde as demais linhas. Não refaz a
+     chamada ao servidor nem mexe na seleção — o que estiver marcado continua marcado
+     mesmo escondido. */
+  function applyFilter() {
+    const q = (filter.value || "").trim().toLowerCase();
+    const rows = results.querySelectorAll("tbody tr");
+    let shown = 0;
+    rows.forEach((tr) => {
+      const hit = !q || (tr.dataset.search || "").includes(q);
+      tr.hidden = !hit;
+      if (hit) shown += 1;
+    });
+    count.textContent = q
+      ? `${shown} de ${rows.length} arquivo(s) exibido(s) — filtro "${filter.value.trim()}" ` +
+        "(a seleção já marcada é preservada mesmo em linhas escondidas)."
+      : `${rows.length} arquivo(s) listado(s).`;
+  }
 
   btn.addEventListener("click", async () => {
     btn.disabled = true;
     const label = btn.textContent;
-    btn.textContent = "Procurando…";
+    btn.textContent = "Listando…";
     try {
       const data = await (await fetch(btn.dataset.url)).json();
       if (data.error) {
@@ -889,20 +910,23 @@ function initDiscover() {
       const files = data.files || [];
       if (!files.length) {
         form.hidden = true;
-        hint.innerHTML = `Nenhum arquivo <code>.dat</code> encontrado em ` +
-          `<code>${esc(data.base)}</code> (a busca ignora arquivos e pastas ocultos).`;
+        hint.innerHTML = "Nenhum arquivo encontrado em " +
+          `<code>${esc(data.base)}</code> (a listagem ignora arquivos e pastas ocultos).`;
         return;
       }
       let html = "<table class='table'><thead><tr><th></th>" +
-        "<th>Arquivo (subpasta / nome)</th><th>Tamanho</th><th>Modificado</th>" +
+        "<th>Pasta</th><th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Modificado</th>" +
         "<th>Apelido</th></tr></thead><tbody>";
       files.forEach((f, i) => {
         const dis = f.monitored ? "disabled" : "";
-        html += "<tr>" +
+        const search = esc(`${f.relpath} ${f.ext || ""}`.toLowerCase());
+        html += `<tr data-search="${search}">` +
           `<td><input type="checkbox" name="pick" value="${i}" ${dis}></td>` +
-          `<td><code>${esc(f.relpath)}</code>` +
+          `<td class="meta">${f.folder ? "📁 " + esc(f.folder) + "/" : "(raiz)"}</td>` +
+          `<td><code>${esc(f.name)}</code>` +
           (f.monitored ? " <small class='meta'>(já monitorado)</small>" : "") +
           `<input type="hidden" name="path_${i}" value="${esc(f.path)}"></td>` +
+          `<td class="meta">${f.ext ? "<code>" + esc(f.ext) + "</code>" : "—"}</td>` +
           `<td class="meta">${fmtSize(f.size)}</td>` +
           `<td class="meta">${esc(f.mtime || "—")}</td>` +
           `<td><input name="alias_${i}" value="${esc(f.suggested_alias || "")}" ${dis}></td>` +
@@ -910,22 +934,41 @@ function initDiscover() {
       });
       html += "</tbody></table>";
       results.innerHTML = html;
+      filter.value = "";
       form.hidden = false;
+      applyFilter();
       const available = files.filter((f) => !f.monitored).length;
-      hint.innerHTML = `${files.length} arquivo(s) encontrado(s), ${available} disponível(is). ` +
-        "Marque os que deseja monitorar, ajuste os apelidos e clique em " +
-        "<strong>Adicionar selecionados</strong>.";
+      const cut = data.truncated
+        ? ` <span class="warn">Listagem truncada em ${data.max_entries} arquivos — ` +
+          "há mais itens nesta pasta do que o exibido aqui (o filtro só age sobre a " +
+          "lista já carregada).</span>"
+        : "";
+      hint.innerHTML = `${files.length} arquivo(s) listado(s) em <code>${esc(data.base)}</code>, ` +
+        `${available} disponível(is) para monitorar (ocultos ignorados). ` +
+        "Filtre por texto ou extensão (ex.: <code>.dat</code>), marque os que deseja " +
+        "monitorar, ajuste os apelidos e clique em <strong>Adicionar selecionados</strong>." + cut;
     } catch (e) {
-      hint.innerHTML = `<span class="warn">Falha na busca: ${esc(String(e))}</span>`;
+      hint.innerHTML = `<span class="warn">Falha na listagem: ${esc(String(e))}</span>`;
     } finally {
       btn.disabled = false;
       btn.textContent = label;
     }
   });
 
+  filter.addEventListener("input", applyFilter);
+  // Enter no filtro é para filtrar, não para enviar o formulário.
+  filter.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      applyFilter();
+    }
+  });
+
+  // Marcar/desmarcar age só nas linhas VISÍVEIS — combina com o filtro.
   document.getElementById("btn-discover-all").addEventListener("click", () => {
-    const boxes = results.querySelectorAll('input[name="pick"]:not([disabled])');
-    const turnOn = Array.from(boxes).some((b) => !b.checked);
+    const boxes = Array.from(results.querySelectorAll('input[name="pick"]:not([disabled])'))
+      .filter((b) => !b.closest("tr").hidden);
+    const turnOn = boxes.some((b) => !b.checked);
     boxes.forEach((b) => (b.checked = turnOn));
   });
 

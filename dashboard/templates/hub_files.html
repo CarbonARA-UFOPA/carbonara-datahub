@@ -3,19 +3,23 @@
 {% block content %}
 <div class="page-head">
   <h1>Arquivos — {{ l.label }}</h1>
-  <a class="btn" href="{{ url_for('hub.index') }}">← Voltar ao gerenciamento</a>
+  {% if back_station %}
+    <a class="btn" href="{{ url_for('pages.station_edit', station_id=back_station) }}">← Voltar à estação {{ back_station }}</a>
+  {% else %}
+    <a class="btn" href="{{ url_for('hub.index') }}">← Voltar ao gerenciamento</a>
+  {% endif %}
 </div>
 
 <section class="card">
   <p class="mono">
     {% for slug, (sub, label) in areas.items() %}
       <a class="btn btn-sm{{ ' btn-primary' if slug == l.area }}"
-         href="{{ url_for('hub.files', area=slug) }}">{{ label }}</a>
+         href="{{ url_for('hub.files', area=slug, estacao=back_station) }}">{{ label }}</a>
     {% endfor %}
   </p>
   <p class="mono">
-    <a href="{{ url_for('hub.files', area=l.area) }}">{{ l.root }}</a>{% for c in l.crumbs %}
-      / <a href="{{ url_for('hub.files', area=l.area, subpath=c.rel) }}">{{ c.name }}</a>{% endfor %}
+    <a href="{{ url_for('hub.files', area=l.area, estacao=back_station) }}">{{ l.root }}</a>{% for c in l.crumbs %}
+      / <a href="{{ url_for('hub.files', area=l.area, subpath=c.rel, estacao=back_station) }}">{{ c.name }}</a>{% endfor %}
   </p>
 
   {% if l.missing %}
@@ -30,14 +34,14 @@
         {% set parent = l.crumbs[-2].rel if l.crumbs | length > 1 else '' %}
         <tr>
           <td colspan="4">
-            {% if parent %}<a href="{{ url_for('hub.files', area=l.area, subpath=parent) }}">↩ pasta acima</a>
-            {% else %}<a href="{{ url_for('hub.files', area=l.area) }}">↩ pasta acima</a>{% endif %}
+            {% if parent %}<a href="{{ url_for('hub.files', area=l.area, subpath=parent, estacao=back_station) }}">↩ pasta acima</a>
+            {% else %}<a href="{{ url_for('hub.files', area=l.area, estacao=back_station) }}">↩ pasta acima</a>{% endif %}
           </td>
         </tr>
       {% endif %}
       {% for d in l.dirs %}
         <tr>
-          <td>📁 <a href="{{ url_for('hub.files', area=l.area, subpath=d.rel) }}"><strong>{{ d.name }}/</strong></a>
+          <td>📁 <a href="{{ url_for('hub.files', area=l.area, subpath=d.rel, estacao=back_station) }}"><strong>{{ d.name }}/</strong></a>
               {% if d.hidden %}<small class="meta">(oculto — a ingestão ignora)</small>{% endif %}</td>
           <td class="meta">—</td>
           <td><small>{{ d.mtime }}</small></td>

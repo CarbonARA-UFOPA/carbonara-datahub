@@ -30,21 +30,20 @@ def file_series(station_id: str, file_id: str):
         return jsonify({"error": f"Falha ao ler o arquivo: {exc}"}), 500
 
 
-@api.get("/stations/<station_id>/dat-files")
+@api.get("/stations/<station_id>/station-files")
 @admin_required
-def dat_files(station_id: str):
-    """Lista os .dat de incoming/<id>/ (recursivo) para a tela de descoberta.
-    Só é chamado sob demanda (clique no botão) — nunca no carregamento da página."""
+def station_files(station_id: str):
+    """Lista TODOS os arquivos de incoming/<id>/ (recursivo, qualquer extensão, ocultos
+    de fora) para a tela de listagem/descoberta. Só é chamado sob demanda (clique no
+    botão) — nunca no carregamento da página."""
     cfg = current_app.store.load()
     station = config_store.get_station(cfg, station_id)
     if not station:
         return jsonify({"error": f"Estação '{station_id}' não encontrada."}), 404
     try:
-        base = config_store.station_incoming_dir(cfg, station)
-        files = config_store.discover_dat_files(cfg, station)
+        return jsonify(config_store.discover_station_files(cfg, station))
     except Exception as exc:  # noqa: BLE001 — erro de varredura vira mensagem, não 500
         return jsonify({"error": f"Falha ao varrer a pasta: {exc}"}), 500
-    return jsonify({"base": str(base), "files": files})
 
 
 @api.post("/preview")

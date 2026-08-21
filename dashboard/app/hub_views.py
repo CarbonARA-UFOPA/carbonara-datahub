@@ -212,7 +212,14 @@ def files(area, subpath):
             "rel": "", "crumbs": [], "dirs": [], "files": [], "truncated": False,
             "max_entries": hub.MAX_LIST_ENTRIES, "missing": True,
         }
-    return render_template("hub_files.html", l=listing, areas=hub.AREAS)
+    # ?estacao=<id> — quem chegou aqui pela tela "Editar estação" volta para lá em vez
+    # de cair no gerenciamento da Coleta. Validado contra o formato de id (nunca uma URL
+    # arbitrária vinda do usuário), e o link é montado com url_for — sem redirect aberto.
+    back = (request.args.get("estacao") or "").strip()
+    if not hub.valid_hub_id(back):
+        back = ""
+    return render_template("hub_files.html", l=listing, areas=hub.AREAS,
+                           back_station=back or None)
 
 
 @hub_pages.get("/download/<area>/<path:subpath>")

@@ -233,7 +233,10 @@ def unique_file_id(station: dict, path: str) -> str:
     return fid
 
 
-# --- Descoberta de arquivos .dat na pasta da estação ------------------------------
+# --- Descoberta dos arquivos da pasta da estação ----------------------------------
+MAX_DISCOVER_ENTRIES = 2000  # teto de arquivos por varredura (pastas grandes); a UI avisa
+
+
 def _suggested_alias(rel: Path) -> str:
     """Apelido sugerido a partir do caminho relativo — inclui a subpasta para
     distinguir arquivos de mesmo nome em pastas diferentes."""
@@ -249,12 +252,20 @@ def station_incoming_dir(cfg: dict, station: dict) -> Path:
     return heartbeat_path(cfg, station).parent
 
 
-def discover_dat_files(cfg: dict, station: dict) -> list[dict]:
-    """Varre a pasta incoming da estação (recursivo) por arquivos ``.dat``, ignorando
-    ocultos (dotfiles/dot-dirs, como faz a ingestão). Retorna, por arquivo: o caminho a
-    gravar (relativo à raiz de dados quando possível, senão absoluto), a subpasta/nome,
-    tamanho, mtime e se já está monitorado. Deliberadamente SOB DEMANDA — chamado só
-    quando o usuário aperta o botão, nunca automaticamente."""
+def discover_station_files(cfg: dict, station: dict) -> dict:
+    """Lista TODOS os arquivos da pasta incoming da estação (recursivo), de qualquer
+    extensão — não só ``.dat``. Ignora ocultos (dotfiles/dot-dirs, como faz a ingestão):
+    o heartbeat ``.carbonara-status`` e ``.rsync-parcial/`` não são arquivos monitoráveis.
+
+    Por arquivo devolve: o caminho a gravar (relativo à raiz de dados quando possível,
+    senão absoluto), o caminho relativo à pasta da estação, a subpasta, o nome, a
+    extensão, tamanho, mtime e se já está monitorado. A ordem agrupa por subpasta —
+    subpastas primeiro (alfabética pelo caminho), arquivos soltos da raiz por último.
+
+    Retorna ``{base, files, truncated, max_entries}``; ``truncated`` avisa que a varredura
+    parou em ``MAX_DISCOVER_ENTRIES`` (a UI mostra o aviso — nada de teto silencioso).
+    Deliberadamente SOB DEMANDA — chamado só quando o usuário aperta o botão, nunca
+    automaticamente."""
     base = station_incoming_dir(cfg, station)
     root = data_root(cfg)
     monitored: set[str] = set()
@@ -265,37 +276,50 @@ def discover_dat_files(cfg: dict, station: dict) -> list[dict]:
             pass
 
     found: list[dict] = []
-    if not base.is_dir():
-        return found
-    for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-        for name in sorted(filenames):
-            if name.startswith(".") or not name.lower().endswith(".dat"):
-                continue
-            abspath = Path(dirpath) / name
-            rel = abspath.relative_to(base)
-            try:
-                store_path = str(abspath.relative_to(root))
-            except ValueError:
-                store_path = str(abspath)
-            try:
-                st = abspath.stat()
-                size, mtime = st.st_size, st.st_mtime
-            except OSError:
-                size, mtime = None, None
-            found.append({
-                "path": store_path,
-                "relpath": str(rel),
-                "size": size,
-                "mtime": datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M") if mtime else None,
-                "monitored": str(abspath) in monitored,
-                "suggested_alias": _suggested_alias(rel),
-            })
-    return found
+    truncated = False
+    if base.is_dir():
+        for dirpath, dirnames, filenames in os.walk(base):
+            # Ocultos ficam de fora em QUALQUER nível (dot-dirs e dotfiles).
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+            for name in sorted(filenames):
+                if name.startswith("."):
+                    continue
+                if len(found) >= MAX_DISCOVER_ENTRIES:
+                    truncated = True
+                    break
+                abspath = Path(dirpath) / name
+                rel = abspath.relative_to(base)
+                folder = "" if str(rel.parent) in (".", "") else str(rel.parent)
+                try:
+                    store_path = str(abspath.relative_to(root))
+                except ValueError:
+                    store_path = str(abspath)
+                try:
+                    st = abspath.stat()
+                    size, mtime = st.st_size, st.st_mtime
+                except OSError:
+                    size, mtime = None, None
+                found.append({
+                    "path": store_path,
+                    "relpath": str(rel),
+                    "folder": folder,
+                    "name": name,
+                    "ext": abspath.suffix.lower(),
+                    "size": size,
+                    "mtime": datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M") if mtime else None,
+                    "monitored": str(abspath) in monitored,
+                    "suggested_alias": _suggested_alias(rel),
+                })
+            if truncated:
+                break
+
+    found.sort(key=lambda f: (f["folder"] == "", f["folder"].lower(), f["name"].lower()))
+    return {"base": str(base), "files": found, "truncated": truncated,
+            "max_entries": MAX_DISCOVER_ENTRIES}
 
 
 def default_file_entry(path: str, alias: str | None = None) -> dict:
-    """Entrada MÍNIMA para um ``.dat`` recém-descoberto (padrões TOA5/Campbell, o
+    """Entrada MÍNIMA para um arquivo recém-descoberto (padrões TOA5/Campbell, o
     datalogger padrão do projeto). As variáveis ficam vazias de propósito: o usuário
     abre 'Editar' depois para mapear colunas — é lá que a validação exige ≥1 variável."""
     return {
