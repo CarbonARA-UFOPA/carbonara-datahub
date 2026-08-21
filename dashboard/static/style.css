@@ -149,7 +149,15 @@ main.wide { max-width: 97vw; }
 .discover-filter input { flex: 1; min-width: 220px; max-width: 480px; padding: .35rem .6rem;
                          border: 1px solid var(--line); border-radius: 7px; font: inherit;
                          font-weight: 400; }
-#discover-count { margin: 0 0 .6rem; }
+#browse-count { margin: .4rem 0 0; }
+/* Barra do navegador de arquivos da estação: trilho à esquerda, filtro à direita. */
+.browse-bar { display: flex; align-items: flex-end; justify-content: space-between;
+              gap: 1rem; flex-wrap: wrap; margin: 0 0 .6rem; }
+.browse-bar #browse-crumbs { margin: 0; }
+.browse-bar .discover-filter { margin: 0; font-size: .9rem; }
+#browse-results .browse-alias { width: 100%; min-width: 140px; padding: .3rem .5rem;
+                                border: 1px solid var(--line); border-radius: 6px;
+                                font: inherit; }
 
 /* Chip do arquivo .dat: identifica o sensor/equipamento de origem dos dados. */
 .file-chip { display: inline-block; background: #eef2f0; border: 1px solid var(--line);

@@ -30,20 +30,21 @@ def file_series(station_id: str, file_id: str):
         return jsonify({"error": f"Falha ao ler o arquivo: {exc}"}), 500
 
 
-@api.get("/stations/<station_id>/station-files")
+@api.get("/stations/<station_id>/browse")
 @admin_required
-def station_files(station_id: str):
-    """Lista TODOS os arquivos de incoming/<id>/ (recursivo, qualquer extensão, ocultos
-    de fora) para a tela de listagem/descoberta. Só é chamado sob demanda (clique no
-    botão) — nunca no carregamento da página."""
+def station_browse(station_id: str):
+    """Navegador de arquivos da estação (uma pasta por vez, como o da aba Coleta) —
+    alimenta o card 'Arquivos desta estação no servidor' da tela de edição. Cada
+    arquivo vem com ``monitored``/``suggested_alias`` para a marcação."""
     cfg = current_app.store.load()
     station = config_store.get_station(cfg, station_id)
     if not station:
         return jsonify({"error": f"Estação '{station_id}' não encontrada."}), 404
     try:
-        return jsonify(config_store.discover_station_files(cfg, station))
-    except Exception as exc:  # noqa: BLE001 — erro de varredura vira mensagem, não 500
-        return jsonify({"error": f"Falha ao varrer a pasta: {exc}"}), 500
+        return jsonify(config_store.browse_station_dir(
+            cfg, station, request.args.get("sub") or ""))
+    except Exception as exc:  # noqa: BLE001 — erro de leitura vira mensagem, não 500
+        return jsonify({"error": f"Falha ao listar a pasta: {exc}"}), 500
 
 
 @api.post("/preview")

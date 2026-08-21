@@ -18,6 +18,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     session,
     url_for,
 )
@@ -340,6 +341,20 @@ def file_create(station_id):
     _save(cfg)
     flash(f"Arquivo '{entry['id']}' adicionado ao monitoramento.", "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))
+
+
+@pages.get("/stations/<station_id>/browse/download")
+@admin_required
+def station_file_download(station_id):
+    """Baixa um arquivo da pasta da estação — o 'baixar' do navegador da aba Coleta,
+    aqui escopado a ``incoming/<id>/`` por ``station_safe_resolve`` (o caminho
+    resolvido tem de continuar sob a pasta da estação, senão 404)."""
+    cfg = _load()
+    station = _station_or_404(cfg, station_id)
+    path = config_store.station_safe_resolve(cfg, station, request.args.get("sub") or "")
+    if path is None or not path.is_file():
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=path.name)
 
 
 @pages.post("/stations/<station_id>/files/discover-add")

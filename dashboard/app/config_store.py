@@ -252,70 +252,101 @@ def station_incoming_dir(cfg: dict, station: dict) -> Path:
     return heartbeat_path(cfg, station).parent
 
 
-def discover_station_files(cfg: dict, station: dict) -> dict:
-    """Lista TODOS os arquivos da pasta incoming da estação (recursivo), de qualquer
-    extensão — não só ``.dat``. Ignora ocultos (dotfiles/dot-dirs, como faz a ingestão):
-    o heartbeat ``.carbonara-status`` e ``.rsync-parcial/`` não são arquivos monitoráveis.
+def station_safe_resolve(cfg: dict, station: dict, subpath: str) -> Path | None:
+    """Resolve ``subpath`` sob a pasta da estação com trava anti-traversal — mesma
+    regra do navegador da aba Coleta (``hub.safe_resolve``): o caminho RESOLVIDO
+    (symlinks inclusos) precisa continuar sob a pasta da estação, senão None."""
+    base = station_incoming_dir(cfg, station).resolve()
+    try:
+        p = (base / (subpath or "")).resolve()
+    except OSError:
+        return None
+    if p != base and base not in p.parents:
+        return None
+    return p
 
-    Por arquivo devolve: o caminho a gravar (relativo à raiz de dados quando possível,
-    senão absoluto), o caminho relativo à pasta da estação, a subpasta, o nome, a
-    extensão, tamanho, mtime e se já está monitorado. A ordem agrupa por subpasta —
-    subpastas primeiro (alfabética pelo caminho), arquivos soltos da raiz por último.
 
-    Retorna ``{base, files, truncated, max_entries}``; ``truncated`` avisa que a varredura
-    parou em ``MAX_DISCOVER_ENTRIES`` (a UI mostra o aviso — nada de teto silencioso).
-    Deliberadamente SOB DEMANDA — chamado só quando o usuário aperta o botão, nunca
-    automaticamente."""
+def browse_station_dir(cfg: dict, station: dict, subpath: str = "") -> dict:
+    """Listagem de UMA pasta de ``incoming/<id>/`` — subpastas e arquivos com tamanho
+    e data, mais o trilho de navegação. É o mesmo comportamento do navegador da aba
+    Coleta, só que cada arquivo também informa se JÁ está monitorado e o apelido
+    sugerido, para a tela de edição oferecer a marcação.
+
+    Como a listagem é de um nível só (sem recursão), roda no carregamento da página
+    sem custo — pastas gigantes de datalogger não são varridas inteiras.
+
+    Ocultos APARECEM marcados (heartbeat, ``.rsync-parcial/``), como no navegador da
+    Coleta, mas nunca são selecionáveis: a ingestão os ignora, monitorá-los não faria
+    sentido. Devolve ``{base, rel, crumbs, dirs, files, truncated, max_entries,
+    missing}``; ``truncated`` avisa que a pasta tem mais que ``MAX_DISCOVER_ENTRIES``
+    entradas (nada de teto silencioso)."""
     base = station_incoming_dir(cfg, station)
     root = data_root(cfg)
+    path = station_safe_resolve(cfg, station, subpath)
+    rel_now = "" if path is None else (
+        "" if path == base.resolve() else str(path.relative_to(base.resolve())))
+    out = {"base": str(base), "rel": rel_now, "crumbs": [], "dirs": [], "files": [],
+           "truncated": False, "max_entries": MAX_DISCOVER_ENTRIES, "missing": False}
+    if path is None or not path.is_dir():
+        out["missing"] = True
+        return out
+
+    # Guarda as DUAS formas do caminho monitorado (literal e resolvida): a listagem
+    # anda sobre a base já resolvida, e em máquinas com symlink no caminho
+    # (/var → /private/var no macOS, /srv apontado para outro volume) as duas grafias
+    # existem — sem isso um arquivo já monitorado apareceria como disponível.
     monitored: set[str] = set()
     for f in station.get("files", []):
         try:
-            monitored.add(str(resolve_data_path(cfg, f["path"])))
+            mp = resolve_data_path(cfg, f["path"])
         except (ValueError, KeyError):
-            pass
+            continue
+        monitored.add(str(mp))
+        monitored.add(str(mp.resolve()))
 
-    found: list[dict] = []
-    truncated = False
-    if base.is_dir():
-        for dirpath, dirnames, filenames in os.walk(base):
-            # Ocultos ficam de fora em QUALQUER nível (dot-dirs e dotfiles).
-            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-            for name in sorted(filenames):
-                if name.startswith("."):
-                    continue
-                if len(found) >= MAX_DISCOVER_ENTRIES:
-                    truncated = True
+    base_r = base.resolve()
+    try:
+        with os.scandir(path) as it:
+            for i, entry in enumerate(it):
+                if i >= MAX_DISCOVER_ENTRIES:
+                    out["truncated"] = True
                     break
-                abspath = Path(dirpath) / name
-                rel = abspath.relative_to(base)
-                folder = "" if str(rel.parent) in (".", "") else str(rel.parent)
                 try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                abspath = Path(entry.path)
+                rel = str(abspath.relative_to(base_r))
+                hidden = entry.name.startswith(".")
+                mtime = datetime.fromtimestamp(st.st_mtime).strftime("%d/%m/%Y %H:%M")
+                item = {"name": entry.name, "rel": rel, "hidden": hidden, "mtime": mtime}
+                if entry.is_dir(follow_symlinks=False):
+                    out["dirs"].append(item)
+                    continue
+                try:  # caminho a GRAVAR no config: relativo à raiz de dados quando dá
                     store_path = str(abspath.relative_to(root))
                 except ValueError:
                     store_path = str(abspath)
-                try:
-                    st = abspath.stat()
-                    size, mtime = st.st_size, st.st_mtime
-                except OSError:
-                    size, mtime = None, None
-                found.append({
+                out["files"].append({
+                    **item,
                     "path": store_path,
-                    "relpath": str(rel),
-                    "folder": folder,
-                    "name": name,
                     "ext": abspath.suffix.lower(),
-                    "size": size,
-                    "mtime": datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M") if mtime else None,
+                    "size": st.st_size,
                     "monitored": str(abspath) in monitored,
-                    "suggested_alias": _suggested_alias(rel),
+                    "suggested_alias": _suggested_alias(Path(rel)),
                 })
-            if truncated:
-                break
+    except OSError:
+        out["missing"] = True
+        return out
 
-    found.sort(key=lambda f: (f["folder"] == "", f["folder"].lower(), f["name"].lower()))
-    return {"base": str(base), "files": found, "truncated": truncated,
-            "max_entries": MAX_DISCOVER_ENTRIES}
+    out["dirs"].sort(key=lambda d: d["name"].lower())
+    out["files"].sort(key=lambda f: f["name"].lower())
+
+    acc: list[str] = []
+    for part in Path(rel_now).parts:
+        acc.append(part)
+        out["crumbs"].append({"name": part, "rel": "/".join(acc)})
+    return out
 
 
 def default_file_entry(path: str, alias: str | None = None) -> dict:

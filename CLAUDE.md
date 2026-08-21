@@ -394,14 +394,32 @@ computes live station status. Viewing is open; edits require the admin login
   to the admin). File browsing stays strictly read-only (no
   delete/move — ingestion owns the `incoming/ → archive|quarantine` lifecycle), and
   `safe_resolve` blocks path traversal (resolved path must stay under the area root).
-  The browser is also reachable from *Estações → Editar* (a card linking to
-  `hub.files` at `incoming/<id>/`, plus archive/quarantine): the card renders only
-  under `{% if is_admin %}` and the `/hub` routes stay `admin_required`, so a
-  logged-out visitor sees nothing — keep both guards. `hub.files` accepts an optional
-  `?estacao=<id>` that only changes the "back" button (validated with
-  `valid_hub_id`, rebuilt via `url_for` — never a caller-supplied URL, so no open
-  redirect); it is threaded through the breadcrumb/area/subfolder links so the origin
-  survives navigation.
+  `hub.files` accepts an optional `?estacao=<id>` that only changes the "back" button
+  (validated with `valid_hub_id`, rebuilt via `url_for` — never a caller-supplied URL,
+  so no open redirect); it is threaded through the breadcrumb/area/subfolder links so
+  the origin survives navigation.
+- **Station file browser inside *Estações → Editar*** (card *Arquivos desta estação no
+  servidor*): the SAME browsing UX as the `/hub` one — one folder at a time,
+  breadcrumbs, size/date, download — **plus** a checkbox per file to add it to
+  monitoring. It replaced two redundant cards (a link-out card + a recursive
+  `.dat`-only discovery list); keep it as ONE card. Backend is
+  `config_store.browse_station_dir` (one level, no recursion — so it can load on page
+  open without walking huge datalogger trees) behind `api.station_browse`
+  (`/api/stations/<id>/browse?sub=`), with `station_safe_resolve` as the
+  anti-traversal gate (mirrors `hub.safe_resolve`) also used by
+  `pages.station_file_download`. Hidden entries are SHOWN and flagged (parity with the
+  hub browser) but never selectable — ingestion ignores them. The JS
+  (`initStationBrowser`) keeps the selection in a Map **outside** the table so it
+  survives folder changes, and materializes the server's existing
+  `pick`/`path_<n>/alias_<n>` contract as hidden inputs only at submit — don't change
+  that contract in `files_discover_add`. `monitored` matching stores BOTH the literal
+  and the resolved path (symlinked roots like macOS `/var` → `/private/var`).
+  Everything here is admin-only twice over: the card renders under
+  `{% if is_admin %}` and every route is `admin_required` — keep both guards.
+- **Station creation lives only in *Coleta*** (authorize in rsync-hub, or *Importar do
+  rsync-hub*). The *Estações* tab deliberately has NO "Nova estação" button — a
+  station created there would have no counterpart on the hub. `pages.station_new`
+  still exists for direct URL use; don't re-add the button.
 - Lifecycle: `dashboard/dashboardctl` (`iniciar|parar|reiniciar|status|log|servico`,
   English aliases accepted) — background run via nohup+setsid+PID file (survives SSH
   disconnect), auto-creates `.venv/` on first start, `servico` installs a systemd

@@ -103,7 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initCharts();
   initCompare();
   initFileForm();
-  initDiscover();
+  initStationBrowser();
   initMapPage();
 });
 
@@ -868,117 +868,209 @@ function fmtSize(n) {
   return (n / 1048576).toFixed(1) + " MB";
 }
 
-function initDiscover() {
-  const btn = document.getElementById("btn-discover");
-  if (!btn) return;
-  const form = document.getElementById("discover-form");
-  const results = document.getElementById("discover-results");
-  const hint = document.getElementById("discover-hint");
-  const filter = document.getElementById("discover-filter");
-  const count = document.getElementById("discover-count");
+function initStationBrowser() {
+  const form = document.getElementById("browse-form");
+  if (!form) return;
+  const results = document.getElementById("browse-results");
+  const crumbsEl = document.getElementById("browse-crumbs");
+  const hint = document.getElementById("browse-hint");
+  const filter = document.getElementById("browse-filter");
+  const count = document.getElementById("browse-count");
+  const payload = document.getElementById("browse-payload");
+  const root = form.dataset.root || "incoming";
 
-  /* Filtro puro client-side: casa o texto digitado contra o caminho relativo e a
-     extensão (guardados em data-search) e esconde as demais linhas. Não refaz a
-     chamada ao servidor nem mexe na seleção — o que estiver marcado continua marcado
-     mesmo escondido. */
+  // Seleção acumulada: caminho a gravar no config -> {alias, rel}. Vive fora da
+  // tabela de propósito — é o que faz a marcação sobreviver à troca de pastas.
+  const picked = new Map();
+  let current = { files: [], rel: "" };
+
+  function selCount() {
+    const n = picked.size;
+    count.textContent = n
+      ? `${n} arquivo(s) selecionado(s) — de qualquer pasta; clique em "Adicionar selecionados".`
+      : "Nenhum arquivo selecionado ainda.";
+  }
+
   function applyFilter() {
     const q = (filter.value || "").trim().toLowerCase();
-    const rows = results.querySelectorAll("tbody tr");
     let shown = 0;
-    rows.forEach((tr) => {
-      const hit = !q || (tr.dataset.search || "").includes(q);
+    results.querySelectorAll("tr[data-search]").forEach((tr) => {
+      const hit = !q || tr.dataset.search.includes(q);
       tr.hidden = !hit;
       if (hit) shown += 1;
     });
-    count.textContent = q
-      ? `${shown} de ${rows.length} arquivo(s) exibido(s) — filtro "${filter.value.trim()}" ` +
-        "(a seleção já marcada é preservada mesmo em linhas escondidas)."
-      : `${rows.length} arquivo(s) listado(s).`;
+    const total = results.querySelectorAll("tr[data-search]").length;
+    if (q && shown !== total) {
+      hint.innerHTML = `<span class="meta">${shown} de ${total} item(ns) exibido(s) ` +
+        `nesta pasta — filtro "${esc(filter.value.trim())}". O filtro só esconde linhas; ` +
+        "a seleção continua valendo.</span>";
+    }
   }
 
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    const label = btn.textContent;
-    btn.textContent = "Listando…";
+  async function load(sub) {
+    results.innerHTML = "<p class='empty'>Carregando…</p>";
+    let data;
     try {
-      const data = await (await fetch(btn.dataset.url)).json();
-      if (data.error) {
-        form.hidden = true;
-        hint.innerHTML = `<span class="warn">${esc(data.error)}</span>`;
-        return;
-      }
-      const files = data.files || [];
-      if (!files.length) {
-        form.hidden = true;
-        hint.innerHTML = "Nenhum arquivo encontrado em " +
-          `<code>${esc(data.base)}</code> (a listagem ignora arquivos e pastas ocultos).`;
-        return;
-      }
-      let html = "<table class='table'><thead><tr><th></th>" +
-        "<th>Pasta</th><th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Modificado</th>" +
-        "<th>Apelido</th></tr></thead><tbody>";
-      files.forEach((f, i) => {
-        const dis = f.monitored ? "disabled" : "";
-        const search = esc(`${f.relpath} ${f.ext || ""}`.toLowerCase());
-        html += `<tr data-search="${search}">` +
-          `<td><input type="checkbox" name="pick" value="${i}" ${dis}></td>` +
-          `<td class="meta">${f.folder ? "📁 " + esc(f.folder) + "/" : "(raiz)"}</td>` +
-          `<td><code>${esc(f.name)}</code>` +
-          (f.monitored ? " <small class='meta'>(já monitorado)</small>" : "") +
-          `<input type="hidden" name="path_${i}" value="${esc(f.path)}"></td>` +
-          `<td class="meta">${f.ext ? "<code>" + esc(f.ext) + "</code>" : "—"}</td>` +
-          `<td class="meta">${fmtSize(f.size)}</td>` +
-          `<td class="meta">${esc(f.mtime || "—")}</td>` +
-          `<td><input name="alias_${i}" value="${esc(f.suggested_alias || "")}" ${dis}></td>` +
-          "</tr>";
-      });
-      html += "</tbody></table>";
-      results.innerHTML = html;
-      filter.value = "";
-      form.hidden = false;
-      applyFilter();
-      const available = files.filter((f) => !f.monitored).length;
-      const cut = data.truncated
-        ? ` <span class="warn">Listagem truncada em ${data.max_entries} arquivos — ` +
-          "há mais itens nesta pasta do que o exibido aqui (o filtro só age sobre a " +
-          "lista já carregada).</span>"
-        : "";
-      hint.innerHTML = `${files.length} arquivo(s) listado(s) em <code>${esc(data.base)}</code>, ` +
-        `${available} disponível(is) para monitorar (ocultos ignorados). ` +
-        "Filtre por texto ou extensão (ex.: <code>.dat</code>), marque os que deseja " +
-        "monitorar, ajuste os apelidos e clique em <strong>Adicionar selecionados</strong>." + cut;
+      const url = form.dataset.url + (sub ? "?sub=" + encodeURIComponent(sub) : "");
+      data = await (await fetch(url)).json();
     } catch (e) {
-      hint.innerHTML = `<span class="warn">Falha na listagem: ${esc(String(e))}</span>`;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = label;
+      results.innerHTML = `<p class="warn">Falha ao listar a pasta: ${esc(String(e))}</p>`;
+      return;
     }
+    if (data.error) {
+      results.innerHTML = `<p class="warn">${esc(data.error)}</p>`;
+      return;
+    }
+    current = data;
+    filter.value = "";
+    render(data);
+    selCount();
+  }
+
+  function render(d) {
+    // Trilho de navegação, igual ao do navegador da aba Coleta.
+    let cr = `<a href="#" data-go="">${esc(root)}/</a>`;
+    (d.crumbs || []).forEach((c) => {
+      cr += ` / <a href="#" data-go="${esc(c.rel)}">${esc(c.name)}</a>`;
+    });
+    crumbsEl.innerHTML = cr;
+
+    if (d.missing) {
+      results.innerHTML = "<p class='empty'>Esta pasta ainda não existe no servidor " +
+        "(nada foi recebido da estação até agora).</p>";
+      return;
+    }
+    const dirs = d.dirs || [];
+    const files = d.files || [];
+    if (!dirs.length && !files.length) {
+      results.innerHTML = "<p class='empty'>Pasta vazia.</p>";
+      return;
+    }
+
+    let html = "<table class='table'><thead><tr><th></th><th>Nome</th><th>Tipo</th>" +
+      "<th>Tamanho</th><th>Modificado</th><th>Apelido (monitoramento)</th><th></th>" +
+      "</tr></thead><tbody>";
+    if (d.rel) {
+      const parts = d.rel.split("/");
+      parts.pop();
+      html += "<tr><td colspan='7'>" +
+        `<a href="#" data-go="${esc(parts.join("/"))}">↩ pasta acima</a></td></tr>`;
+    }
+    dirs.forEach((dir) => {
+      html += `<tr data-search="${esc(dir.name.toLowerCase())}">` +
+        "<td></td>" +
+        `<td>📁 <a href="#" data-go="${esc(dir.rel)}"><strong>${esc(dir.name)}/</strong></a>` +
+        (dir.hidden ? " <small class='meta'>(oculto — a ingestão ignora)</small>" : "") +
+        "</td><td class='meta'>pasta</td><td class='meta'>—</td>" +
+        `<td><small>${esc(dir.mtime)}</small></td><td></td><td></td></tr>`;
+    });
+    files.forEach((f) => {
+      // Ocultos aparecem (como na Coleta) mas não são monitoráveis: a ingestão os pula.
+      const blocked = f.monitored || f.hidden;
+      const sel = picked.has(f.path);
+      const alias = sel ? picked.get(f.path).alias : (f.suggested_alias || "");
+      let note = "";
+      if (f.monitored) note = " <small class='meta'>(já monitorado)</small>";
+      else if (f.hidden) note = " <small class='meta'>(oculto — a ingestão ignora)</small>";
+      html += `<tr data-search="${esc((f.name + " " + (f.ext || "")).toLowerCase())}">` +
+        `<td><input type="checkbox" class="browse-pick" data-path="${esc(f.path)}" ` +
+        `data-rel="${esc(f.rel)}" ${blocked ? "disabled" : ""} ${sel ? "checked" : ""}></td>` +
+        `<td><code>${esc(f.name)}</code>${note}</td>` +
+        `<td class="meta">${esc(f.ext || "—")}</td>` +
+        `<td class="meta">${fmtSize(f.size)}</td>` +
+        `<td><small>${esc(f.mtime || "—")}</small></td>` +
+        `<td><input class="browse-alias" data-path="${esc(f.path)}" value="${esc(alias)}" ` +
+        `${blocked ? "disabled" : ""}></td>` +
+        `<td class="ta-right"><a class="btn btn-sm" ` +
+        `href="${form.dataset.download}?sub=${encodeURIComponent(f.rel)}">baixar</a></td>` +
+        "</tr>";
+    });
+    html += "</tbody></table>";
+    if (d.truncated) {
+      html += `<p class="flash flash-error">Listagem truncada em ${d.max_entries} ` +
+        "entradas — esta pasta tem mais itens; use as subpastas ou o filtro.</p>";
+    }
+    results.innerHTML = html;
+  }
+
+  // Navegação entre pastas e trilho: um só listener (a tabela é reconstruída a cada
+  // troca de pasta, então delegar evita religar handlers).
+  function onNav(ev) {
+    const link = ev.target.closest("[data-go]");
+    if (!link) return;
+    ev.preventDefault();
+    load(link.dataset.go);
+  }
+  results.addEventListener("click", onNav);
+  crumbsEl.addEventListener("click", onNav);
+
+  results.addEventListener("change", (ev) => {
+    const box = ev.target.closest(".browse-pick");
+    if (!box) return;
+    const path = box.dataset.path;
+    if (box.checked) {
+      const row = box.closest("tr");
+      const alias = row.querySelector(".browse-alias");
+      picked.set(path, { alias: (alias && alias.value.trim()) || "", rel: box.dataset.rel });
+    } else {
+      picked.delete(path);
+    }
+    selCount();
+  });
+
+  results.addEventListener("input", (ev) => {
+    const inp = ev.target.closest(".browse-alias");
+    if (!inp) return;
+    const entry = picked.get(inp.dataset.path);
+    if (entry) entry.alias = inp.value.trim();
   });
 
   filter.addEventListener("input", applyFilter);
   // Enter no filtro é para filtrar, não para enviar o formulário.
   filter.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      applyFilter();
-    }
+    if (ev.key === "Enter") ev.preventDefault();
   });
 
   // Marcar/desmarcar age só nas linhas VISÍVEIS — combina com o filtro.
-  document.getElementById("btn-discover-all").addEventListener("click", () => {
-    const boxes = Array.from(results.querySelectorAll('input[name="pick"]:not([disabled])'))
+  document.getElementById("btn-browse-all").addEventListener("click", () => {
+    const boxes = Array.from(results.querySelectorAll(".browse-pick:not([disabled])"))
       .filter((b) => !b.closest("tr").hidden);
     const turnOn = boxes.some((b) => !b.checked);
-    boxes.forEach((b) => (b.checked = turnOn));
+    boxes.forEach((b) => {
+      b.checked = turnOn;
+      b.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  });
+
+  document.getElementById("btn-browse-clear").addEventListener("click", () => {
+    picked.clear();
+    results.querySelectorAll(".browse-pick").forEach((b) => {
+      if (!b.disabled) b.checked = false;
+    });
+    selCount();
   });
 
   form.addEventListener("submit", (ev) => {
-    const any = results.querySelector('input[name="pick"]:checked');
-    if (!any) {
+    if (!picked.size) {
       ev.preventDefault();
-      hint.innerHTML = "<span class='warn'>Marque ao menos um arquivo antes de adicionar.</span>";
+      hint.innerHTML = "<span class='warn'>Marque ao menos um arquivo antes de " +
+        "adicionar.</span>";
+      return;
     }
+    // Monta os campos que o servidor espera (pick + path_<n> + alias_<n>) a partir da
+    // seleção acumulada — inclusive de pastas que não estão na tela agora.
+    payload.innerHTML = "";
+    let i = 0;
+    picked.forEach((v, path) => {
+      payload.insertAdjacentHTML("beforeend",
+        `<input type="hidden" name="pick" value="${i}">` +
+        `<input type="hidden" name="path_${i}" value="${esc(path)}">` +
+        `<input type="hidden" name="alias_${i}" value="${esc(v.alias)}">`);
+      i += 1;
+    });
   });
+
+  load("");   // listagem inicial: a pasta raiz da estação, já ao abrir a tela
 }
 
 function esc(s) {

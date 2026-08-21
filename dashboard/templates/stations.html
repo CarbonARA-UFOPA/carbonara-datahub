@@ -3,9 +3,6 @@
 {% block content %}
 <div class="page-head">
   <h1>Estações</h1>
-  {% if is_admin %}
-    <a class="btn btn-primary" href="{{ url_for('pages.station_new') }}">+ Nova estação</a>
-  {% endif %}
 </div>
 
 {% if is_admin and new_count %}
@@ -20,7 +17,9 @@
 
 {% if not stations %}
   <p class="empty">Nenhuma estação cadastrada ainda.
-     <a href="{{ url_for('pages.station_new') }}">Cadastre a primeira</a>.</p>
+     {% if is_admin %}Autorize a primeira na aba
+     <a href="{{ url_for('hub.index') }}">Coleta</a> — depois ela aparece aqui
+     (ou use "Importar do rsync-hub", quando já houver estações no hub).{% endif %}</p>
 {% else %}
 <table class="table">
   <thead>

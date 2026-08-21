@@ -85,6 +85,10 @@ python run.py                          # http://localhost:8080
 
 ## Cadastro (tudo configurável)
 
+Estações **não são criadas na aba Estações**: elas nascem na aba **Coleta** (autorizar
+no rsync-hub) ou pelo botão *Importar do rsync-hub* — assim toda estação da dashboard
+tem par no hub. A aba Estações lista e edita o que já existe.
+
 1. **Estação**: id (igual ao do rsync-hub), nome de exibição, coordenadas geográficas
    (latitude/longitude em graus decimais WGS84, opcionais — necessárias apenas para a
    estação aparecer na tela Mapa), opcionalmente o caminho do watchdog
@@ -156,11 +160,19 @@ no terminal, sem sair da dashboard:
   listar com tamanho/data e **baixar** qualquer arquivo. Sempre **somente leitura** —
   a dashboard nunca move/apaga; quem move `incoming/ → archive/|quarantine/` é a
   ingestão. Dotfiles (heartbeat, `.rsync-parcial/`) aparecem marcados como ocultos.
-  O mesmo navegador é alcançável pela aba **Estações → Editar** (card *Arquivos desta
-  estação no servidor*), já posicionado em `incoming/<id>/` e com atalhos para
-  *Arquivados* e *Quarentena*; o botão "voltar" retorna à estação de origem. Esse card
-  só é renderizado para administrador — as rotas do navegador continuam `admin_required`,
-  então visitante sem login não vê nem alcança nada.
+  A aba **Estações → Editar** traz o **mesmo navegador embutido** no card *Arquivos
+  desta estação no servidor*: abre já listando `incoming/<id>/`, navega pelas subpastas
+  com trilho e "pasta acima", mostra tamanho/data/tipo, permite baixar — e acrescenta a
+  **caixa de marcação para monitorar**, com apelido sugerido por arquivo. A seleção
+  **sobrevive à troca de pastas** (dá para marcar arquivos de subpastas diferentes e
+  adicionar todos de uma vez); arquivos já monitorados e ocultos aparecem, mas
+  bloqueados. Um filtro client-side restringe a pasta atual por texto ou extensão.
+  Atalhos para *Arquivados*, *Quarentena* e *Gerenciar na Coleta* ficam no cabeçalho do
+  card; vindo daí, o botão "voltar" do navegador da Coleta retorna à estação de origem.
+  Tudo isso só existe para administrador — o card é renderizado sob `is_admin` e as
+  rotas (`api.station_browse`, `pages.station_file_download`, `/hub/...`) são
+  `admin_required`, então visitante sem login não vê nem alcança nada. O download é
+  escopado a `incoming/<id>/` pela mesma trava anti-traversal do navegador da Coleta.
 
 - **Mover a raiz de dados** (card em *Configurações*): migra a raiz **inteira** do
   hub para outra pasta via `rsync-hub move-root <novo>` — copia tudo preservando
