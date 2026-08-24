@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-24.2"
+RSYNC_HUB_VERSION="2026-08-24.3"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -712,6 +712,40 @@ purge_station() {   # purge <id> [--confirmo] — revoga o acesso E APAGA os dad
     echo "estação '$id' excluída definitivamente."
 }
 
+# Primeira pasta do caminho que a conta de serviço NÃO consegue atravessar (sem o+x).
+# Dizer "alguma pasta do caminho" não ajuda ninguém: é preciso apontar QUAL e mostrar
+# as permissões dela — o caso clássico é /media/<usuario>, que o udisks cria 700.
+path_blocker() {   # $1=caminho absoluto → ecoa a pasta bloqueadora (rc 0) ou nada (rc 1)
+    pb_target="$1"; pb_cur=""
+    set -f; oldifs="$IFS"; IFS='/'
+    # shellcheck disable=SC2086 — a divisão em componentes é intencional
+    set -- $pb_target
+    IFS="$oldifs"; set +f
+    for pb_c in "$@"; do
+        [ -n "$pb_c" ] || continue
+        pb_cur="$pb_cur/$pb_c"
+        [ -d "$pb_cur" ] || continue
+        su -s /bin/sh -c "test -x '$pb_cur'" "$HUB_USER" 2>/dev/null || {
+            printf '%s\n' "$pb_cur"; return 0; }
+    done
+    return 1
+}
+
+# Sistema de arquivos do caminho (usa o ancestral existente mais profundo).
+fs_type_of() {   # $1=caminho → ecoa o tipo (ext4, exfat, fuseblk…) ou vazio
+    ft_p="$1"
+    while [ ! -d "$ft_p" ] && [ "$ft_p" != "/" ]; do ft_p="$(dirname "$ft_p")"; done
+    # O rc do pipe é o do awk (sempre 0), então a detecção é pela SAÍDA, não pelo rc —
+    # senão o fallback nunca rodaria onde o 'df -T' não existe. Vazio = não sei: neste
+    # caso o move-root segue (não inventamos motivo para recusar).
+    ft_t="$(df -PT "$ft_p" 2>/dev/null | awk 'NR==2{print $2}')"
+    [ -n "$ft_t" ] || ft_t="$(stat -f -c %T "$ft_p" 2>/dev/null || true)"
+    # O 'stat -f -c' é GNU; em outros stat o '-c' volta ecoado. Descarta lixo: um tipo
+    # de sistema de arquivos nunca começa com '-' nem tem espaço.
+    case "$ft_t" in -*|*\ *) ft_t="" ;; esac
+    printf '%s\n' "$ft_t"
+}
+
 move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
     # Por que a raiz inteira (e nunca só incoming/): o hub deriva TUDO da BASE —
     # INCOMING=$BASE/incoming, o home da conta de serviço É a BASE (o sshd acha o
@@ -739,8 +773,48 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
     id "$HUB_USER" >/dev/null 2>&1 || die "conta '$HUB_USER' não existe — rode: sudo rsync-hub install"
     if [ -e "$new" ]; then
         [ -d "$new" ] || die "o destino existe e não é uma pasta: $new"
-        [ -z "$(ls -A "$new" 2>/dev/null)" ] || die "o destino existe e NÃO está vazio: $new"
+        if [ -n "$(ls -A "$new" 2>/dev/null)" ]; then
+            # Um disco novo montado direto no destino traz 'lost+found' (ext4) — o
+            # caminho certo é migrar para uma SUBPASTA do ponto de montagem, não para
+            # o ponto em si; dizer isso aqui evita um segundo erro confuso.
+            if [ "$(ls -A "$new" 2>/dev/null)" = "lost+found" ]; then
+                echo "aviso: $new é um ponto de montagem recém-formatado (só tem lost+found)." >&2
+                echo "       Migre para uma SUBPASTA dele, ex.: $new/carbonara" >&2
+            fi
+            die "o destino existe e NÃO está vazio: $new"
+        fi
     fi
+
+    # O modelo do hub REPOUSA em dono/permissão POSIX: o sshd (StrictModes) recusa um
+    # authorized_keys gravável por grupo/outros, o rrsync confia no dono, e a política
+    # de leitura usa 644/755. Um sistema de arquivos que não guarda isso (pendrive/HD
+    # externo formatado em exFAT/NTFS/FAT monta tudo 777 de um dono fixo) derruba a
+    # autenticação de TODAS as estações assim que a raiz for para lá.
+    fstype="$(fs_type_of "$new")"
+    case "$fstype" in
+        vfat|msdos|exfat|ntfs|ntfs3|fuseblk|iso9660|hfs|hfsplus)
+            echo "erro: o destino está em um sistema de arquivos '$fstype', que NÃO guarda" >&2
+            echo "      dono e permissões do Linux. A raiz do hub PRECISA deles:" >&2
+            echo "      o sshd recusa o authorized_keys se ele ficar gravável por outros" >&2
+            echo "      — as estações passariam a receber 'Permission denied (publickey)'." >&2
+            echo "      Formate o disco em ext4 (ou use uma pasta do disco do sistema)." >&2
+            die "migração recusada (nada foi migrado)" ;;
+        nfs|nfs4|cifs|smb3|smbfs)
+            echo "AVISO: destino em rede ('$fstype') — dono/permissões dependem do mapeamento" >&2
+            echo "       do servidor, e uma queda da rede derruba a coleta inteira." >&2 ;;
+    esac
+
+    # Ponto de montagem removível: a raiz É o home da conta de serviço. Se o disco não
+    # estiver montado no boot, o sshd não acha o authorized_keys (estações fora) e o hub
+    # volta a escrever no ponto de montagem VAZIO do disco interno.
+    case "$new/" in
+        /media/*|/run/media/*|/mnt/*)
+            echo "AVISO: $new parece um disco removível/montagem de usuário." >&2
+            echo "       A raiz do hub deve estar SEMPRE montada no mesmo lugar (fstab), senão" >&2
+            echo "       o home da conta '$HUB_USER' some quando o disco não estiver montado." >&2
+            echo "       Recomendado: montar o disco em /srv/carbonara-dados pelo /etc/fstab" >&2
+            echo "       (ext4, dono $HUB_USER) e migrar para lá." >&2 ;;
+    esac
 
     echo "Mover a raiz do hub:  $old  →  $new"
     echo "  - copia TUDO (incoming/, archive/, stations/, .ssh/, log/…) preservando dono/permissões;"
@@ -757,8 +831,25 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
     install -d "$new"
     chown --reference="$old" "$new" 2>/dev/null || chown "$HUB_USER:$HUB_USER" "$new"
     chmod --reference="$old" "$new" 2>/dev/null || chmod 755 "$new"
-    su -s /bin/sh -c "test -r '$new' && test -x '$new'" "$HUB_USER" 2>/dev/null || \
-        die "a conta '$HUB_USER' não consegue acessar $new — alguma pasta do caminho sem 'o+x'? (nada foi migrado)"
+    if ! su -s /bin/sh -c "test -r '$new' && test -x '$new'" "$HUB_USER" 2>/dev/null; then
+        blocker="$(path_blocker "$new" || true)"
+        echo "erro: a conta de serviço '$HUB_USER' não consegue chegar até $new." >&2
+        if [ -n "$blocker" ]; then
+            echo "      A pasta que bloqueia é:  $blocker" >&2
+            ls -ld "$blocker" 2>/dev/null | sed 's/^/        /' >&2
+            echo "      Ela precisa de 'o+x' (atravessar) para a conta do hub:" >&2
+            echo "          sudo chmod o+x $blocker" >&2
+            case "$blocker" in
+                /media/*|/run/media/*)
+                    echo "      OBS.: pastas em /media/<usuario> são criadas 700 pelo sistema a cada" >&2
+                    echo "            montagem — o chmod não sobrevive a desmontar/montar. Para uma raiz" >&2
+                    echo "            de hub, monte o disco por /etc/fstab em um caminho fixo." >&2 ;;
+            esac
+        else
+            echo "      Verifique as permissões de leitura/execução do caminho inteiro." >&2
+        fi
+        die "migração recusada (nada foi migrado)"
+    fi
 
     echo "[1/4] copiando os dados (primeira passada — pode demorar)…"
     rsync -aH "$old"/ "$new"/ || die "cópia falhou — NADA foi alterado; a raiz continua $old"

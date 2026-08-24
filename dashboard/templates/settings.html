@@ -63,10 +63,33 @@
   {% if hub_info and hub_info.can_write %}
     <form method="post" class="form" action="{{ url_for('hub.move_root') }}"
           onsubmit="return confirm('Migrar a raiz de dados AGORA? A cópia pode demorar; não feche esta página até terminar.');">
+    <div class="help-card">
+      <strong>O destino precisa cumprir três coisas</strong> — o hub recusa a migração
+      (sem mover nada) quando falta alguma:
+      <ul class="help-list">
+        <li><strong>Sistema de arquivos Linux</strong> (ext4/xfs…). <em>Pendrive ou HD
+          externo em exFAT/NTFS não serve</em>: eles não guardam dono e permissão, e o
+          sshd passa a recusar o <code>authorized_keys</code> — <strong>todas</strong> as
+          estações cairiam com <code>Permission denied (publickey)</code>.
+          Confira com <code>df -Th &lt;destino&gt;</code>.</li>
+        <li><strong>Montagem fixa e permanente</strong> (via <code>/etc/fstab</code>), não
+          <code>/media/&lt;usuário&gt;</code>: a raiz é o <em>home</em> da conta de
+          serviço — com o disco desmontado, o sshd não acha as chaves. Pastas em
+          <code>/media</code> ainda nascem <code>700</code> a cada montagem, fora do
+          alcance da conta do hub.</li>
+        <li><strong>Pasta vazia</strong>, e de preferência uma <em>subpasta</em> do ponto
+          de montagem (<code>/srv/dados/carbonara</code>, não <code>/srv/dados</code>) —
+          um disco recém-formatado já vem com <code>lost+found</code>.</li>
+      </ul>
+    </div>
       <label>Nova raiz (caminho absoluto)
         <input name="new_root" required pattern="/.*" placeholder="ex.: /dados/carbonara">
         <small>Raiz atual: <code>{{ hub_info.conf_base or hub_info.base }}</code>.
-          Ideal antes de migrar: <code>docker compose stop ingestion</code>.</small>
+          Ideal antes de migrar: <code>docker compose stop ingestion</code>.
+          {% if hub_info.version %}<br>Executando <code>rsync-hub {{ hub_info.version }}</code>
+          ({{ hub_info.bin }}) — as mensagens de erro desta migração vêm dele, não da
+          dashboard; atualize a cópia instalada para ter as verificações mais novas.{% endif %}
+        </small>
       </label>
       <label><input type="checkbox" name="ack" required>
         Entendi que as <strong>estações não precisam de nenhuma mudança</strong>

@@ -111,7 +111,15 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   absolute paths. Flow: preflight (absolute, not nested either way, empty target,
   service account can traverse) → `rsync -aH` copy → switch home+conf → delta pass →
   regenerate/restart rsyncd → `RAIZ-MIGRADA.txt` marker in the old root, which is
-  **never deleted** (manual, after verifying). It prints the manual follow-ups
+  **never deleted** (manual, after verifying). The preflight REFUSES a destination on
+  a filesystem that cannot hold Unix ownership/modes (`vfat/exfat/ntfs/fuseblk`…): the
+  hub's whole model rests on them (sshd StrictModes over `authorized_keys`, the 644/755
+  read policy, rrsync), so an external backup drive as the root would take every
+  station down with `Permission denied (publickey)`. It also WARNS for `/media`,
+  `/run/media` and `/mnt` (a removable root is the service account's HOME — unmounted,
+  sshd finds no keys), names the exact directory in the path missing `o+x` instead of
+  "some directory", and points a freshly formatted mount (`lost+found` only) at a
+  subdirectory. It prints the manual follow-ups
   (compose `.env` `CARBONARA_ROOT` + `up -d`, dashboard data_root); `--confirmo` is
   required without a TTY (that's how the dashboard invokes it).
 - **Password mode (second auth path)** — `add <id> --senha [senha]` authorizes a station
