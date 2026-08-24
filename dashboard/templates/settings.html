@@ -11,6 +11,24 @@
   <code>/srv/carbonara</code>), altere só aqui e tudo acompanha.
 </section>
 
+{% if hub_info and hub_info.base_mismatch %}
+<div class="flash flash-error">
+  <strong>A dashboard está lendo a raiz errada.</strong>
+  Ela lê de <code>{{ hub_info.base }}</code>, mas o rsync-hub usa
+  <code>{{ hub_info.conf_base }}</code> (em <code>/etc/rsync-hub.conf</code>) — é o
+  rastro de um <code>rsync-hub move-root</code> feito pelo terminal: o hub migra, mas o
+  config da dashboard é outro arquivo e o script não tem como atualizá-lo. Enquanto
+  estiver assim, as estações aparecem sem dados novos, porque a dashboard está olhando
+  a árvore antiga, congelada.
+  <form method="post" action="{{ url_for('hub.align_root') }}" class="form-actions">
+    <button class="btn btn-primary" type="submit">
+      Alinhar a dashboard com {{ hub_info.conf_base }}</button>
+  </form>
+  <small>Troca o <code>data_root</code> e reaponta os caminhos absolutos dos cadastros
+    (heartbeat, arquivos monitorados, log de conexões). Nada em disco é movido.</small>
+</div>
+{% endif %}
+
 <form method="post" class="card form" action="{{ url_for('pages.settings_save') }}">
   <label>Pasta raiz do hub (rsync-hub)
     <input name="data_root" required value="{{ cfg.data_root or '' }}"

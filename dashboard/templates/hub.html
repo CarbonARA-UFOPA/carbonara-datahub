@@ -40,20 +40,12 @@
 {% endif %}
 
 {% if info.base_mismatch %}
+{# A raiz é assunto de Configurações (é lá que ela se edita e se migra) — aqui fica só
+   o ponteiro, para quem chegou pela Coleta. #}
 <div class="flash flash-error">
-  <strong>A dashboard está lendo a raiz errada.</strong>
-  Ela lê de <code>{{ info.base }}</code>, mas o rsync-hub usa
-  <code>{{ info.conf_base }}</code> (em <code>/etc/rsync-hub.conf</code>) — é o que
-  acontece depois de um <code>rsync-hub move-root</code> feito pelo terminal: o hub
-  migra, mas o config da dashboard é outro arquivo e ninguém o atualiza. Enquanto
-  estiver assim, as estações aparecem sem dados novos (a dashboard está olhando a
-  árvore antiga, congelada).
-  <form method="post" action="{{ url_for('hub.align_root') }}" class="form-actions">
-    <button class="btn btn-primary" type="submit">
-      Alinhar a dashboard com {{ info.conf_base }}</button>
-  </form>
-  <small>Isto troca o <code>data_root</code> e reaponta os caminhos absolutos dos
-    cadastros (heartbeat, arquivos monitorados, log). Nada em disco é movido.</small>
+  A dashboard está lendo <code>{{ info.base }}</code>, mas o rsync-hub usa
+  <code>{{ info.conf_base }}</code>. Alinhe em
+  <a href="{{ url_for('pages.settings') }}">Configurações</a>.
 </div>
 {% endif %}
 
@@ -120,6 +112,11 @@
     {% endfor %}
   </p>
   <p class="meta">Base do hub: <code>{{ info.base }}</code>
+    {% if info.conf_base %} · <code>/etc/rsync-hub.conf</code>: <code>{{ info.conf_base }}</code>
+    {% else %} · <span class="warn">não consegui ler <code>/etc/rsync-hub.conf</code></span>
+      — sem ele não dá para conferir se a dashboard está lendo a mesma raiz que o
+      rsync-hub usa (confira as permissões: deve ser 644)
+    {% endif %}
     {% if info.version %} · rsync-hub <code>{{ info.version }}</code>{% endif %}
     {% if info.bin %} · executável: <code>{{ info.bin }}</code>{% endif %}
   </p>

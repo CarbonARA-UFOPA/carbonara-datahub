@@ -464,6 +464,10 @@ computes live station status. Viewing is open; edits require the admin login
   route, `pages.settings_save`, and `POST /hub/align-root`). A registered absolute
   `heartbeat_file`/`files[].path`/`connections_log` would otherwise keep reading the
   old, frozen tree — which looks exactly like "the stations went offline".
+  Anything that acts on the ROOT itself (edit `data_root`, migrate it, align it with
+  the hub) lives in *Configurações*, never in *Coleta* — Coleta is for stations, their
+  credentials and the file browser. The `/hub` page only shows a one-line pointer when
+  the roots diverge (user request; don't move the controls back there).
   `/hub/align-root` covers the path the UI does not control: a `move-root` run from
   the TERMINAL updates `/etc/rsync-hub.conf` but cannot touch the dashboard's config,
   so the page detects the divergence (`base_mismatch`) and offers one click to adopt

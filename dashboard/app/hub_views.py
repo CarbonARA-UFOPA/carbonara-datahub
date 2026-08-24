@@ -106,8 +106,8 @@ def align_root():
     conf_base = (hub.read_hub_conf().get("BASE") or "").strip()
     if not conf_base.startswith("/"):
         flash("Não consegui ler a BASE em /etc/rsync-hub.conf — ajuste a raiz à mão "
-              "em Configurações.", "error")
-        return redirect(url_for("hub.index"))
+              "no campo acima.", "error")
+        return redirect(url_for("pages.settings"))
     old_bases = []
     for cand in (str(config_store.data_root(cfg)),
                  cfg.get("data_root") if str(cfg.get("data_root", "")).startswith("/") else None):
@@ -115,14 +115,14 @@ def align_root():
             old_bases.append(cand)
     if conf_base in old_bases:
         flash(f"A raiz da dashboard já é {conf_base} — nada a alinhar.", "ok")
-        return redirect(url_for("hub.index"))
+        return redirect(url_for("pages.settings"))
     cfg["data_root"] = conf_base
     rewritten = sum(hub.rewrite_absolute_paths(cfg, ob, conf_base) for ob in old_bases)
     current_app.store.save(cfg)
     flash(f"Raiz da dashboard alinhada com o rsync-hub: {conf_base}."
           + (f" {rewritten} caminho(s) absoluto(s) de cadastros foram reapontados." if rewritten else ""),
           "ok")
-    return redirect(url_for("hub.index"))
+    return redirect(url_for("pages.settings"))
 
 
 @hub_pages.post("/stations")
