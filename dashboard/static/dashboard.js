@@ -129,7 +129,19 @@ async function loadSeries(block) {
   try {
     const resp = await fetch(block.dataset.seriesUrl);
     const data = await resp.json();
-    if (data.error) { errEl.textContent = data.error; return; }
+    /* 'pending' = arquivo com data/hora que ainda não chegou: não é erro de
+       configuração, então nada de vermelho — some com os gráficos e explica em tom
+       neutro. Volta sozinho na próxima atualização, quando o arquivo aparecer. */
+    if (data.error) {
+      errEl.textContent = data.error;
+      errEl.classList.toggle("warn", !data.pending);
+      errEl.classList.toggle("meta", !!data.pending);
+      block.classList.toggle("series-pending", !!data.pending);
+      return;
+    }
+    errEl.classList.add("warn");
+    errEl.classList.remove("meta");
+    block.classList.remove("series-pending");
     errEl.textContent = (data.problems || []).join(" · ");
     infoEl.textContent = ` · ${data.rows_read} linhas lidas` +
       (data.decimated ? " (decimado p/ o gráfico)" : "") +

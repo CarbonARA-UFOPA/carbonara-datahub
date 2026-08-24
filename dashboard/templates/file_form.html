@@ -15,6 +15,20 @@
            placeholder="ex.: incoming/{{ station.id }}/{{ station.id }}.dat (relativo à raiz) ou /caminho/absoluto">
   </label>
 
+  <label class="check-row">
+    <input type="checkbox" name="dynamic_path" value="1" id="dyn-path"
+           {{ 'checked' if fcfg and fcfg.get('dynamic_path') else '' }}>
+    <span><strong>O nome do arquivo muda com a data/hora</strong> — escreva o padrão no
+      caminho e o dashboard resolve a cada leitura pelo relógio do servidor:
+      <code>%Y</code> ano · <code>%m</code> mês · <code>%d</code> dia ·
+      <code>%H</code> hora · <code>%M</code> min · <code>%S</code> seg.
+      Ex.: <code>incoming/profsfo/torre/%Y-%m-%d__02-29-52.sfo</code> lê sempre o
+      arquivo do dia. (<code>%YYYY</code>, <code>%mm</code> e <code>%DD</code> também
+      são aceitos e convertidos.) Se o arquivo de hoje ainda não chegou, o gráfico usa
+      o mais recente que casa com o padrão.
+      <span id="dyn-preview" class="meta"></span></span>
+  </label>
+
   <div class="form-row">
     <label>Formato do arquivo
       {# Sem `name`: não é campo do cadastro, só preenche os de baixo. O que vale para o
@@ -70,9 +84,18 @@
       </label>
       <label>Coluna do timestamp
         <input name="ts_column" value="{{ fcfg.timestamp.column if fcfg else 0 }}">
-        <small>Índice (0 = primeira) ou nome.</small>
+        <small>Índice (0 = primeira) ou nome — qualquer coluna serve.</small>
       </label>
-      <label>Formato do timestamp
+      <label>Tipo do carimbo
+        {# Sem `name`: quem vai para o servidor é o ts_format ("epoch" ou o strftime). #}
+        <select id="ts-kind">
+          <option value="texto">Data/hora em texto</option>
+          <option value="epoch">Unix epoch (segundos desde 1970)</option>
+        </select>
+        <small>Epoch aceita fração — <code>1787542188.433029</code> tem precisão de
+          microssegundo — e também valores em ms/µs/ns.</small>
+      </label>
+      <label id="ts-format-label">Formato do timestamp
         <input name="ts_format" value="{{ fcfg.timestamp.format if fcfg else '%Y-%m-%d %H:%M:%S' }}">
       </label>
       <label>Remover dos valores (regex)
@@ -146,6 +169,7 @@
     if (!form || !sel) return;
 
     var TS = "%Y-%m-%d %H:%M:%S";
+    var EPOCH = ["epoch", "unix", "unixtime", "posix", "%s", "epoch_s"];
     var PRESETS = {
       toa5:        { separator: ",",   quotechar: '"', skip_header_lines: "4", header_line: "2", decimal: ".", ts_column: "0", ts_format: TS },
       csv:         { separator: ",",   quotechar: '"', skip_header_lines: "1", header_line: "1", decimal: ".", ts_column: "0", ts_format: TS },
@@ -167,12 +191,14 @@
     function mostraResumo() {      /* lê dos CAMPOS, não do preset: continua verdadeiro
                                       depois de qualquer ajuste manual */
       var nomes = val("header_line");
+      var epoch = EPOCH.indexOf(val("ts_format").toLowerCase()) >= 0;
       resumo.textContent =
         "separador " + (val("separator") || "—") +
         " · aspas " + (val("quotechar") || "nenhuma") +
         " · pula " + (val("skip_header_lines") || "0") + " linha(s)" +
         (nomes ? " · nomes na linha " + nomes : " · sem nomes de coluna") +
-        " · timestamp na coluna " + (val("ts_column") || "0");
+        " · timestamp na coluna " + (val("ts_column") || "0") +
+        (epoch ? " (Unix epoch)" : "");
     }
 
     sel.addEventListener("change", function () {
@@ -189,6 +215,65 @@
 
     sel.value = detecta();
     mostraResumo();
+  })();
+
+  /* Tipo do carimbo de tempo: texto (strftime) x Unix epoch. O campo enviado continua
+     sendo o ts_format — "epoch" é o marcador que o parse reconhece, e vale para
+     qualquer coluna, não só a primeira. */
+  (function () {
+    var form = document.getElementById("file-form");
+    var kind = document.getElementById("ts-kind");
+    var box = document.getElementById("ts-format-label");
+    if (!form || !kind || !box) return;
+    var inp = form.elements.ts_format;
+    var EPOCH = ["epoch", "unix", "unixtime", "posix", "%s", "epoch_s"];
+    var ultimoTexto = "%Y-%m-%d %H:%M:%S";
+
+    function ehEpoch() { return EPOCH.indexOf((inp.value || "").trim().toLowerCase()) >= 0; }
+    function aplica() {
+      var epoch = kind.value === "epoch";
+      box.hidden = epoch;                       /* formato strftime não faz sentido aqui */
+      if (epoch) {
+        if (!ehEpoch()) { ultimoTexto = inp.value; inp.value = "epoch"; }
+      } else if (ehEpoch()) {
+        inp.value = ultimoTexto || "%Y-%m-%d %H:%M:%S";
+      }
+      /* avisa quem observa os campos finos (seletor de formato + resumo) */
+      inp.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    kind.addEventListener("change", aplica);
+    if (ehEpoch()) { kind.value = "epoch"; box.hidden = true; } else { ultimoTexto = inp.value; }
+  })();
+
+  /* Prévia do caminho com data/hora: mostra, com o relógio de AGORA, qual arquivo o
+     padrão aponta — é o que evita salvar um %YYYY achando que virou o ano inteiro. */
+  (function () {
+    var chk = document.getElementById("dyn-path");
+    var pathInp = document.querySelector('#file-form [name="path"]');
+    var out = document.getElementById("dyn-preview");
+    if (!chk || !pathInp || !out) return;
+    var ALIAS = [[/%YYYY/g, "%Y"], [/%yyyy/g, "%Y"], [/%YY/g, "%y"], [/%mm/g, "%m"],
+                 [/%DD/g, "%d"], [/%dd/g, "%d"], [/%HH/g, "%H"], [/%MM/g, "%M"], [/%SS/g, "%S"]];
+    function pad(n, w) { return String(n).padStart(w || 2, "0"); }
+    function expande(p) {
+      var d = new Date(), map = {
+        Y: d.getFullYear(), y: pad(d.getFullYear() % 100), m: pad(d.getMonth() + 1),
+        d: pad(d.getDate()), H: pad(d.getHours()), M: pad(d.getMinutes()), S: pad(d.getSeconds()),
+        j: pad(Math.ceil((d - new Date(d.getFullYear(), 0, 0)) / 86400000), 3)
+      };
+      ALIAS.forEach(function (a) { p = p.replace(a[0], a[1]); });
+      return p.replace(/%(.)/g, function (todo, c) {
+        return c === "%" ? "%" : (map[c] !== undefined ? map[c] : todo);
+      });
+    }
+    function render() {
+      var p = pathInp.value.trim();
+      if (!chk.checked || !p) { out.textContent = ""; return; }
+      out.innerHTML = "<br>Agora isto aponta para: <code>" + expande(p) + "</code>";
+    }
+    chk.addEventListener("change", render);
+    pathInp.addEventListener("input", render);
+    render();
   })();
 </script>
 {% endblock %}

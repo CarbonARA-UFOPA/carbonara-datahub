@@ -31,12 +31,41 @@ def _column_index(spec, header: list[str] | None, row_len: int) -> int | None:
     return cleaned.index(spec) if spec in cleaned else None
 
 
+def parse_epoch(raw: str) -> datetime | None:
+    """Unix epoch → datetime (fuso do processo, como os carimbos de texto dos arquivos).
+
+    Aceita fração de segundo — ``1787542188.433029`` são 6 casas, precisão de
+    microssegundo, preservada no datetime. A ESCALA é deduzida da ordem de grandeza,
+    porque a mesma coluna aparece em segundos, ms, µs ou ns conforme o equipamento:
+    hoje o epoch em segundos tem ~1,8e9, em ms ~1,8e12, em µs ~1,8e15 e em ns ~1,8e18 —
+    as faixas não se sobrepõem em nenhum momento plausível deste século."""
+    try:
+        v = float((raw or "").strip().strip('"').replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    a = abs(v)
+    if a >= 1e17:
+        v /= 1e9        # nanossegundos
+    elif a >= 1e14:
+        v /= 1e6        # microssegundos
+    elif a >= 1e11:
+        v /= 1e3        # milissegundos
+    try:
+        return datetime.fromtimestamp(v)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def parse_timestamp(raw: str, fmt: str | None) -> datetime | None:
     """Parse TOLERANTE do timestamp. Dataloggers Campbell/TOA5 gravam fração de segundo
     ('2026-07-23 17:00:03.607'), que o formato padrão '%Y-%m-%d %H:%M:%S' não casa. Aqui
     tentamos o formato como está e, se falhar, uma variante: com '.%f' anexado quando o
     formato não a declara, ou sem ela quando o valor não tem fração. Assim o padrão da
     dashboard funciona com ou sem os milissegundos, sem o usuário ter que ajustar nada."""
+    # Unix epoch vale para QUALQUER coluna escolhida como eixo de tempo — o marcador
+    # está no FORMATO, não na posição da coluna.
+    if config_store.is_epoch_format(fmt):
+        return parse_epoch(raw)
     raw = (raw or "").strip().strip('"')
     fmt = fmt or "%Y-%m-%d %H:%M:%S"
     candidates = [fmt]
@@ -79,8 +108,13 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         return {"error": str(exc)}
     if not path.is_file():
         if pinfo.get("dynamic"):
-            return {"error": "Arquivo do momento ainda não existe e nenhum arquivo "
-                             f"casa com o padrão: {pinfo['expanded']}"}
+            # 'pending': o arquivo do padrão ainda não chegou (estação sem sincronizar
+            # hoje, primeira execução). Não é falha de configuração — a UI mostra em
+            # tom neutro e esconde os gráficos, em vez de um erro vermelho.
+            return {"pending": True,
+                    "error": "Aguardando o arquivo do período: "
+                             f"{Path(pinfo['expanded']).name} ainda não chegou "
+                             "(nenhum arquivo casa com o padrão)."}
         return {"error": f"Arquivo não encontrado: {path}"}
 
     # .get com defaults: entradas escritas à mão no YAML podem omitir chaves

@@ -448,6 +448,23 @@ computes live station status. Viewing is open; edits require the admin login
   lock). Relative `data_root` resolves against the **config file's directory**, not cwd.
 - **Never loads whole data files** — `app/tailer.py` seeks from the end; keep it that
   way (datalogger `.dat`s grow unbounded). Campbell `NAN`/`±7999` become `None` (gaps).
+- **Timestamp column**: `timestamp.format` is a strftime pattern OR the literal
+  `epoch` (any of `config_store.EPOCH_MARKERS`, normalized to `epoch` on save), meaning
+  Unix seconds — fraction preserved (`1787542188.433029` → microseconds) and ms/µs/ns
+  auto-scaled by magnitude (`series.parse_epoch`; the ranges never overlap this
+  century). It applies to whatever column is the time axis — the marker is in the
+  FORMAT, not the position. `EPOCH_MARKERS` lives in `config_store` because `series`
+  already imports it (the reverse would be a cycle).
+- **Rotating filenames** (`dynamic_path` + a strftime `path`): resolved on EVERY read
+  from the server clock (`config_store.resolve_file_path`), so one registration follows
+  the current day/hour file. Missing current file → falls back to the newest match of
+  the pattern (`time_path_glob` turns `%Y` into `????`), reported in `path_info` and as
+  a `problems` note. Nothing matches at all → `{"pending": True, ...}`, which the UI
+  renders in a NEUTRAL tone and hides the charts (`.series-pending`) — a file that has
+  not arrived yet is not a misconfiguration and must never look like a failure.
+  Human-written aliases (`%YYYY`, `%mm`, `%DD`…) are normalized to strftime on save
+  (`normalize_time_tokens`): strftime would expand `%YYYY` to `2026YYY` **without
+  erroring**, giving a silently empty chart.
 - Chart.js is **vendored** in `dashboard/static/` (no CDN — the host may be offline).
 - Read-only over the data: removing stations/files from the dashboard never touches disk.
 - **Hub management page** (`/hub`, blueprint `app/hub_views.py` + logic `app/hub.py`):

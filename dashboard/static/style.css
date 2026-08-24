@@ -306,3 +306,7 @@ code { background: #eef2f0; padding: .05rem .3rem; border-radius: 4px; font-size
    reticências para não esticar a coluna; o caminho inteiro fica no balão (title). */
 .path-text { display: block; max-width: 46ch; overflow: hidden; text-overflow: ellipsis;
              white-space: nowrap; margin-top: .2rem; }
+
+/* Arquivo com data/hora que ainda não chegou: esconde os gráficos vazios e deixa só a
+   linha neutra explicando (ver 'pending' em series.py). */
+.series-pending .charts { display: none; }

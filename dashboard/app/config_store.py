@@ -120,6 +120,32 @@ _TIME_TOKEN_WIDTH = {"Y": 4, "y": 2, "m": 2, "d": 2, "H": 2, "I": 2, "M": 2, "S"
 _TIME_TOKEN_RE = re.compile(r"%[A-Za-z]")
 
 
+# Apelidos "humanos" para os campos strftime. Quem escreve o padrão à mão tende a usar
+# %YYYY/%mm/%DD (como se lê a data), e no strftime isso NÃO dá erro: '%YYYY' vira
+# '2026YYY' silenciosamente — arquivo que nunca existe e gráfico vazio sem explicação.
+# Normalizamos na entrada; o que fica gravado é sempre strftime canônico.
+_TIME_ALIASES = (("%YYYY", "%Y"), ("%yyyy", "%Y"), ("%YY", "%y"), ("%mm", "%m"),
+                 ("%DD", "%d"), ("%dd", "%d"), ("%HH", "%H"), ("%MM", "%M"), ("%SS", "%S"))
+
+
+def normalize_time_tokens(path: str) -> str:
+    """Converte os apelidos (%YYYY, %mm, %DD…) para strftime (%Y, %m, %d…)."""
+    out = path or ""
+    for alias, canon in _TIME_ALIASES:      # os mais longos primeiro (ver tupla)
+        out = out.replace(alias, canon)
+    return out
+
+
+# Carimbo de tempo em Unix epoch: o "formato" deixa de ser strftime e passa a significar
+# "número de segundos desde 1970-01-01 UTC". Fica aqui (e não em series.py) porque
+# series já importa config_store — o contrário seria import circular.
+EPOCH_MARKERS = {"epoch", "unix", "unixtime", "posix", "%s", "epoch_s"}
+
+
+def is_epoch_format(fmt: str | None) -> bool:
+    return (fmt or "").strip().lower() in EPOCH_MARKERS
+
+
 def has_time_tokens(path: str) -> bool:
     """True se o caminho tem algum campo strftime (%Y, %m, %d, %H…)."""
     return bool(_TIME_TOKEN_RE.search(path or ""))
@@ -554,6 +580,8 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
     alias = (form.get("alias") or "").strip() or None
     # Caminho com data/hora: o path é um padrão strftime resolvido a cada leitura.
     dynamic_path = bool(form.get("dynamic_path"))
+    if dynamic_path:
+        path = normalize_time_tokens(path)
     if dynamic_path and path and not has_time_tokens(path):
         errors.append("Caminho com data/hora marcado, mas o caminho não tem nenhum campo "
                       "de tempo (%Y, %m, %d, %H…). Ex.: incoming/est/dados_%Y%m%d.dat")
@@ -608,6 +636,10 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
     ts_col_raw = (form.get("ts_column") or "0").strip()
     ts_column: int | str = int(ts_col_raw) if INT_RE.match(ts_col_raw) else ts_col_raw
     ts_format = (form.get("ts_format") or "%Y-%m-%d %H:%M:%S").strip()
+    # Unix epoch: grava sempre em minúsculas na forma canônica, para o parse reconhecer
+    # independentemente de como foi digitado ("Epoch", "UNIX", "%s"…).
+    if is_epoch_format(ts_format):
+        ts_format = "epoch"
 
     def _getlist(field: str) -> list:
         return form.getlist(field) if hasattr(form, "getlist") else form.get(field, [])

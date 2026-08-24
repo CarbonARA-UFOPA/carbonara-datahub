@@ -58,6 +58,16 @@ python run.py                          # http://localhost:8080
   não é admin, com motivo e horário) — é a explicação de por que os dados pararam.
 - **Gráficos por variável** das últimas N linhas de cada arquivo monitorado (tail
   eficiente — o arquivo nunca é lido inteiro), com auto-atualização.
+- **Carimbo de tempo em Unix epoch**: no cadastro do arquivo, *Tipo do carimbo* →
+  *Unix epoch*. Serve para qualquer coluna escolhida como eixo de tempo (não só a
+  primeira), aceita fração de segundo (`1787542188.433029`, microssegundos) e também
+  valores em ms/µs/ns — a escala é deduzida pela ordem de grandeza.
+- **Arquivos que rotacionam pelo relógio**: marque *"O nome do arquivo muda com a
+  data/hora"* no cadastro e escreva o caminho como padrão —
+  `incoming/profsfo/torre/%Y-%m-%d__02-29-52.sfo`. A cada leitura ele é resolvido com a
+  data do servidor, então um cadastro só acompanha o arquivo do dia. Se o do momento
+  ainda não chegou, lê o mais recente que casa com o padrão (avisando qual); se nenhum
+  existe ainda, a tela diz que está aguardando, em tom neutro, e não plota nada.
 - **Tela Comparar** (`/compare`): selecione variáveis de quaisquer estações/arquivos já
   configurados (checkboxes) e veja **todas as séries num único gráfico**, com
   auto-atualização; a legenda identifica a origem de cada uma (estação · arquivo ·

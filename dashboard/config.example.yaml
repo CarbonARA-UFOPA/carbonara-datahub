@@ -57,6 +57,13 @@ stations:
     files:
       - id: dados30min
         path: incoming/flona01/flona01.dat   # relativo a data_root, ou absoluto
+        # Arquivo que rotaciona pelo relógio? Escreva o caminho como padrão strftime e
+        # marque dynamic_path: o dashboard resolve a cada leitura com a data DO
+        # SERVIDOR, seguindo sozinho o arquivo do dia/hora. Se o do momento ainda não
+        # chegou, lê o mais recente que casa com o padrão; se nenhum existe, a tela
+        # avisa em tom neutro e não plota (não é erro).
+        #   path: incoming/flona01/torre/%Y-%m-%d__02-29-52.sfo
+        #   dynamic_path: true
         tail_lines: 288                       # 288 × 30min = últimos ~6 dias
         separator: ","
         quotechar: '"'                        # TOA5 (Campbell) usa aspas; "" (vazio) =
@@ -71,8 +78,12 @@ stations:
         skip_header_lines: 1                  # TOA5 = 4 · CSV com cabeçalho = 1
         header_line: 1                        # linha (1-based) com nomes; TOA5 = 2; null = sem nomes
         timestamp:
-          column: 0                           # índice OU nome de coluna
+          column: 0                           # índice OU nome de coluna (qualquer uma)
           format: "%Y-%m-%d %H:%M:%S"
+          # Carimbo em Unix epoch (segundos desde 1970-01-01 UTC)? Use:
+          #   format: epoch
+          # Aceita fração ("1787542188.433029" = precisão de microssegundo) e valores
+          # em ms/µs/ns (a escala é deduzida pela ordem de grandeza).
         variables:                            # um gráfico por variável
           # min/max (opcionais) = limites FÍSICOS plausíveis: viram linhas de marcação
           # no gráfico e os trechos fora deles ficam vermelhos (dado bom vs. ruim).
