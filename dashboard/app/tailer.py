@@ -72,6 +72,38 @@ def parse_rows(lines: list[str], separator: str, quotechar: str) -> list[list[st
     return [row for row in reader]
 
 
+# Tipos primitivos que uma coluna pode ter. O padrão continua sendo número — os demais
+# existem porque um arquivo real mistura tudo na mesma linha: contadores inteiros,
+# flags 0/1, carimbos epoch de cada bloco de sensor e códigos em texto.
+COLUMN_TYPES = ("numero", "inteiro", "booleano", "epoch", "texto")
+_TRUE = {"1", "true", "t", "sim", "s", "yes", "y", "on", "ligado", "verdadeiro"}
+_FALSE = {"0", "false", "f", "nao", "não", "n", "no", "off", "desligado", "falso"}
+
+
+def to_bool(cell: str) -> float | None:
+    """Booleano → 1.0/0.0 (números, para o gráfico virar degraus). Aceita as grafias
+    usuais em pt/en; qualquer outra coisa vira lacuna."""
+    c = (cell or "").strip().strip('"').lower()
+    if c in _TRUE:
+        return 1.0
+    if c in _FALSE:
+        return 0.0
+    # Datalogger costuma escrever a flag com zeros à esquerda ("0000", "01"): cai no
+    # número — zero é falso, qualquer outro valor é verdadeiro.
+    try:
+        v = float(c.replace(",", "."))
+    except ValueError:
+        return None
+    return 0.0 if v == 0 else 1.0
+
+
+def to_int(cell: str, decimal: str = ".", strip_re=None) -> float | None:
+    """Inteiro: usa o mesmo parse numérico e arredonda (o valor segue float no JSON —
+    o que muda é a EXIBIÇÃO, sem casas decimais)."""
+    v = to_float(cell, decimal, strip_re)
+    return None if v is None else float(round(v))
+
+
 def to_float(cell: str, decimal: str = ".", strip_re=None) -> float | None:
     cell = (cell or "").strip().strip('"')
     # Limpeza opcional por regex: remove os trechos casados antes de virar número

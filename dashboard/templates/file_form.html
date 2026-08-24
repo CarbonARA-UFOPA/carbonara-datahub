@@ -125,12 +125,24 @@
     <em>⇊ Todas as colunas do arquivo</em> para trazer as colunas detectadas de uma vez.</p>
 
   <table class="table" id="vars-table">
-    <thead><tr><th>Índice</th><th>Rótulo</th><th>Unidade</th><th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
+    <thead><tr><th>Índice</th><th>Rótulo</th><th>Tipo</th><th>Unidade</th>
+      <th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
     <tbody>
     {% for v in (fcfg.variables if fcfg and fcfg.variables else [{'column': 1, 'label': '', 'unit': ''}]) %}
       <tr>
-        <td><input name="var_column" value="{{ v.column }}" readonly class="num-input"></td>
+        <td><input name="var_column" value="{{ v.column }}" class="num-input"
+                   title="Índice da coluna (0 = primeira, -1 = última) ou o nome dela"></td>
         <td><input name="var_label" value="{{ v.label }}"></td>
+        <td>
+          {% set vt = v.type or 'numero' %}
+          <select name="var_type">
+            <option value="numero" {{ 'selected' if vt == 'numero' }}>Número</option>
+            <option value="inteiro" {{ 'selected' if vt == 'inteiro' }}>Inteiro</option>
+            <option value="booleano" {{ 'selected' if vt == 'booleano' }}>Booleano</option>
+            <option value="epoch" {{ 'selected' if vt == 'epoch' }}>Data/hora (epoch)</option>
+            <option value="texto" {{ 'selected' if vt == 'texto' }}>Texto</option>
+          </select>
+        </td>
         <td><input name="var_unit" value="{{ v.unit or '' }}"></td>
         <td><input name="var_min" value="{{ v.min if v.min is not none else '' }}" placeholder="—" class="num-input"></td>
         <td><input name="var_max" value="{{ v.max if v.max is not none else '' }}" placeholder="—" class="num-input"></td>
@@ -145,9 +157,21 @@
   <details class="adv">
     <summary>O que significa cada coluna</summary>
     <ul class="help-list">
-      <li><em>Índice</em> — posição da coluna no arquivo (0 = primeira). Não editável:
-        cada linha nova recebe o próximo índice livre e a coluna do timestamp fica de fora.</li>
+      <li><em>Índice</em> — posição da coluna no arquivo (<code>0</code> = primeira),
+        <strong>editável</strong>: digite direto o índice que quiser. Vale
+        <code>-1</code> para a última coluna (e <code>-2</code> para a penúltima), ou o
+        <em>nome</em> da coluna quando o arquivo tem linha de cabeçalho. Linha nova já
+        vem com o próximo índice livre. Não pode repetir índice nem usar a coluna do
+        timestamp — o servidor recusa e diz qual é.</li>
       <li><em>Rótulo</em> — título do gráfico. <em>Unidade</em> — só exibição na legenda.</li>
+      <li><em>Tipo</em> — como o valor da coluna é lido:
+        <strong>Número</strong> (padrão) · <strong>Inteiro</strong> (sem casas
+        decimais) · <strong>Booleano</strong> (0/1, também aceita
+        <code>sim/não</code>, <code>true/false</code>, <code>on/off</code>) ·
+        <strong>Data/hora (epoch)</strong> — para as OUTRAS colunas de carimbo do
+        arquivo: a linha mostra quando aquele bloco avançou e os valores aparecem como
+        hora, não como número · <strong>Texto</strong> — não vira gráfico; a tela
+        mostra o último valor lido.</li>
       <li><em>Mín / Máx físicos</em> — limites plausíveis: viram linhas tracejadas no
         gráfico e os trechos fora deles ficam
         <strong style="color:#d64545">vermelhos</strong>.</li>

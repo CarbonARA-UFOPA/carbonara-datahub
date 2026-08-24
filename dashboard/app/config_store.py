@@ -17,6 +17,8 @@ from pathlib import Path
 
 import yaml
 
+from .tailer import COLUMN_TYPES
+
 try:  # py3.9+
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover
@@ -661,6 +663,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
     variables = []
     cols = _getlist("var_column")
     labels = _getlist("var_label")
+    types = _getlist("var_type")
     units = _getlist("var_unit")
     mins = _getlist("var_min")
     maxs = _getlist("var_max")
@@ -676,6 +679,11 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
         if any(str(column) == str(v["column"]) for v in variables):
             errors.append(f"Índice de coluna repetido: {column} — cada variável deve ter um índice único.")
             continue
+        vtype = (types[i] if i < len(types) else "").strip() or "numero"
+        if vtype not in COLUMN_TYPES:
+            errors.append(f"Tipo de coluna inválido ('{vtype}') — use um de: "
+                          + ", ".join(COLUMN_TYPES) + ".")
+            vtype = "numero"
         label = (labels[i] if i < len(labels) else "").strip() or str(column)
         unit = (units[i] if i < len(units) else "").strip() or None
         vmin = _float_or_none(mins[i] if i < len(mins) else "", f"Limite mínimo de '{label}'")
@@ -683,7 +691,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
         if vmin is not None and vmax is not None and vmin > vmax:
             errors.append(f"'{label}': limite mínimo ({vmin}) maior que o máximo ({vmax}).")
         variables.append({"column": column, "label": label, "unit": unit,
-                          "min": vmin, "max": vmax})
+                          "min": vmin, "max": vmax, "type": vtype})
     if require_variables and not variables:
         errors.append("Defina pelo menos uma variável (coluna + rótulo).")
 

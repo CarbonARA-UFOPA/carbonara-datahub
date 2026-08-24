@@ -31,10 +31,45 @@ def _column_index(spec, header: list[str] | None, row_len: int) -> int | None:
     return cleaned.index(spec) if spec in cleaned else None
 
 
-# Formato ÚNICO de exibição de carimbo de tempo na dashboard: data completa + hora e
-# minuto, sem segundos. Vale para o eixo dos gráficos, a "última leitura" e o preview —
-# um carimbo de arquivo nunca é mostrado cru (epoch ou não), sempre convertido.
-TS_DISPLAY = "%d/%m/%Y %H:%M"
+# Exibição de carimbo de tempo: data completa SEMPRE, e a resolução do relógio ACOMPANHA
+# a cadência real dos dados. Um datalogger de 30 min não precisa de segundos (poluem o
+# eixo); um arquivo com registros a cada segundo — ou frações, como os .sfo — fica
+# ilegível sem eles: linhas diferentes viravam o mesmo rótulo. Por isso o formato é
+# escolhido por leitura, não fixado.
+TS_DISPLAY = "%d/%m/%Y %H:%M"            # cadência de 1 min ou mais
+TS_DISPLAY_S = "%d/%m/%Y %H:%M:%S"       # cadência de 1 s a 1 min
+TS_DISPLAY_MS = "%d/%m/%Y %H:%M:%S.%f"   # abaixo de 1 s (cortado em milissegundos)
+
+
+def ts_display_format(dts: list[datetime | None]) -> str:
+    """Formato de exibição adequado à cadência da série.
+
+    Usa o MENOR intervalo entre carimbos consecutivos (não a média): se dois registros
+    quaisquer estão a 1 s um do outro, os segundos importam para todos. Sem nenhum
+    intervalo positivo — todos os carimbos iguais, o sintoma clássico de ter escolhido
+    uma coluna de tempo que não avança a cada registro — mostra a resolução máxima,
+    que é justamente o que deixa o problema visível."""
+    xs = sorted(d for d in dts if d is not None)
+    passos = [(b - a).total_seconds() for a, b in zip(xs, xs[1:]) if b > a]
+    if not passos:
+        return TS_DISPLAY_MS
+    menor = min(passos)
+    if menor >= 60:
+        return TS_DISPLAY
+    if menor >= 1:
+        return TS_DISPLAY_S
+    return TS_DISPLAY_MS
+
+
+def fmt_ts(dt: datetime, fmt: str) -> str:
+    """Aplica o formato; em milissegundos corta os microssegundos do strftime (%f dá 6
+    casas — 3 bastam para ler, e o valor cru continua visível no preview)."""
+    out = dt.strftime(fmt)
+    return out[:-3] if fmt.endswith(".%f") else out
+
+
+_EPOCH_MIN = datetime(1990, 1, 1)     # antes disto não há estação deste projeto
+_EPOCH_MAX = datetime(2100, 1, 1)
 
 
 def parse_epoch(raw: str) -> datetime | None:
@@ -57,9 +92,15 @@ def parse_epoch(raw: str) -> datetime | None:
     elif a >= 1e11:
         v /= 1e3        # milissegundos
     try:
-        return datetime.fromtimestamp(v)
+        dt = datetime.fromtimestamp(v)
     except (OverflowError, OSError, ValueError):
         return None
+    # Faixa plausível: apontar o eixo de tempo para uma coluna que NÃO é epoch (um
+    # ângulo '359', uma temperatura '26.43') converteria em silêncio para 01/01/1970 e o
+    # gráfico ficaria com datas absurdas em vez de dizer que a coluna está errada.
+    if not (_EPOCH_MIN <= dt <= _EPOCH_MAX):
+        return None
+    return dt
 
 
 def parse_timestamp(raw: str, fmt: str | None) -> datetime | None:
@@ -137,17 +178,16 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
     ts_idx = _column_index(ts_cfg.get("column", 0), header, row_len)
     ts_format = ts_cfg.get("format") or "%Y-%m-%d %H:%M:%S"
 
-    timestamps: list[str] = []
     dts: list[datetime | None] = []
+    raws: list[str] = []
     for row in rows:
         raw = row[ts_idx].strip().strip('"') if ts_idx is not None and ts_idx < len(row) else ""
-        dt = parse_timestamp(raw, ts_format)
-        if dt is not None:
-            dts.append(dt)
-            timestamps.append(dt.strftime(TS_DISPLAY))
-        else:
-            dts.append(None)
-            timestamps.append(raw)
+        raws.append(raw)
+        dts.append(parse_timestamp(raw, ts_format))
+    # A resolução do rótulo só pode ser decidida com a série inteira em mãos.
+    ts_fmt = ts_display_format(dts)
+    timestamps: list[str] = [fmt_ts(d, ts_fmt) if d is not None else r
+                             for d, r in zip(dts, raws)]
 
     problems: list[str] = []
 
@@ -173,23 +213,44 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
             dts = dts[start:]  # mantém dts alinhado com rows (epochs abaixo indexam por linha)
 
     strip_re = _compile_strip(fcfg)
+    decimal = fcfg.get("decimal", ".")
     variables = []
     for var in fcfg.get("variables", []):
         idx = _column_index(var["column"], header, row_len)
         if idx is None:
             problems.append(f"coluna '{var['column']}' não encontrada (variável '{var['label']}')")
             continue
-        values = [
-            tailer.to_float(row[idx], fcfg.get("decimal", "."), strip_re) if idx < len(row) else None
-            for row in rows
-        ]
-        variables.append({
+        vtype = var.get("type") or "numero"
+        cells = [row[idx] if idx < len(row) else "" for row in rows]
+        entry = {
             "label": var["label"],
             "unit": var.get("unit"),
             "min": var.get("min"),
             "max": var.get("max"),
-            "values": values,
-        })
+            "type": vtype,
+        }
+        if vtype == "texto":
+            # Texto não vira linha: o gráfico fica de fora e a tela mostra o último
+            # valor. Manter 'values' (tudo None) preserva o contrato da API.
+            limpos = [(c or "").strip().strip('"') for c in cells]
+            entry["values"] = [None] * len(cells)
+            entry["last_text"] = next((c for c in reversed(limpos) if c), None)
+        elif vtype == "epoch":
+            # Carimbo epoch numa coluna QUALQUER: o valor plotado é o próprio epoch em
+            # segundos (a linha mostra quando aquele bloco de sensor avançou) e a
+            # formatação para data/hora acontece na exibição.
+            dts_var = [parse_epoch(c) for c in cells]
+            entry["values"] = [d.timestamp() if d else None for d in dts_var]
+            f = ts_display_format(dts_var)
+            entry["ts_res"] = ("ms" if f == TS_DISPLAY_MS
+                               else "s" if f == TS_DISPLAY_S else "min")
+        elif vtype == "booleano":
+            entry["values"] = [tailer.to_bool(c) for c in cells]
+        elif vtype == "inteiro":
+            entry["values"] = [tailer.to_int(c, decimal, strip_re) for c in cells]
+        else:
+            entry["values"] = [tailer.to_float(c, decimal, strip_re) for c in cells]
+        variables.append(entry)
 
     # Última leitura em formato COMPLETO (com ano) para o tooltip do mapa — o eixo do
     # Mesmo formato do eixo (TS_DISPLAY): data completa, hora e minuto, sem segundos.
@@ -207,7 +268,7 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         "path_info": pinfo,
         "rows_read": len(rows),
         "decimated": len(keep) < len(rows),
-        "last_reading": last_dt.strftime(TS_DISPLAY) if last_dt else None,
+        "last_reading": fmt_ts(last_dt, ts_fmt) if last_dt else None,
         "timestamps": [timestamps[i] for i in keep],
         # Instante real de cada ponto (epoch, s) — permite ao cliente juntar séries de
         # ARQUIVOS DIFERENTES num eixo de tempo comum (tela Comparar). None = linha
@@ -288,10 +349,10 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
     ts_display: list[str | None] = []
     if ts_idx is not None:
         ts_fmt = (entry.get("timestamp") or {}).get("format")
-        for r in out_rows:
-            raw = r[ts_idx] if ts_idx < len(r) else ""
-            dt = parse_timestamp(raw, ts_fmt)
-            ts_display.append(dt.strftime(TS_DISPLAY) if dt else None)
+        dts_prev = [parse_timestamp(r[ts_idx] if ts_idx < len(r) else "", ts_fmt)
+                    for r in out_rows]
+        disp_fmt = ts_display_format(dts_prev)
+        ts_display = [fmt_ts(d, disp_fmt) if d else None for d in dts_prev]
 
     return {
         "path": str(path),

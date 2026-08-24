@@ -453,14 +453,36 @@ computes live station status. Viewing is open; edits require the admin login
   alignment, never empty columns, and a phantom column would silently shift every
   index-mapped variable after it. The form writes/reads it as `\s` (a lone space in a
   text input is invisible and gets stripped); `\t` behaves the same way.
-- **One display convention for data timestamps**: `series.TS_DISPLAY`
-  (`%d/%m/%Y %H:%M`) — full date, hour and minute, never seconds. It drives the chart
-  axis, `last_reading`, the compare page's labels (built in JS, keep them in sync) and
-  the parse preview. A file's timestamp is NEVER shown raw: the preview prints the raw
-  cell (that is the point of a parse check) with the converted value underneath, or
-  "não convertido" when the format doesn't match. Station liveness (`status._fmt_signal`)
-  deliberately keeps seconds — it answers "is it sending right now?", not "when was this
-  measured".
+- **Each variable has a primitive `type`** (`tailer.COLUMN_TYPES`, default `numero`,
+  absent = `numero` for old configs): `numero` · `inteiro` · `booleano` (0/1, also
+  sim/não·true/false·on/off, and numeric fallback so `0000` is false) · `epoch` · `texto`.
+  The plotted value is ALWAYS numeric — the type changes how it is READ: an `epoch`
+  column plots the epoch seconds and is displayed as a clock (the API sends `ts_res`,
+  the JS formats), `booleano` becomes sim/não with a 0–1 axis, `inteiro` drops decimals.
+  `texto` is the exception: it is NOT a time series, so `station_detail.html` renders a
+  last-value box instead of a canvas and the compare picker skips it (a text variable
+  would otherwise be an unexplained empty line).
+- **Variable column index is user-editable** (a 118-column `.sfo` makes "add rows until
+  you reach column 104" absurd). New rows still auto-fill the next free index. The
+  guards are SERVER-side in `validate_file_entry` — no duplicates, never the timestamp
+  column — and negative indexes are legitimate (`-1` = last column, resolved by
+  `series._column_index`); a non-numeric value is a column NAME, which needs
+  `header_line`. Don't put `readonly` back on that input.
+- **Timestamp display: full date always, clock resolution follows the DATA**
+  (`series.ts_display_format` picks `TS_DISPLAY` / `_S` / `_MS` from the SMALLEST gap
+  between consecutive stamps; `fmt_ts` trims `%f` to milliseconds). A 30-min datalogger
+  gets `24/08/2026 00:29` (seconds would be noise); a per-second or sub-second file
+  (`.sfo`) gets `…:47` / `…:47.833`, otherwise different records collapse into the same
+  label. All stamps equal → max resolution, which is exactly what exposes "the chosen
+  time column does not advance per record". Drives the chart axis, `last_reading` and
+  the preview; the compare page builds its own labels in JS (full date + HH:MM — it
+  buckets by minute on purpose). A file's timestamp is NEVER shown raw: the preview
+  prints the raw cell (that is the point of a parse check) with the converted value
+  underneath, or "não convertido". `parse_epoch` also REJECTS stamps outside
+  1990–2100: pointing the time axis at a non-epoch column (an angle `359`, a temp
+  `26.43`) would otherwise silently render 1970 dates instead of saying the column is
+  wrong. Station liveness (`status._fmt_signal`) deliberately keeps seconds — it answers
+  "is it sending right now?", not "when was this measured".
 - **Timestamp column**: `timestamp.format` is a strftime pattern OR the literal
   `epoch` (any of `config_store.EPOCH_MARKERS`, normalized to `epoch` on save), meaning
   Unix seconds — fraction preserved (`1787542188.433029` → microseconds) and ms/µs/ns

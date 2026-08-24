@@ -36,12 +36,33 @@ function outOfLimits(lim, v) {
 }
 
 /* Cria/atualiza um gráfico de linha com limites físicos (marcação + trechos vermelhos). */
+/* Formatação por TIPO da coluna (numero/inteiro/booleano/epoch/texto). O valor
+   plotado é sempre numérico — o tipo muda como ele é LIDO na dica e no eixo Y:
+   um epoch vira hora, um booleano vira sim/não, um inteiro perde as casas decimais. */
+function fmtByType(v, value, curto) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const p = (n, w) => String(n).padStart(w || 2, "0");
+  switch (v.type) {
+    case "epoch": {
+      const d = new Date(value * 1000);
+      let t = `${p(d.getHours())}:${p(d.getMinutes())}`;
+      if (v.ts_res === "s" || v.ts_res === "ms") t += `:${p(d.getSeconds())}`;
+      if (v.ts_res === "ms") t += `.${p(d.getMilliseconds(), 3)}`;
+      return curto ? t : `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${t}`;
+    }
+    case "booleano": return value >= 0.5 ? "sim" : "não";
+    case "inteiro": return Math.round(value).toLocaleString("pt-BR");
+    default: return (Math.round(value * 100) / 100).toLocaleString("pt-BR");
+  }
+}
+
 function makeOrUpdateChart(canvas, labels, v, color, opts = {}) {
   const label = v.unit ? `${v.label} (${v.unit})` : v.label;
   const limits = { min: v.min ?? null, max: v.max ?? null };
   if (canvas._chart) {
     const ch = canvas._chart;
     ch.$limits = limits;
+    ch.$var = v;
     ch.data.labels = labels;
     ch.data.datasets[0].data = v.values;
     ch.data.datasets[0].label = label;
@@ -73,7 +94,19 @@ function makeOrUpdateChart(canvas, labels, v, color, opts = {}) {
     options: {
       animation: false, responsive: true, maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
-      plugins: { legend: { display: !!opts.legend } },
+      plugins: {
+        legend: { display: !!opts.legend },
+        tooltip: {
+          callbacks: {
+            label: (c) => {
+              const varc = (canvas._chart && canvas._chart.$var) || v;
+              const un = varc.unit && varc.type !== "epoch" && varc.type !== "booleano"
+                ? ` ${varc.unit}` : "";
+              return `${varc.label}: ${fmtByType(varc, c.parsed.y)}${un}`;
+            },
+          },
+        },
+      },
       scales: {
         x: {
           ticks: { autoSkip: false },
@@ -90,11 +123,26 @@ function makeOrUpdateChart(canvas, labels, v, color, opts = {}) {
             axis.ticks = idx.map((i) => ({ value: i }));
           },
         },
-        y: { suggestedMin: limits.min ?? undefined, suggestedMax: limits.max ?? undefined },
+        y: {
+          suggestedMin: v.type === "booleano" ? 0 : (limits.min ?? undefined),
+          suggestedMax: v.type === "booleano" ? 1 : (limits.max ?? undefined),
+          ticks: {
+            /* no eixo, epoch vira só a hora e booleano vira sim/não */
+            callback: (val) => {
+              const varc = (canvas._chart && canvas._chart.$var) || v;
+              if (varc.type === "epoch") return fmtByType(varc, val, true);
+              if (varc.type === "booleano") return val >= 0.5 ? "sim" : "não";
+              if (varc.type === "inteiro") return Math.round(val).toLocaleString("pt-BR");
+              return val;
+            },
+            stepSize: v.type === "booleano" ? 1 : undefined,
+          },
+        },
       },
     },
   });
   chart.$limits = limits;
+  chart.$var = v;
   canvas._chart = chart;
   if (opts.height) canvas.parentElement.style.height = opts.height;
 }
@@ -148,6 +196,11 @@ async function loadSeries(block) {
       ` · atualizado ${data.generated_at}`;
 
     data.variables.forEach((v, i) => {
+      if (v.type === "texto") {          /* texto não tem gráfico: só o último valor */
+        const box = block.querySelector(`.text-value[data-var="${i}"]`);
+        if (box) box.textContent = v.last_text || "—";
+        return;
+      }
       const canvas = block.querySelector(`canvas[data-var="${i}"]`);
       if (!canvas) return;
       makeOrUpdateChart(canvas, data.timestamps, v, PALETTE[i % PALETTE.length],
@@ -746,7 +799,13 @@ function initFileForm() {
   function makeVarRow(col, label = "", unit = "", min = "", max = "") {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      '<td><input name="var_column" readonly class="num-input"></td>' +
+      '<td><input name="var_column" class="num-input" ' +
+      'title="Índice da coluna (0 = primeira, -1 = última) ou o nome dela"></td>' +
+      '<td><select name="var_type">' +
+      '<option value="numero">Número</option><option value="inteiro">Inteiro</option>' +
+      '<option value="booleano">Booleano</option>' +
+      '<option value="epoch">Data/hora (epoch)</option>' +
+      '<option value="texto">Texto</option></select></td>' +
       '<td><input name="var_label"></td>' +
       '<td><input name="var_unit"></td>' +
       '<td><input name="var_min" placeholder="—" class="num-input"></td>' +

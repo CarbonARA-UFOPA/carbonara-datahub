@@ -310,3 +310,10 @@ code { background: #eef2f0; padding: .05rem .3rem; border-radius: 4px; font-size
 /* Arquivo com data/hora que ainda não chegou: esconde os gráficos vazios e deixa só a
    linha neutra explicando (ver 'pending' em series.py). */
 .series-pending .charts { display: none; }
+
+/* Variável do tipo TEXTO: sem gráfico, só o último valor lido. */
+.text-box { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
+            background: #f6f8f7; border: 1px solid var(--line); border-radius: 8px;
+            padding: .6rem .9rem; }
+.text-label { color: var(--muted); font-size: .85rem; }
+.text-value { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

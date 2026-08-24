@@ -25,12 +25,17 @@
               {# > 15 variáveis: lista em múltiplas colunas para caberem todas à vista #}
               <div class="pick-vars{{ ' pick-vars-cols' if f.variables | length > 15 }}">
               {% for v in f.variables %}
-                {% set token = s.id ~ ':' ~ f.id ~ ':' ~ loop.index0 %}
-                <label class="pick-var">
-                  <input type="checkbox" name="sel" value="{{ token }}"
-                         {{ 'checked' if token in sel_set }}>
-                  {{ v.label }}{% if v.unit %} <small>({{ v.unit }})</small>{% endif %}
-                </label>
+                {# Texto não vira série temporal — não é oferecido para comparar (daria
+                   uma linha vazia sem explicação). O token segue usando o índice da
+                   variável no cadastro, então pular aqui não desalinha nada. #}
+                {% if (v.type or 'numero') != 'texto' %}
+                  {% set token = s.id ~ ':' ~ f.id ~ ':' ~ loop.index0 %}
+                  <label class="pick-var">
+                    <input type="checkbox" name="sel" value="{{ token }}"
+                           {{ 'checked' if token in sel_set }}>
+                    {{ v.label }}{% if v.unit %} <small>({{ v.unit }})</small>{% endif %}
+                  </label>
+                {% endif %}
               {% endfor %}
               </div>
             </div>

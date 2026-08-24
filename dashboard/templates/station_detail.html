@@ -90,9 +90,17 @@
     <p class="series-error warn"></p>
     <div class="charts">
       {% for v in f.variables %}
-        <div class="chart-box">
-          <canvas data-var="{{ loop.index0 }}" height="110"></canvas>
-        </div>
+        {% if (v.type or 'numero') == 'texto' %}
+          {# Coluna de texto não vira série: mostra o último valor lido. #}
+          <div class="text-box">
+            <span class="text-label">{{ v.label }}</span>
+            <span class="text-value" data-var="{{ loop.index0 }}">—</span>
+          </div>
+        {% else %}
+          <div class="chart-box">
+            <canvas data-var="{{ loop.index0 }}" height="110"></canvas>
+          </div>
+        {% endif %}
       {% endfor %}
     </div>
   </details>

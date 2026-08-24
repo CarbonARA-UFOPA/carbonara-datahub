@@ -58,6 +58,14 @@ python run.py                          # http://localhost:8080
   não é admin, com motivo e horário) — é a explicação de por que os dados pararam.
 - **Gráficos por variável** das últimas N linhas de cada arquivo monitorado (tail
   eficiente — o arquivo nunca é lido inteiro), com auto-atualização.
+- **Tipo por coluna** (no cadastro de cada variável): *Número* (padrão), *Inteiro*,
+  *Booleano* (0/1, sim/não, on/off), *Data/hora (epoch)* — para as outras colunas de
+  carimbo do arquivo, exibidas como hora em vez de número — e *Texto*, que não vira
+  gráfico e aparece como "último valor lido".
+- **Resolução do carimbo acompanha os dados**: data completa sempre; o relógio mostra
+  minutos para um datalogger de 30 min, segundos para arquivos por segundo e
+  milissegundos para cadência sub-segundo — assim registros diferentes nunca viram o
+  mesmo rótulo.
 - **Carimbo de tempo em Unix epoch**: no cadastro do arquivo, *Tipo do carimbo* →
   *Unix epoch*. Serve para qualquer coluna escolhida como eixo de tempo (não só a
   primeira), aceita fração de segundo (`1787542188.433029`, microssegundos) e também
