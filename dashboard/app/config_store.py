@@ -7,6 +7,7 @@ temporário + os.replace) e serializada por lock, para nunca corromper o YAML.
 from __future__ import annotations
 
 import copy
+import glob
 import os
 import re
 import tempfile
@@ -104,6 +105,89 @@ def resolve_data_path(cfg: dict, path: str) -> Path:
     if root not in resolved.parents and resolved != root:
         raise ValueError(f"caminho relativo escapa de data_root: {path}")
     return resolved
+
+
+# --- Caminho com data/hora (strftime) ---------------------------------------------
+# Dataloggers costumam rotacionar o arquivo pelo relógio (dados_20260821.dat,
+# 2026/08/21/torre.csv). Marcando "caminho com data/hora" no cadastro, o caminho vira um
+# PADRÃO strftime resolvido com o horário DO SERVIDOR a cada leitura — assim um cadastro
+# só acompanha o arquivo do dia/hora corrente, sem ninguém editar o caminho.
+
+# Quanto cada campo strftime ocupa, para montar o glob do resgate. O que não estiver
+# aqui (%b, %A, %p…) vira '*' — casa igual, só menos preciso.
+_TIME_TOKEN_WIDTH = {"Y": 4, "y": 2, "m": 2, "d": 2, "H": 2, "I": 2, "M": 2, "S": 2,
+                     "j": 3, "U": 2, "W": 2, "u": 1, "w": 1}
+_TIME_TOKEN_RE = re.compile(r"%[A-Za-z]")
+
+
+def has_time_tokens(path: str) -> bool:
+    """True se o caminho tem algum campo strftime (%Y, %m, %d, %H…)."""
+    return bool(_TIME_TOKEN_RE.search(path or ""))
+
+
+def time_path_glob(pattern: str) -> str:
+    """Converte o padrão strftime num glob: cada campo vira '?' na largura certa
+    (``%Y`` → ``????``), o resto do caminho é escapado para não virar curinga sem
+    querer. É o que permite achar o arquivo mais recente quando o do momento ainda
+    não foi criado."""
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "%" and i + 1 < len(pattern):
+            tok = pattern[i + 1]
+            if tok == "%":
+                out.append("%")
+            else:
+                w = _TIME_TOKEN_WIDTH.get(tok)
+                out.append("?" * w if w else "*")
+            i += 2
+        else:
+            out.append(glob.escape(ch) if ch in "*?[" else ch)
+            i += 1
+    return "".join(out)
+
+
+def _newest_matching(pattern: str) -> Path | None:
+    """Arquivo mais recente (mtime) que casa com o padrão de tempo. None se nenhum."""
+    try:
+        hits = [Path(p) for p in glob.glob(time_path_glob(pattern))]
+    except OSError:
+        return None
+    files = [p for p in hits if p.is_file()]
+    if not files:
+        return None
+    return max(files, key=lambda p: p.stat().st_mtime)
+
+
+def resolve_file_path(cfg: dict, fcfg: dict) -> tuple[Path, dict]:
+    """Caminho REAL a ler de um arquivo monitorado, e um dicionário de contexto.
+
+    Sem ``dynamic_path`` é o de sempre (``resolve_data_path``). Com ele, o padrão é
+    expandido pelo relógio do servidor; se o arquivo do momento ainda não existir
+    (o caso clássico: logo depois da virada do dia/hora), cai no mais recente que casa
+    com o padrão — em vez de o gráfico simplesmente sumir. O contexto devolvido
+    (``pattern``/``expanded``/``fallback``) é o que a UI mostra para o usuário saber
+    exatamente qual arquivo foi lido."""
+    raw = (fcfg.get("path") or "").strip()
+    if not fcfg.get("dynamic_path") or not has_time_tokens(raw):
+        return resolve_data_path(cfg, raw), {}
+    pattern = resolve_data_path(cfg, raw)
+    expanded = Path(datetime.now().strftime(str(pattern)))
+    if not Path(raw).expanduser().is_absolute():
+        # Campos de formato locais (%x, %c) podem expandir com '/': revalida que o
+        # resultado continua sob a raiz de dados, como faz resolve_data_path.
+        root = data_root(cfg)
+        if root not in expanded.resolve().parents and expanded.resolve() != root:
+            raise ValueError(f"caminho com data/hora escapa de data_root: {expanded}")
+    info = {"dynamic": True, "pattern": str(pattern), "expanded": str(expanded)}
+    if expanded.is_file():
+        return expanded, info
+    newest = _newest_matching(str(pattern))
+    if newest is not None:
+        info["fallback"] = str(newest)
+        return newest, info
+    return expanded, info
 
 
 def heartbeat_path(cfg: dict, station: dict) -> Path:
@@ -356,6 +440,7 @@ def default_file_entry(path: str, alias: str | None = None) -> dict:
     return {
         "path": path,
         "alias": alias or None,
+        "dynamic_path": False,
         "tail_lines": 100,
         "window_hours": None,
         "separator": ",",
@@ -485,6 +570,14 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
     # subpastas diferentes. Sempre gravamos a chave (None quando vazio) para que
     # limpar o campo na edição realmente remova o apelido (o merge {**f, **entry}).
     alias = (form.get("alias") or "").strip() or None
+    # Caminho com data/hora: o path é um padrão strftime resolvido a cada leitura.
+    dynamic_path = bool(form.get("dynamic_path"))
+    if dynamic_path and path and not has_time_tokens(path):
+        errors.append("Caminho com data/hora marcado, mas o caminho não tem nenhum campo "
+                      "de tempo (%Y, %m, %d, %H…). Ex.: incoming/est/dados_%Y%m%d.dat")
+    if not dynamic_path and path and has_time_tokens(path):
+        errors.append("O caminho tem campos de tempo (%Y, %m, %d, %H…) — marque "
+                      "\"Caminho com data/hora\" para que sejam resolvidos, ou remova-os.")
 
     def _int(field: str, default: int | None, lo: int, hi: int, label: str) -> int | None:
         raw = (form.get(field) or "").strip()
@@ -579,6 +672,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
     entry = {
         "path": path,
         "alias": alias,
+        "dynamic_path": dynamic_path,
         "tail_lines": tail_lines,
         "window_hours": window_hours,
         "separator": separator,

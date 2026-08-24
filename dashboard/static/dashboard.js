@@ -393,11 +393,12 @@ function renderCmpTable(epochs, series) {
 /* --- Página Mapa: estações georreferenciadas + gráficos ao clicar --------------- */
 const STATUS_LABEL = {
   receiving: "Recebendo dados", online: "Online",
-  offline: "Offline", unknown: "Sem sinal",
+  offline: "Offline", unknown: "Sem sinal", paused: "Recepção pausada",
 };
 
 function statusColor(status) {
-  const vars = { receiving: "--purple", online: "--green", offline: "--red" };
+  const vars = { receiving: "--purple", online: "--green", offline: "--red",
+                 paused: "--amber" };
   const name = vars[status] || "--gray";
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#8a938e";
 }

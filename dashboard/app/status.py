@@ -8,6 +8,11 @@ Fontes (mesmas do shell, collection/rsync-hub · print_status):
 
 Janela de Offline: ``interval_min*120 + 120`` segundos (2×intervalo + 2 min); sem
 interval válido, o fallback global ``stale_fallback_seconds`` (default 1h).
+
+A PAUSA da recepção (``rsync-hub pause``) tem prioridade sobre tudo isso: com a
+recepção suspensa a estação não consegue nem mandar o sinal de vida, então o estado
+vira ``paused`` — chamá-la de "Offline" seria um diagnóstico enganoso (o
+``print_status`` do shell faz o mesmo).
 """
 from __future__ import annotations
 
@@ -21,7 +26,7 @@ try:  # py3.9+
 except ImportError:  # pragma: no cover
     ZoneInfo = None  # type: ignore[assignment]
 
-from . import config_store, tailer
+from . import config_store, hub, tailer
 
 _INTERVAL_RE = re.compile(r"^interval_min=(\d+)\s*$", re.M)
 _LOG_TAIL = 500  # linhas do fim do connections.log a examinar
@@ -87,7 +92,9 @@ def _latest_data_mtime(incoming_dir: Path) -> float | None:
     return latest
 
 
-def station_status(cfg: dict, station: dict) -> dict:
+def station_status(cfg: dict, station: dict, pause: dict | None = None) -> dict:
+    """``pause``: estado de pausa já lido (``hub.pause_state``) — quem monta uma LISTA
+    de estações passa o estado uma vez só, em vez de reler os marcadores por estação."""
     now = time.time()
     # Caminhos configurados à mão podem ser inválidos (ex.: '../' escapando a raiz);
     # um cadastro ruim nunca pode derrubar a página inteira — vira "não encontrado".
@@ -141,11 +148,24 @@ def station_status(cfg: dict, station: dict) -> dict:
     else:
         status = "offline"
 
+    # Recepção pausada no hub: sobrepõe o estado calculado (ver docstring do módulo).
+    pstate = pause if pause is not None else hub.pause_state(cfg)
+    paused = hub.station_paused(pstate, station["id"])
+    marker = hub.pause_marker_for(pstate, station["id"]) if paused else None
+    if paused:
+        status = "paused"
+        receiving = False
+
     return {
         "id": station["id"],
         "name": station.get("name") or station["id"],
         "status": status,
         "receiving": receiving,
+        "paused": paused,
+        # Escopo/motivo da pausa para a interface ("todas" = pausa global do hub).
+        "pause_scope": (marker or {}).get("target"),
+        "pause_reason": (marker or {}).get("reason"),
+        "pause_since": (marker or {}).get("since_display"),
         "last_signal": (_fmt_signal(act, cfg) if act else None),
         "seconds_since_signal": int(now - act) if act else None,
         "interval_min": interval_min,

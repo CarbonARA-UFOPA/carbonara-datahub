@@ -4,8 +4,8 @@
 # O que ele faz (rode UMA vez, como root, no servidor do hub):
 #   1. instala/atualiza o rsync-hub em /usr/local/bin (a partir do repositório);
 #   2. grava em /etc/sudoers.d/carbonara-dashboard uma regra NOPASSWD restrita aos
-#      subcomandos de gerência (add / remove / move-root) para o usuário que RODA a
-#      dashboard — é o que a página "Coleta" usa via `sudo -n`;
+#      subcomandos de gerência (add / remove / purge / move-root / pause / resume) para
+#      o usuário que RODA a dashboard — é o que a página "Coleta" usa via `sudo -n`;
 #   3. valida a regra com visudo -cf ANTES de instalar (uma regra quebrada em
 #      sudoers.d pode travar o sudo do servidor inteiro — nunca gravamos sem validar);
 #   4. verifica que o usuário consegue LER a raiz do hub (listagem/downloads).
@@ -42,6 +42,9 @@ else
 fi
 grep -q "move-root" "$BIN" || \
     die "o $BIN instalado é antigo (sem 'move-root') — atualize-o a partir do repositório"
+grep -q "pause_reception" "$BIN" || \
+    echo "AVISO: o $BIN instalado não tem 'pause'/'resume' — atualize-o pelo repositório
+       para poder pausar a recepção de dados pela dashboard."
 
 # --- 2) usuário que roda a dashboard ----------------------------------------------
 DASH_USER="${1:-}"
@@ -68,8 +71,9 @@ TMP="$(mktemp)"
 cat > "$TMP" <<EOF
 # gerado por dashboard/setup-hub-access.sh em $(date -u +%FT%TZ) — pode regerar rodando-o de novo.
 # Permite à dashboard CARBONARA executar SOMENTE os subcomandos de gerência do
-# rsync-hub (autorizar/revogar estações e migrar a raiz de dados), sem senha.
-$DASH_USER ALL=(root) NOPASSWD: $BIN add *, $BIN remove *, $BIN purge *, $BIN move-root *
+# rsync-hub (autorizar/revogar estações, migrar a raiz de dados e pausar/retomar a
+# recepção), sem senha.
+$DASH_USER ALL=(root) NOPASSWD: $BIN add *, $BIN remove *, $BIN purge *, $BIN move-root *, $BIN pause *, $BIN resume *
 EOF
 if ! visudo -cf "$TMP" >/dev/null 2>&1; then
     rm -f "$TMP"
@@ -103,5 +107,6 @@ fi
 echo
 echo "Pronto. Na dashboard, entre como admin e abra a página 'Coleta':"
 echo "  - autorizar/revogar estações e baixar credenciais/arquivos: já funciona;"
-echo "  - mover a raiz de dados: card 'Mover a raiz de dados' em Configurações."
+echo "  - mover a raiz de dados: card 'Mover a raiz de dados' em Configurações;"
+echo "  - pausar/retomar a recepção: card 'Recepção de dados' na própria página Coleta."
 echo "(Não é preciso reiniciar a dashboard — a permissão é verificada a cada acesso.)"

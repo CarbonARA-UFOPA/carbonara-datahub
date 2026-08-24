@@ -130,11 +130,41 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   user-facing): rsyncd auth is challenge-response (password never travels in clear) but
   **data is unencrypted** — key mode stays the recommendation for public networks.
   `remove <id>` revokes both modes.
+- **Pause (suspended reception)** — `pause <id|--todas> [motivo]` / `resume
+  <id|--todas>` suspend the ARRIVAL of data without revoking credentials or deleting
+  anything (maintenance: disk, root migration, DB down). State = marker files in
+  `$BASE/pause/` (`_todas` = global, `<id>` = per station), 644 inside a 755 dir so the
+  dashboard READS the state with no sudo; only writing goes through root. Enforcement
+  covers BOTH auth paths: key mode → `serve` refuses *before* the CONNECT log line
+  (logs `PAUSED`, exit 129, prints the reason to the station's rsync output); password
+  mode → `rebuild_rsyncd_conf` omits the paused station's module (rsyncd re-reads the
+  config per connection, so it applies immediately and the secret stays untouched).
+  Clients see a plain failure, don't advance their local state and re-send everything
+  next cycle — a pause **delays** data, never loses it. Global and per-station pauses
+  are INDEPENDENT: `resume --todas` deliberately does not clear individual ones (it
+  reports what is still paused). In `print_status`/monitor the yellow "Pausada"
+  OVERRIDES online/offline — a paused station can't even send its heartbeat, so
+  "Offline" would be a misleading diagnosis; `dashboard/app/status.py` mirrors this.
+- **Never truncate a control file** — `authorized_keys`, `rsyncd.secrets` and
+  `rsyncd.conf` are replaced through `write_replace` (write a temp, CHECK the write
+  succeeded, only then `mv`). The old `grep -v … > f.tmp || true; mv f.tmp f` pattern
+  **wiped `authorized_keys` when the disk was full** (a rename needs no space, so the
+  truncated temp replaced the good file and every station got
+  `Permission denied (publickey)`). A failed write must keep the previous file and say
+  so — never fall through silently.
+- **Diagnostic/repair** — `rsync-hub diagnostico [--reparar]` answers "why did the
+  stations stop sending?": disk usage of BASE, service-account home vs BASE (a
+  half-finished `move-root` leaves them apart and sshd then reads the wrong
+  `authorized_keys`), authorized_keys line count/perms, presence of
+  `/usr/local/bin/rsync-hub` (the forced-command path), active pauses, and per-station
+  key vs stored `stations/<id>/*.pub`. `--reparar` re-authorizes stations whose public
+  key is still stored on the hub — the station keeps its own key, nothing is reissued.
 - **Monitor** — `rsync-hub monitor` (stays running, live table + recent connections),
   `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`. Each
   station gets a colored dot + state: purple "Recebendo dados" (last SSH log event is a
   CONNECT with no DISCONNECT after it, or activity in the last 60s), green "Online",
-  red "Offline". ANSI colors only when stdout is a TTY. Deliberately NO pending-files
+  red "Offline", yellow "Pausada" (overrides the rest — see the pause bullet above).
+  ANSI colors only when stdout is a TTY. Deliberately NO pending-files
   column or ingestion-lag legend in this view (user request) — ingestion backlog is
   diagnosed via `docker compose logs -f ingestion`, not the monitor.
 
@@ -363,8 +393,22 @@ computes live station status. Viewing is open; edits require the admin login
   `print_status` in `collection/rsync-hub`): last signal = max(heartbeat mtime, newest
   non-hidden file mtime in `incoming/<id>/`, last CONNECT in `connections.log`); window
   = `interval_min*120 + 120`s (interval from heartbeat CONTENT, liveness from its
-  MTIME), fallback `stale_fallback_seconds` (1h). If the shell logic changes, change
+  MTIME), fallback `stale_fallback_seconds` (1h). A hub pause overrides the computed
+  state with `paused` (see the pause bullet above). If the shell logic changes, change
   `status.py` with it.
+- **Pause of reception in the UI** (`hub.pause_state/set_pause/clear_pause` +
+  `POST /hub/pause|/hub/resume`): reading the markers is a plain filesystem read, so
+  the state shows even without the sudoers rule; pausing/resuming shells out to
+  `rsync-hub pause|resume` like every other write. The state is injected into EVERY
+  page by the context processor (`pause_state`) and rendered as a banner in
+  `base.html` — visible to non-admins too, since "no new data" is otherwise read as a
+  station failure. Buttons live in three places (Coleta card, hub station page,
+  station detail card) and all post `target` + `back` (a LABEL mapped through
+  `url_for`, never a caller-supplied URL). `target` is always explicit (`--todas` or
+  an id) because the sudoers rule is `pause *`, which does not match an argument-less
+  command. `hub_info["can_pause"]` probes that rule separately so installs whose
+  `setup-hub-access.sh` predates the feature get a "re-run it" hint instead of a
+  failing click.
 - **Config-driven** (`dashboard/config.yaml`, gitignored; example versioned): the UI
   itself edits it via `ConfigStore` (atomic write: tempfile + `os.replace`, under a
   lock). Relative `data_root` resolves against the **config file's directory**, not cwd.

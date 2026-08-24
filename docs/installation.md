@@ -97,7 +97,51 @@ rsync-hub              # menu interativo com todas as opções acima
 
 Status de cada estação (bolinha colorida): ● **roxo** = *Recebendo dados* (sessão aberta
 agora ou arquivos chegando); ● **verde** = *Online* (atividade na última hora — ajuste
-com `RSYNC_HUB_STALE`); ● **vermelho** = *Offline* (sem atividade além da janela).
+com `RSYNC_HUB_STALE`); ● **vermelho** = *Offline* (sem atividade além da janela);
+● **amarelo** = *Pausada* (recepção suspensa de propósito — veja abaixo).
+
+### A4. Quando as estações param de enviar
+
+```bash
+rsync-hub diagnostico              # só leitura: disco, chaves, home da conta, pausa, log
+sudo rsync-hub diagnostico --reparar   # reautoriza com o .pub que o hub já guarda
+```
+
+Mensagens típicas na estação e o que significam:
+
+| Mensagem no cliente | Onde falhou | Causa comum |
+|---|---|---|
+| `Permission denied (publickey,password)` | autenticação do **sshd** — nem chegou ao rsync-hub | a chave saiu do `authorized_keys` (ex.: gravação com o **disco cheio**), ou o home da conta de serviço não é mais a raiz (`move-root` interrompido) |
+| `rsync-hub: somente rsync (envio) é permitido` | comando forçado | alguém tentou usar a chave para outra coisa |
+| `rsync-hub: recepção de dados PAUSADA` | comando forçado | pausa intencional (veja A5) |
+| `No space left on device` / rc 11 | gravação em `incoming/` | disco do servidor cheio |
+
+**Disco cheio é a causa raiz mais frequente**: libere espaço primeiro (`df -h`,
+arquivos antigos em `archive/`), depois rode o `diagnostico`. Se ele apontar estações
+`RECUPERÁVEL`, o `--reparar` recoloca as chaves usando os `.pub` guardados em
+`<raiz>/stations/<id>/` — a estação **não** precisa de chave nova nem de reconfiguração.
+
+### A5. Pausar e retomar a recepção
+
+Para uma manutenção (disco, migração da raiz, banco parado) você pode suspender a
+**chegada** de dados sem revogar nada e sem apagar nada:
+
+```bash
+sudo rsync-hub pause --todas "manutenção do servidor"   # pausa TODAS as estações
+sudo rsync-hub pause flona01 "troca do disco"           # pausa só uma
+sudo rsync-hub resume --todas                           # retoma todas
+sudo rsync-hub resume flona01                           # retoma uma
+```
+
+As estações continuam autorizadas: elas tentam enviar, recebem uma recusa explicando a
+pausa e **reenviam tudo no primeiro ciclo depois de retomada** — o estado local do
+cliente só avança em envio bem-sucedido, então nada se perde (só atrasa). Vale para os
+dois modos de autenticação: no modo chave o `serve` recusa a sessão (registra `PAUSED`
+no `connections.log`); no modo usuário+senha o módulo da estação sai do `rsyncd.conf`.
+
+A pausa global e as pausas por estação são independentes — `resume --todas` não
+desfaz uma pausa individual. O estado fica em marcadores `<raiz>/pause/` (`_todas` ou
+`<id>`) e aparece também na dashboard, que tem botões para pausar/retomar.
 
 ---
 

@@ -19,7 +19,10 @@ stale_fallback_seconds: 3600
 # Gerenciamento da coleta (página "Coleta", só admin): a dashboard executa o PRÓPRIO
 # rsync-hub para autorizar/revogar estações. null = procura /usr/local/bin/rsync-hub
 # e o PATH. As escritas rodam via "sudo -n" — libere no sudoers (visudo):
-#   <usuario-da-dashboard> ALL=(root) NOPASSWD: /usr/local/bin/rsync-hub add *, /usr/local/bin/rsync-hub remove *
+#   <usuario-da-dashboard> ALL=(root) NOPASSWD: /usr/local/bin/rsync-hub add *, \
+#       /usr/local/bin/rsync-hub remove *, /usr/local/bin/rsync-hub pause *, \
+#       /usr/local/bin/rsync-hub resume *
+# (o jeito fácil é rodar dashboard/setup-hub-access.sh, que gera a regra completa)
 # Sem a regra, a página degrada para somente leitura (listar/credenciais/downloads).
 rsync_hub_bin: null
 

@@ -44,8 +44,50 @@ def index():
         "hub.html",
         info=hub.hub_info(cfg),
         stations=hub.list_hub_stations(cfg),
+        pause=hub.pause_state(cfg),
         areas=hub.AREAS,
     )
+
+
+# --- Pausa da recepção -------------------------------------------------------------
+# Botões espalhados pela interface (Coleta, estação do hub, detalhe da estação) postam
+# aqui; ``back`` diz de qual tela vieram para o admin voltar ao lugar certo. Nunca é
+# uma URL do formulário — só um rótulo mapeado em url_for, então não há redirect aberto.
+def _pause_redirect(back: str, target: str):
+    sid = target if hub.valid_hub_id(target) else ""
+    if back == "hub_station" and sid:
+        return redirect(url_for("hub.station", station_id=sid))
+    if back == "detail" and sid:
+        return redirect(url_for("pages.station_detail", station_id=sid))
+    if back == "index":
+        return redirect(url_for("pages.index"))
+    return redirect(url_for("hub.index"))
+
+
+@hub_pages.post("/pause")
+@admin_required
+def pause():
+    """PAUSA a recepção (``rsync-hub pause``): as estações continuam autorizadas, os
+    dados continuam no lugar — só a chegada de novos arquivos fica suspensa."""
+    cfg = _load()
+    target = (request.form.get("target") or "").strip().lower()
+    ok, out = hub.set_pause(cfg, target, request.form.get("reason"))
+    flash(out or ("Recepção pausada." if ok else "Falha ao pausar a recepção."),
+          "ok" if ok else "error")
+    return _pause_redirect(request.form.get("back") or "", target)
+
+
+@hub_pages.post("/resume")
+@admin_required
+def resume():
+    """RETOMA a recepção (``rsync-hub resume``). O que ficou pendente nas estações
+    sobe no ciclo seguinte — elas reenviam o que não conseguiram entregar."""
+    cfg = _load()
+    target = (request.form.get("target") or "").strip().lower()
+    ok, out = hub.clear_pause(cfg, target)
+    flash(out or ("Recepção retomada." if ok else "Falha ao retomar a recepção."),
+          "ok" if ok else "error")
+    return _pause_redirect(request.form.get("back") or "", target)
 
 
 @hub_pages.post("/stations")
@@ -87,6 +129,7 @@ def station(station_id):
         "hub_station.html",
         entry=entry,
         st=st,
+        pause=hub.pause_state(cfg),
         creds=hub.station_credentials(cfg, station_id),
         ak_line=hub.authorized_key_line(cfg, station_id),
         info=hub.hub_info(cfg),

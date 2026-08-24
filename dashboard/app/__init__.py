@@ -58,11 +58,20 @@ def create_app(config_path: str) -> Flask:
     def _globals():
         from flask import session
 
+        from . import hub
+
         cfg = app.store.load()
+        # Pausa da recepção: aparece no topo de TODAS as páginas (inclusive para quem
+        # não é admin) — é a explicação de por que os dados pararam de chegar.
+        try:
+            pause = hub.pause_state(cfg)
+        except Exception:  # noqa: BLE001 — banner informativo nunca derruba a página
+            pause = {"all": None, "stations": {}, "paused_ids": [], "any": False}
         return {
             "refresh_seconds": cfg["server"].get("refresh_seconds", 60),
             "auth_enabled": bool(cfg.get("auth")),
             "is_admin": bool(session.get("admin")) or not cfg.get("auth"),
+            "pause_state": pause,
         }
 
     return app

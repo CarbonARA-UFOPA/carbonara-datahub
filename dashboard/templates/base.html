@@ -36,6 +36,43 @@
     </nav>
   </header>
   <main class="{% block main_class %}{% endblock %}">
+    {# Recepção pausada: a explicação de por que os dados pararam de chegar precisa
+       estar visível em QUALQUER página, inclusive para quem não é admin. #}
+    {% if pause_state and pause_state.any %}
+      <div class="pause-banner">
+        <span class="pause-icon">⏸</span>
+        <div class="pause-banner-text">
+          {% if pause_state.all %}
+            <strong>Recepção de dados PAUSADA</strong> — nenhuma estação está enviando
+            para o servidor no momento.
+            {% if pause_state.all.reason %}<br>Motivo: <em>{{ pause_state.all.reason }}</em>{% endif %}
+            <br><small>
+              {% if pause_state.all.since_display %}Desde {{ pause_state.all.since_display }}{% endif %}
+              {%- if pause_state.all.by %} (por {{ pause_state.all.by }}){% endif %} ·
+              nada se perde: as estações guardam os arquivos e reenviam quando a recepção voltar.
+            </small>
+          {% else %}
+            <strong>Recepção pausada</strong> em
+            {{ pause_state.paused_ids | length }} estação(ões):
+            {% for sid in pause_state.paused_ids %}<code>{{ sid }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+            <br><small>As demais continuam recebendo normalmente.</small>
+          {% endif %}
+        </div>
+        {% if is_admin %}
+          <div class="pause-banner-action">
+            {% if pause_state.all %}
+              <form method="post" action="{{ url_for('hub.resume') }}">
+                <input type="hidden" name="target" value="todas">
+                <input type="hidden" name="back" value="index">
+                <button class="btn btn-primary" type="submit">▶ Retomar recepção</button>
+              </form>
+            {% else %}
+              <a class="btn" href="{{ url_for('hub.index') }}">Gerenciar em Coleta</a>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
     {% with msgs = get_flashed_messages(with_categories=true) %}
       {% for category, msg in msgs %}
         <div class="flash flash-{{ category }}">{{ msg }}</div>

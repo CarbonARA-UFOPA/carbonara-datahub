@@ -14,11 +14,37 @@
 <section class="card status-card">
   <span class="dot dot-{{ st.status }}"></span>
   <strong>
-    {% if st.status == 'receiving' %}Recebendo dados agora
+    {% if st.status == 'paused' %}Recepção pausada
+    {% elif st.status == 'receiving' %}Recebendo dados agora
     {% elif st.status == 'online' %}Online
     {% elif st.status == 'offline' %}Offline
     {% else %}Sem sinal (heartbeat/logs não encontrados){% endif %}
   </strong>
+  {% if is_admin %}
+    {# Pausar/retomar a recepção DESTA estação — executa o rsync-hub no servidor. #}
+    <form method="post" class="status-pause"
+          action="{{ url_for('hub.resume' if st.paused else 'hub.pause') }}"
+          {% if not st.paused %}onsubmit="return confirm('Pausar a recepção de dados de {{ station.id }}? Ela continua autorizada; os arquivos ficam na estação e sobem quando você retomar.');"{% endif %}>
+      <input type="hidden" name="target" value="{{ station.id }}">
+      <input type="hidden" name="back" value="detail">
+      {% if st.paused %}
+        <button class="btn btn-primary" type="submit"
+          {% if st.pause_scope == 'todas' %}disabled
+             title="a pausa é GLOBAL (todas as estações) — retome na aba Coleta"{% endif %}>
+          ▶ Retomar recepção</button>
+      {% else %}
+        <input name="reason" placeholder="motivo (opcional)" autocomplete="off">
+        <button class="btn" type="submit">⏸ Pausar recepção</button>
+      {% endif %}
+    </form>
+  {% endif %}
+  {% if st.paused %}
+    <p class="pause-note">Nenhum dado novo é aceito desta estação
+      {% if st.pause_scope == 'todas' %}(pausa global do servidor){% endif %}
+      {%- if st.pause_since %} · desde {{ st.pause_since }}{% endif %}
+      {%- if st.pause_reason %} · motivo: <em>{{ st.pause_reason }}</em>{% endif %}.
+      Os arquivos ficam guardados na estação e sobem quando a recepção for retomada.</p>
+  {% endif %}
   <dl>
     <dt>Último sinal</dt><dd>{{ st.last_signal or '—' }}</dd>
     <dt>Intervalo declarado</dt><dd>{{ st.interval_min ~ ' min' if st.interval_min else '— (sem heartbeat)' }}</dd>

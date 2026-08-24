@@ -6,6 +6,8 @@
 #      de serviço e, na sequência, a autorização das estações (clientes).
 #   2) Gerência   — autoriza/remove/lista estações (menu interativo ou comando direto).
 #   3) Monitor    — modo que fica rodando mostrando quem conectou e o que chegou.
+#      Inclui a PAUSA da recepção (`pause`/`resume`): suspende a chegada de dados sem
+#      revogar credenciais nem apagar nada — útil em manutenção do servidor.
 #   4) Comando forçado — cada estação, ao conectar por SSH, cai em `rsync-hub serve <id>`,
 #      que confina o rsync à pasta daquela estação (write-only).
 #
@@ -26,6 +28,9 @@
 #   sudo ./rsync-hub add <id> <pub>      # autoriza com chave pública já existente
 #   sudo ./rsync-hub add <id> --senha    # autoriza por USUÁRIO+SENHA (rsync daemon:873;
 #                                        #   simples no cliente, dados sem criptografia)
+#   sudo ./rsync-hub pause <id>          # PAUSA a recepção de dados dessa estação
+#   sudo ./rsync-hub pause --todas [mot] # PAUSA a recepção de TODAS as estações
+#   sudo ./rsync-hub resume <id|--todas> # RETOMA a recepção pausada
 #   sudo ./rsync-hub remove <id>         # revoga o acesso da estação (dados preservados)
 #   sudo ./rsync-hub purge <id>          # EXCLUI definitivamente (acesso + TODOS os dados)
 #   sudo ./rsync-hub move-root <novo>    # MIGRA a raiz inteira (dados+chaves+conf) para
@@ -42,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-06.3"
+RSYNC_HUB_VERSION="2026-08-24.2"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -65,6 +70,8 @@ derive_paths() {
     RSYNCD_CONF="$BASE/rsyncd.conf"          # módulos do modo usuário+senha (gerado)
     RSYNCD_SECRETS="$BASE/rsyncd.secrets"    # credenciais id:senha (644, fonte da verdade)
     RSYNCD_LOG="$BASE/log/rsyncd.log"
+    PAUSE_DIR="$BASE/pause"                  # marcadores de PAUSA da recepção
+    PAUSE_ALL="$PAUSE_DIR/_todas"            # pausa global (vale para todas as estações)
 }
 derive_paths
 
@@ -83,6 +90,27 @@ ask() { # $1=pergunta $2=default → ecoa a resposta (Enter aceita o default)
     read -r a || a=""
     if [ -n "$a" ]; then printf '%s\n' "$a"; else printf '%s\n' "${2:-}"; fi
 }
+# Substituição SEGURA de arquivo de controle (authorized_keys, rsyncd.secrets/conf):
+# grava num temporário, CONFERE que a gravação terminou e só então renomeia.
+# Motivo (incidente real): com o disco cheio, o padrão antigo
+#     grep -v ... > arq.tmp || true ; mv arq.tmp arq
+# ZERAVA o arquivo — o `mv` é um rename e não precisa de espaço, então o temporário
+# truncado (ou vazio) substituía o bom e TODAS as estações passavam a receber
+# "Permission denied (publickey)". Agora, se não couber, o arquivo original fica.
+write_replace() {   # $1=destino; o conteúdo novo vem do STDIN. rc 0 = trocado.
+    wr_dst="$1"; wr_tmp="$wr_dst.novo.$$"
+    if cat > "$wr_tmp"; then
+        if mv "$wr_tmp" "$wr_dst"; then return 0; fi
+    fi
+    rm -f "$wr_tmp" 2>/dev/null || true
+    return 1
+}
+disk_hint() {  # mensagem de erro padrão de gravação (a causa quase sempre é espaço)
+    echo "falha ao gravar $1 — o arquivo anterior foi PRESERVADO."
+    echo "espaço em disco (a causa mais comum):"
+    df -h "$BASE" 2>/dev/null | sed 's/^/    /' || true
+}
+
 ask_yn() { # $1=pergunta $2=default (s|n) → rc 0 = sim
     d="${2:-s}"
     if [ "$d" = s ]; then h="S/n"; else h="s/N"; fi
@@ -102,6 +130,16 @@ serve() {
         *) echo "$ts REJECT $station $ip ${SSH_ORIGINAL_COMMAND:-}" >>"$LOG" 2>/dev/null || true
            echo "rsync-hub: somente rsync (envio) é permitido." >&2; exit 128 ;;
     esac
+    # Recepção pausada (global ou desta estação): recusa a sessão ANTES do CONNECT —
+    # nada é gravado. O cliente trata rc≠0 como falha, NÃO avança o estado local e
+    # reenvia tudo no próximo ciclo: uma pausa não perde dado, só adia.
+    if is_paused "$station"; then
+        echo "$ts PAUSED $station $ip" >>"$LOG" 2>/dev/null || true
+        if [ -f "$PAUSE_ALL" ]; then pfile="$PAUSE_ALL"; else pfile="$PAUSE_DIR/$station"; fi
+        echo "rsync-hub: recepção de dados PAUSADA no servidor ($(pause_note "$pfile"))." >&2
+        echo "rsync-hub: nada foi enviado — o envio volta sozinho quando o servidor retomar." >&2
+        exit 129
+    fi
     echo "$ts CONNECT $station $ip" >>"$LOG" 2>/dev/null || true
     rc=0; "$RRSYNC" -wo "$INCOMING/$station" || rc=$?   # -wo = write-only, confinado à pasta
     echo "$(date -u +%FT%TZ) DISCONNECT $station $ip" >>"$LOG" 2>/dev/null || true
@@ -125,7 +163,7 @@ create_host() {   # o miolo do install: conta de serviço + pastas + arquivos
     # .ssh 755 e authorized_keys 644: o sshd (StrictModes) só exige que NÃO sejam
     # graváveis por grupo/outros — leitura aberta é permitida e é a política do host.
     install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$BASE/.ssh"
-    install -d -m 755 "$BASE/stations"
+    install -d -m 755 "$BASE/stations" "$PAUSE_DIR"
     touch "$LOG"; chown "$HUB_USER:$HUB_USER" "$LOG"; chmod 644 "$LOG"
     touch "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
     # Política de LEITURA do host: os usuários locais podem VER tudo (dados, chaves,
@@ -313,6 +351,14 @@ rebuild_rsyncd_conf() {   # regenera o rsyncd.conf inteiro a partir do secrets
         echo "port = $RSYNCD_PORT"
         while IFS=: read -r sid _; do
             [ -n "$sid" ] || continue
+            # Recepção pausada: o módulo simplesmente não é gerado. O rsyncd relê a
+            # config a cada conexão, então a pausa vale na hora (o cliente recebe
+            # "unknown module") e a senha continua guardada no secrets, intacta.
+            if is_paused "$sid"; then
+                echo
+                echo "# [$sid] — recepção PAUSADA (marcador em $PAUSE_DIR); módulo omitido"
+                continue
+            fi
             echo
             echo "[$sid]"
             echo "    path = $INCOMING/$sid"
@@ -325,7 +371,13 @@ rebuild_rsyncd_conf() {   # regenera o rsyncd.conf inteiro a partir do secrets
             echo "    max connections = 4"
             echo "    timeout = 600"
         done < "$RSYNCD_SECRETS"
-    } > "$RSYNCD_CONF"
+    } | write_replace "$RSYNCD_CONF" || {
+        # Disco cheio: melhor manter a conf anterior (estações continuam enviando) do
+        # que deixar um rsyncd.conf vazio, que derrubaria todo o modo usuário+senha.
+        disk_hint "$RSYNCD_CONF" >&2
+        echo "aviso: rsyncd.conf NÃO foi regenerado — a configuração anterior segue valendo." >&2
+        return 0
+    }
     chmod 644 "$RSYNCD_CONF"
 }
 
@@ -452,9 +504,12 @@ add_station_pw() {   # $1=id $2=senha (vazio = gerar)
     case "$pw" in *:*|*' '*) die "senha não pode conter ':' nem espaço" ;; esac
     install -d -m 755 -o "$HUB_USER" -g "$HUB_USER" "$INCOMING/$id"
     touch "$RSYNCD_SECRETS"; chmod 644 "$RSYNCD_SECRETS"
-    grep -v "^$id:" "$RSYNCD_SECRETS" > "$RSYNCD_SECRETS.tmp" 2>/dev/null || true
-    printf '%s:%s\n' "$id" "$pw" >> "$RSYNCD_SECRETS.tmp"
-    mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 644 "$RSYNCD_SECRETS"
+    if ! { grep -v "^$id:" "$RSYNCD_SECRETS" 2>/dev/null || true
+           printf '%s:%s\n' "$id" "$pw"; } | write_replace "$RSYNCD_SECRETS"; then
+        disk_hint "$RSYNCD_SECRETS" >&2
+        die "estação '$id' NÃO foi autorizada (as senhas existentes foram preservadas)"
+    fi
+    chmod 644 "$RSYNCD_SECRETS"
     ensure_rsyncd
     open_firewall_port
     keydir="$BASE/stations/$id"
@@ -519,10 +574,15 @@ add_station() {
         SELF=/usr/local/bin/rsync-hub
         echo "script instalado/atualizado em /usr/local/bin/rsync-hub (a chave aponta para lá)."
     fi
-    # Remove entrada antiga da mesma estação (se houver) e adiciona a nova.
-    grep -vF "serve $id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" 2>/dev/null || true
-    printf 'command="%s serve %s",restrict %s\n' "$(self_path)" "$id" "$(cat "$pub")" >> "$AUTHKEYS.tmp"
-    mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
+    # Remove entrada antiga da mesma estação (se houver) e adiciona a nova — em uma
+    # gravação só, que só substitui o arquivo bom se couber inteira (ver write_replace).
+    if ! { grep -vF "serve $id\"" "$AUTHKEYS" 2>/dev/null || true
+           printf 'command="%s serve %s",restrict %s\n' \
+                  "$(self_path)" "$id" "$(cat "$pub")"; } | write_replace "$AUTHKEYS"; then
+        disk_hint "$AUTHKEYS" >&2
+        die "estação '$id' NÃO foi autorizada (nenhuma chave existente foi perdida)"
+    fi
+    chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
     echo "estação '$id' autorizada (pasta $INCOMING/$id)."
     if [ -n "$generated" ]; then
         write_instructions "$id" "$keydir"
@@ -573,17 +633,25 @@ add_station_wizard() {  # versão guiada do add: escolhe o modo de autenticaçã
 revoke_access() {  # $1=id — revoga chave E senha; rc 0 = algo foi revogado
     rv_id="$1"; rv_any=1
     if [ -f "$AUTHKEYS" ] && grep -qF "serve $rv_id\"" "$AUTHKEYS"; then
-        grep -vF "serve $rv_id\"" "$AUTHKEYS" > "$AUTHKEYS.tmp" || true
-        mv "$AUTHKEYS.tmp" "$AUTHKEYS"; chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
-        echo "estação '$rv_id': acesso por CHAVE revogado."
-        rv_any=0
+        if grep -vF "serve $rv_id\"" "$AUTHKEYS" | write_replace "$AUTHKEYS"; then
+            chown "$HUB_USER:$HUB_USER" "$AUTHKEYS"; chmod 644 "$AUTHKEYS"
+            echo "estação '$rv_id': acesso por CHAVE revogado."
+            rv_any=0
+        else
+            disk_hint "$AUTHKEYS" >&2
+            die "não consegui reescrever o $AUTHKEYS — NADA foi revogado"
+        fi
     fi
     if [ -f "$RSYNCD_SECRETS" ] && grep -q "^$rv_id:" "$RSYNCD_SECRETS"; then
-        grep -v "^$rv_id:" "$RSYNCD_SECRETS" > "$RSYNCD_SECRETS.tmp" || true
-        mv "$RSYNCD_SECRETS.tmp" "$RSYNCD_SECRETS"; chmod 644 "$RSYNCD_SECRETS"
-        rebuild_rsyncd_conf
-        echo "estação '$rv_id': acesso por USUÁRIO+SENHA revogado."
-        rv_any=0
+        if grep -v "^$rv_id:" "$RSYNCD_SECRETS" | write_replace "$RSYNCD_SECRETS"; then
+            chmod 644 "$RSYNCD_SECRETS"
+            rebuild_rsyncd_conf
+            echo "estação '$rv_id': acesso por USUÁRIO+SENHA revogado."
+            rv_any=0
+        else
+            disk_hint "$RSYNCD_SECRETS" >&2
+            die "não consegui reescrever o $RSYNCD_SECRETS — NADA foi revogado"
+        fi
     fi
     return "$rv_any"
 }
@@ -759,6 +827,273 @@ EOF
     echo "     (ficou intacta, com um RAIZ-MIGRADA.txt de aviso)."
 }
 
+# --- Pausa da recepção -------------------------------------------------------------
+# PAUSAR é suspender a CHEGADA de dados sem revogar nada e sem apagar nada — o cenário
+# típico é manutenção do servidor (disco, migração, banco parado). Como funciona:
+#   - modo CHAVE SSH: o `serve` recusa a sessão (registra PAUSED no log e devolve a
+#     mensagem à estação);
+#   - modo USUÁRIO+SENHA: o módulo da estação some do rsyncd.conf, regenerado aqui — o
+#     daemon relê a config a cada conexão, então vale na hora.
+# Em ambos os casos o cliente vê uma falha, NÃO avança o estado local e reenvia tudo no
+# ciclo seguinte: pausa adia a coleta, não perde dado. Enquanto pausada, a estação
+# também não consegue mandar o sinal de vida — por isso o status vira "Pausada" (e não
+# "Offline") no monitor e na dashboard.
+#
+# Marcadores: $PAUSE_DIR/_todas (global) e $PAUSE_DIR/<id> (por estação), em 644 dentro
+# de uma pasta 755 — a dashboard LÊ o estado sem sudo (mesma política de leitura aberta
+# do resto do hub) e só a ESCRITA (pause/resume) passa por root.
+
+resolve_pause_target() {  # $1=<id>|--todas → define PT_FILE, PT_LABEL e PT_ID
+    case "${1:-}" in
+        --todas|--all|all|todas)
+            PT_FILE="$PAUSE_ALL"; PT_LABEL="TODAS as estações"; PT_ID="" ;;
+        "")  die "informe a estação (id) ou --todas para a recepção inteira" ;;
+        -*)  die "opção desconhecida: '$1' (use <id> ou --todas)" ;;
+        *)   valid_id "$1"; PT_FILE="$PAUSE_DIR/$1"; PT_LABEL="a estação '$1'"; PT_ID="$1" ;;
+    esac
+}
+
+is_paused() {   # $1=id — rc 0 se a recepção está pausada (global OU só dessa estação)
+    [ -f "$PAUSE_ALL" ] && return 0
+    [ -n "${1:-}" ] && [ -f "$PAUSE_DIR/$1" ]
+}
+
+pause_field() {  # $1=arquivo $2=campo → ecoa o valor (vazio se não existir)
+    [ -f "$1" ] || return 0
+    sed -n "s/^$2=//p" "$1" 2>/dev/null | tr -d '\r' | head -1
+}
+
+pause_note() {   # $1=arquivo → "desde X · motivo: Y" (para exibir ao admin/estação)
+    pn_since="$(pause_field "$1" desde)"; pn_why="$(pause_field "$1" motivo)"
+    pn_out=""
+    [ -n "$pn_since" ] && pn_out="desde $pn_since"
+    [ -n "$pn_why" ] && pn_out="${pn_out:+$pn_out · }motivo: $pn_why"
+    [ -n "$pn_out" ] || pn_out="sem detalhes"
+    echo "$pn_out"
+}
+
+pause_list() {   # ecoa uma linha por pausa ativa (vazio = nada pausado)
+    [ -d "$PAUSE_DIR" ] || return 0
+    [ -f "$PAUSE_ALL" ] && echo "  - TODAS as estações ($(pause_note "$PAUSE_ALL"))"
+    for pf in "$PAUSE_DIR"/*; do
+        [ -f "$pf" ] || continue
+        pb="$(basename "$pf")"
+        [ "$pb" = "_todas" ] && continue
+        echo "  - $pb ($(pause_note "$pf"))"
+    done
+    return 0
+}
+
+pause_reception() {   # pause <id|--todas> [motivo...]
+    need_root
+    resolve_pause_target "${1:-}"
+    [ $# -gt 0 ] && shift
+    motivo="$*"
+    install -d -m 755 "$PAUSE_DIR"
+    if ! { echo "# marcador de PAUSA da recepção — criado por rsync-hub"
+           echo "desde=$(date -u +%FT%TZ)"
+           echo "por=${SUDO_USER:-$(id -un)}"
+           echo "motivo=$motivo"; } | write_replace "$PT_FILE"; then
+        disk_hint "$PT_FILE" >&2
+        die "não consegui gravar o marcador de pausa"
+    fi
+    chmod 644 "$PT_FILE"
+    [ -f "$RSYNCD_SECRETS" ] && rebuild_rsyncd_conf
+    echo "recepção PAUSADA para $PT_LABEL."
+    [ -n "$motivo" ] && echo "motivo: $motivo"
+    echo "as estações continuam autorizadas e nada foi apagado — elas tentam, recebem"
+    echo "uma recusa e reenviam quando a recepção voltar."
+    if [ -n "$PT_ID" ]; then
+        echo "retomar: sudo rsync-hub resume $PT_ID"
+    else
+        echo "retomar: sudo rsync-hub resume --todas"
+    fi
+    return 0
+}
+
+resume_reception() {  # resume <id|--todas>
+    need_root
+    resolve_pause_target "${1:-}"
+    if [ -f "$PT_FILE" ]; then
+        rm -f "$PT_FILE"
+        [ -f "$RSYNCD_SECRETS" ] && rebuild_rsyncd_conf
+        echo "recepção RETOMADA para $PT_LABEL."
+    else
+        echo "$PT_LABEL: a recepção não estava pausada — nada a fazer."
+    fi
+    # Pausa global e pausa por estação são independentes: retomar uma não apaga a
+    # outra. Avisa o que continua valendo para não parecer que "não funcionou".
+    if [ -n "$PT_ID" ] && [ -f "$PAUSE_ALL" ]; then
+        echo "atenção: a pausa GLOBAL continua ativa — '$PT_ID' só volta a receber com:"
+        echo "         sudo rsync-hub resume --todas"
+    fi
+    if [ -z "$PT_ID" ]; then
+        rest="$(pause_list)"
+        if [ -n "$rest" ]; then
+            echo "ainda pausadas individualmente:"
+            echo "$rest"
+        fi
+    fi
+    return 0
+}
+
+menu_pause() {   # opção do menu interativo
+    echo "Pausar a recepção: ENTER = TODAS as estações, ou digite o id de UMA."
+    mp_id="$(ask "estação (vazio = todas)" "")"
+    mp_why="$(ask "motivo (opcional — aparece no monitor e na dashboard)" "")"
+    ( pause_reception "${mp_id:---todas}" "$mp_why" ) || true
+}
+
+menu_resume() {  # opção do menu interativo
+    echo "Retomar a recepção: ENTER = TODAS as estações, ou digite o id de UMA."
+    mr_id="$(ask "estação (vazio = todas)" "")"
+    ( resume_reception "${mr_id:---todas}" ) || true
+}
+
+# --- Diagnóstico e reparo do acesso -------------------------------------------------
+# Para responder à pergunta mais comum do servidor: "as estações pararam de enviar, por
+# quê?". Concentra num lugar só as causas que já apareceram na prática — disco cheio,
+# authorized_keys perdido, home da conta de serviço fora da BASE (move-root pela metade),
+# script do comando forçado ausente, recepção pausada. É só LEITURA; com --reparar,
+# reautoriza as estações cujo .pub está guardado em stations/<id>/.
+diagnose() {
+    dg_fix=""
+    case "${1:-}" in
+        --reparar|--repair|--fix) dg_fix=1 ;;
+        "") : ;;
+        *) die "uso: rsync-hub diagnostico [--reparar]" ;;
+    esac
+    [ -z "$dg_fix" ] || need_root
+    echo "===== rsync-hub v$RSYNC_HUB_VERSION — diagnóstico do servidor ====="
+    echo "raiz (BASE): $BASE   ·   conta de serviço: $HUB_USER"
+    dg_prob=0
+
+    echo
+    echo "-- 1. espaço em disco --"
+    df -h "$BASE" 2>/dev/null | sed 's/^/  /' || echo "  (não consegui ler o df de $BASE)"
+    dg_use="$(df -P "$BASE" 2>/dev/null | awk 'NR==2{gsub("%","",$5); print $5}')"
+    if [ -n "$dg_use" ] && [ "$dg_use" -ge 95 ] 2>/dev/null; then
+        echo "  PROBLEMA: partição em ${dg_use}% — libere espaço ANTES de qualquer outra coisa."
+        echo "            (com o disco cheio, gravações de controle falham e nada mais se sustenta)"
+        dg_prob=$((dg_prob + 1))
+    fi
+
+    echo
+    echo "-- 2. conta de serviço e home (é por ele que o sshd acha o authorized_keys) --"
+    dg_home="$(getent passwd "$HUB_USER" 2>/dev/null | cut -d: -f6)"
+    if [ -z "$dg_home" ]; then
+        echo "  PROBLEMA: o usuário '$HUB_USER' não existe — rode: sudo rsync-hub install"
+        dg_prob=$((dg_prob + 1))
+    else
+        echo "  home de $HUB_USER: $dg_home"
+        if [ "$dg_home" != "$BASE" ]; then
+            echo "  PROBLEMA: o home NÃO é a BASE ($BASE). O sshd procura o authorized_keys"
+            echo "            no HOME — é assim que fica um 'move-root' interrompido."
+            echo "            corrija com: sudo usermod -d $BASE $HUB_USER"
+            dg_prob=$((dg_prob + 1))
+        fi
+    fi
+
+    echo
+    echo "-- 3. chaves autorizadas ($AUTHKEYS) --"
+    dg_keys=0
+    if [ ! -f "$AUTHKEYS" ]; then
+        echo "  PROBLEMA: o arquivo não existe."
+        dg_prob=$((dg_prob + 1))
+    else
+        dg_keys="$(grep -c 'serve ' "$AUTHKEYS" 2>/dev/null || true)"
+        [ -n "$dg_keys" ] || dg_keys=0
+        echo "  estações com chave: $dg_keys   ·   $(ls -ld "$AUTHKEYS" | awk '{print $1" "$3":"$4" "$5" bytes"}')"
+        if [ "$dg_keys" = 0 ]; then
+            echo "  PROBLEMA: NENHUMA chave autorizada — é exatamente isto que faz TODAS as"
+            echo "            estações receberem 'Permission denied (publickey,password)'."
+            dg_prob=$((dg_prob + 1))
+        fi
+        # StrictModes do sshd: o que ele recusa é escrita de grupo/outros (leitura é ok).
+        case "$(ls -ld "$BASE/.ssh" 2>/dev/null | cut -c1-10)" in
+            *w*w*|?????w*|????????w?) echo "  ATENÇÃO: $BASE/.ssh gravável por grupo/outros — o sshd recusa (StrictModes)." ;;
+        esac
+    fi
+
+    echo
+    echo "-- 4. script do comando forçado --"
+    if [ -x /usr/local/bin/rsync-hub ]; then
+        echo "  ok: /usr/local/bin/rsync-hub presente e executável."
+        if ! cmp -s "$(self_path)" /usr/local/bin/rsync-hub 2>/dev/null; then
+            echo "  ATENÇÃO: a cópia instalada difere desta — atualize:"
+            echo "           sudo install -m 755 $(self_path) /usr/local/bin/rsync-hub"
+        fi
+    else
+        echo "  PROBLEMA: /usr/local/bin/rsync-hub não existe/não é executável — as chaves"
+        echo "            apontam para ele; sem ele a estação conecta e cai na hora."
+        echo "            corrija com: sudo install -m 755 $(self_path) /usr/local/bin/rsync-hub"
+        dg_prob=$((dg_prob + 1))
+    fi
+
+    echo
+    echo "-- 5. recepção pausada? --"
+    dg_p="$(pause_list)"
+    if [ -n "$dg_p" ]; then
+        echo "$dg_p"
+        echo "  (pausa é intencional: a estação recebe 'recepção PAUSADA', não 'Permission denied')"
+    else
+        echo "  nenhuma pausa ativa."
+    fi
+
+    echo
+    echo "-- 6. estações conhecidas × chave autorizada --"
+    dg_falta=""
+    if [ -d "$BASE/stations" ]; then
+        for dg_d in "$BASE/stations"/*/; do
+            [ -d "$dg_d" ] || continue
+            dg_id="$(basename "$dg_d")"
+            dg_pub="$(ls "$dg_d"*.pub 2>/dev/null | head -1 || true)"
+            if [ -f "$AUTHKEYS" ] && grep -qF "serve $dg_id\"" "$AUTHKEYS" 2>/dev/null; then
+                echo "  ok       $dg_id — chave autorizada"
+            elif grep -q "^$dg_id:" "$RSYNCD_SECRETS" 2>/dev/null; then
+                echo "  ok       $dg_id — modo usuário+senha (porta $RSYNCD_PORT)"
+            elif [ -n "$dg_pub" ]; then
+                echo "  RECUPERÁVEL  $dg_id — sem chave no authorized_keys, mas o .pub está guardado"
+                dg_falta="$dg_falta $dg_id"
+            else
+                echo "  SEM CHAVE    $dg_id — nada autorizado e nenhum .pub guardado aqui"
+            fi
+        done
+    fi
+    [ -d "$BASE/stations" ] || echo "  (sem pasta $BASE/stations)"
+
+    if [ -n "$dg_falta" ]; then
+        dg_prob=$((dg_prob + 1))
+        echo
+        if [ -n "$dg_fix" ]; then
+            echo "-- reparando (reautorizando com o .pub guardado no hub) --"
+            for dg_id in $dg_falta; do
+                dg_pub="$(ls "$BASE/stations/$dg_id"/*.pub 2>/dev/null | head -1 || true)"
+                [ -n "$dg_pub" ] || continue
+                ( add_station "$dg_id" "$dg_pub" ) || echo "  falhou: $dg_id"
+            done
+            echo "reparo concluído — peça a uma estação para tentar de novo."
+        else
+            echo "REPARO DISPONÍVEL: as estações acima podem ser reautorizadas com as chaves"
+            echo "públicas que o hub já guarda (a estação NÃO precisa de chave nova):"
+            echo "    sudo rsync-hub diagnostico --reparar"
+        fi
+    fi
+
+    echo
+    echo "-- 7. últimas conexões --"
+    if [ -s "$LOG" ]; then tail -n 8 "$LOG" | fmt_log_local; else echo "  (sem registros em $LOG)"; fi
+
+    echo
+    if [ "$dg_prob" = 0 ]; then
+        echo "nenhum problema encontrado no lado do servidor."
+        echo "se a estação ainda falha, veja no host: sudo journalctl -u ssh -n 50   (ou /var/log/auth.log)"
+    else
+        echo "$dg_prob ponto(s) de atenção acima."
+    fi
+    return 0
+}
+
 list_stations() {
     any=0
     if [ -f "$AUTHKEYS" ] && grep -q 'serve ' "$AUTHKEYS"; then
@@ -772,6 +1107,11 @@ list_stations() {
         any=1
     fi
     [ "$any" = 1 ] || echo "(nenhuma estação autorizada — use 'rsync-hub add')"
+    paused="$(pause_list)"
+    if [ -n "$paused" ]; then
+        echo "recepção PAUSADA (autorizadas, mas nenhum dado é aceito agora):"
+        echo "$paused"
+    fi
 }
 
 client_help() {
@@ -821,6 +1161,7 @@ EOF
 
 # --- Papel 3: status / monitor -----------------------------------------------------
 # Estados (bolinha colorida por estação):
+#   ● amarelo "Pausada"         — recepção suspensa por 'rsync-hub pause' (tem prioridade)
 #   ● roxo    "Recebendo dados" — sessão SSH aberta agora OU arquivos chegando (<60s)
 #   ● verde   "Online"          — sinal de vida/atividade dentro da janela da estação
 #   ● vermelho"Offline"         — sem sinal além da janela (ou nunca conectou)
@@ -834,9 +1175,14 @@ EOF
 print_status() {
     now="$(date +%s)"
     if [ -t 1 ]; then
-        C_ON=$'\033[32m'; C_OFF=$'\033[31m'; C_RX=$'\033[35m'; C_0=$'\033[0m'
+        C_ON=$'\033[32m'; C_OFF=$'\033[31m'; C_RX=$'\033[35m'; C_PA=$'\033[33m'; C_0=$'\033[0m'
     else
-        C_ON=""; C_OFF=""; C_RX=""; C_0=""
+        C_ON=""; C_OFF=""; C_RX=""; C_PA=""; C_0=""
+    fi
+    if [ -f "$PAUSE_ALL" ]; then
+        echo "  ${C_PA}⏸ RECEPÇÃO PAUSADA para TODAS as estações${C_0} ($(pause_note "$PAUSE_ALL"))"
+        echo "  retomar com: sudo rsync-hub resume --todas"
+        echo
     fi
     printf '  %-16s %-18s %-22s %-8s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "PASTA"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
@@ -875,7 +1221,11 @@ print_status() {
         [ "$act" != 0 ] && [ "$((now - act))" -le 60 ] && receiving=1
         if [ "$act" = 0 ]; then when="-"; else when="$(date -d "@$act" '+%F %T' 2>/dev/null || echo "$act")"; fi
         if [ -n "$interval" ]; then cyc="${interval} min"; else cyc="-"; fi
-        if [ "$receiving" = 1 ]; then
+        if is_paused "$id"; then
+            # A pausa manda no display: sem recepção a estação não consegue nem mandar
+            # o sinal de vida, então "Offline" aqui seria um diagnóstico enganoso.
+            dot="${C_PA}●${C_0}"; txt="Pausada"
+        elif [ "$receiving" = 1 ]; then
             dot="${C_RX}●${C_0}"; txt="Recebendo dados"
         elif [ "$act" != 0 ] && [ "$((now - act))" -le "$limit" ]; then
             dot="${C_ON}●${C_0}"; txt="Online"
@@ -930,13 +1280,16 @@ menu() {
         echo " 3) Remover estação"
         echo " 4) Listar estações"
         echo " 5) Status agora"
-        echo " 6) Monitorar conexões (ao vivo)"
-        echo " 7) Como configurar um cliente (estação)"
+        echo " 6) PAUSAR a recepção de dados"
+        echo " 7) RETOMAR a recepção de dados"
+        echo " 8) Diagnosticar acesso das estações"
+        echo " 9) Monitorar conexões (ao vivo)"
+        echo "10) Como configurar um cliente (estação)"
         echo " 0) Sair"
         printf "opção> "
         read -r op || exit 0
         case "$op" in
-            1|2|3) if ! is_root; then echo "requer root — rode: sudo $(self_path)"; continue; fi ;;
+            1|2|3|6|7) if ! is_root; then echo "requer root — rode: sudo $(self_path)"; continue; fi ;;
         esac
         case "$op" in
             1) install_host || true ;;
@@ -948,8 +1301,14 @@ menu() {
                fi ;;
             4) list_stations ;;
             5) print_status ;;
-            6) monitor ;;
-            7) client_help ;;
+            6) menu_pause ;;
+            7) menu_resume ;;
+            8) ( diagnose ) || true
+               if is_root && ask_yn "tentar reparar as chaves perdidas agora?" n; then
+                   ( diagnose --reparar ) || true
+               fi ;;
+            9) monitor ;;
+            10) client_help ;;
             0|q|"") exit 0 ;;
             *) echo "opção inválida" ;;
         esac
@@ -968,12 +1327,23 @@ uso:
   sudo rsync-hub add <id> <pub>      autoriza com uma chave pública já existente
   sudo rsync-hub add <id> --senha    autoriza por USUÁRIO+SENHA (rsync daemon, porta $RSYNCD_PORT;
                                      mais simples no cliente, mas dados SEM criptografia)
+  sudo rsync-hub pause <id> [motivo] PAUSA a recepção de dados dessa estação (dados e
+                                     credenciais preservados; ela reenvia ao retomar)
+  sudo rsync-hub pause --todas [mot] PAUSA a recepção de TODAS as estações (manutenção)
+  sudo rsync-hub resume <id>         RETOMA a recepção dessa estação
+  sudo rsync-hub resume --todas      RETOMA a recepção de todas (pausas individuais
+                                     continuam valendo até serem retomadas)
   sudo rsync-hub remove <id>         revoga o acesso da estação (dados preservados)
   sudo rsync-hub purge <id>          EXCLUI a estação DEFINITIVAMENTE: revoga o acesso e
                                      APAGA incoming/archive/quarantine/stations dela
                                      (pede para digitar o id; irreversível)
   sudo rsync-hub move-root <novo>    MIGRA a raiz inteira (dados+chaves+conf) para outra
                                      pasta; a antiga fica intacta como cópia de segurança
+       rsync-hub diagnostico         por que as estações não conseguem enviar? (disco,
+                                     chaves, home da conta, pausa) — só leitura
+  sudo rsync-hub diagnostico --reparar
+                                     reautoriza as estações cuja chave pública ainda
+                                     está guardada em <raiz>/stations/<id>/
        rsync-hub list                lista as estações autorizadas
        rsync-hub monitor             modo ao vivo: quem conectou e o que chegou (Ctrl-C sai)
        rsync-hub status              uma leitura do status
@@ -1005,9 +1375,12 @@ case "${1:-}" in
     add)     shift
              if [ "${2:-}" = "--senha" ]; then add_station_pw "${1:-}" "${3:-}"
              else add_station "$@"; fi ;;
+    pause|pausar)             shift; pause_reception "$@" ;;
+    resume|retomar|despausar) shift; resume_reception "$@" ;;
     remove)  shift; remove_station "$@" ;;
     purge)   shift; purge_station "$@" ;;
     move-root) shift; move_root "$@" ;;
+    diagnostico|diagnostico-acesso|doctor|diagnose) shift; diagnose "${1:-}" ;;
     list)    list_stations ;;
     monitor) monitor ;;
     status)  print_status ;;

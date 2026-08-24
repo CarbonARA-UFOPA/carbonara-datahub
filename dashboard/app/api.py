@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, jsonify, request
 
-from . import config_store, series, status
+from . import config_store, hub, series, status
 from .views import admin_required
 
 api = Blueprint("api", __name__)
@@ -12,7 +12,8 @@ api = Blueprint("api", __name__)
 @api.get("/status")
 def all_status():
     cfg = current_app.store.load()
-    return jsonify([status.station_status(cfg, s) for s in cfg["stations"]])
+    pause = hub.pause_state(cfg)
+    return jsonify([status.station_status(cfg, s, pause) for s in cfg["stations"]])
 
 
 @api.get("/stations/<station_id>/files/<file_id>/series")

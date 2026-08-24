@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from . import config_store, tailer
 
@@ -70,8 +71,16 @@ def _decimate(indices_len: int) -> list[int]:
 
 
 def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
-    path = config_store.resolve_data_path(cfg, fcfg["path"])
+    # Caminho com data/hora (dynamic_path) é expandido aqui, a cada leitura, pelo
+    # relógio do servidor — por isso o gráfico segue o arquivo que rotaciona sozinho.
+    try:
+        path, pinfo = config_store.resolve_file_path(cfg, fcfg)
+    except ValueError as exc:
+        return {"error": str(exc)}
     if not path.is_file():
+        if pinfo.get("dynamic"):
+            return {"error": "Arquivo do momento ainda não existe e nenhum arquivo "
+                             f"casa com o padrão: {pinfo['expanded']}"}
         return {"error": f"Arquivo não encontrado: {path}"}
 
     # .get com defaults: entradas escritas à mão no YAML podem omitir chaves
@@ -147,9 +156,15 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
     # do ano. Pega o timestamp mais novo que casou o formato.
     last_dt = next((d for d in reversed(dts) if d is not None), None)
     keep = _decimate(len(rows))
+    if pinfo.get("fallback"):
+        problems.append(
+            f"o arquivo do momento ({Path(pinfo['expanded']).name}) ainda não existe — "
+            f"lendo o mais recente que casa com o padrão ({path.name})")
     return {
         "file": fcfg["id"],
         "path": str(path),
+        # Contexto do caminho com data/hora: a UI mostra QUAL arquivo foi realmente lido.
+        "path_info": pinfo,
         "rows_read": len(rows),
         "decimated": len(keep) < len(rows),
         "last_reading": last_dt.strftime("%d/%m/%Y %H:%M") if last_dt else None,
@@ -169,10 +184,13 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
 def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
     """Preview do formulário: últimas linhas parseadas + diagnóstico, antes de salvar."""
     try:
-        path = config_store.resolve_data_path(cfg, entry["path"])
+        path, pinfo = config_store.resolve_file_path(cfg, entry)
     except ValueError as exc:
         return {"error": str(exc)}
     if not path.is_file():
+        if pinfo.get("dynamic"):
+            return {"error": "Arquivo do momento ainda não existe e nenhum arquivo "
+                             f"casa com o padrão: {pinfo['expanded']}"}
         return {"error": f"Arquivo não encontrado: {path}"}
 
     lines = tailer.tail_data_lines(path, max_rows, entry.get("skip_header_lines", 0))
@@ -215,8 +233,18 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
             for r in out_rows
         ]
 
+    if pinfo.get("dynamic"):
+        # No preview o usuário PRECISA ver o padrão virando arquivo — é como ele
+        # confere se os campos %Y/%m/%d/%H estão certos antes de salvar.
+        note = f"Caminho com data/hora: {pinfo['pattern']} → {pinfo['expanded']}"
+        if pinfo.get("fallback"):
+            note += (" (ainda não existe — lendo o mais recente que casa com o padrão: "
+                     f"{pinfo['fallback']})")
+        diagnostics.insert(0, note)
+
     return {
         "path": str(path),
+        "path_info": pinfo,
         "header": header,
         "rows": out_rows,
         "diagnostics": diagnostics,

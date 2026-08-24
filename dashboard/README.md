@@ -50,7 +50,12 @@ python run.py                          # http://localhost:8080
     `interval_min` vem do heartbeat `.carbonara-status`; o "último sinal" é o mais
     recente entre mtime do heartbeat, mtime dos arquivos da estação e último CONNECT);
   - 🔴 *Offline* — fora da janela (sem heartbeat válido, janela = `stale_fallback_seconds`, default 1 h);
+  - 🟡 *Pausada* — a recepção foi suspensa no hub (`rsync-hub pause`); tem prioridade
+    sobre os demais estados, porque uma estação pausada não consegue nem mandar o
+    sinal de vida — exibi-la como *Offline* seria enganoso;
   - ⚪ *Sem sinal* — nenhuma fonte encontrada.
+- **Faixa de "recepção pausada"** no topo de todas as páginas (visível também para quem
+  não é admin, com motivo e horário) — é a explicação de por que os dados pararam.
 - **Gráficos por variável** das últimas N linhas de cada arquivo monitorado (tail
   eficiente — o arquivo nunca é lido inteiro), com auto-atualização.
 - **Tela Comparar** (`/compare`): selecione variáveis de quaisquer estações/arquivos já
@@ -140,6 +145,11 @@ no terminal, sem sair da dashboard:
 - **Credenciais**: ver a chave pública, a linha do `authorized_keys` e o
   `INSTRUCOES.txt`; **baixar** a chave privada/instruções de `stations/<id>/`
   (leitura direta — a política do hub os mantém legíveis sem sudo).
+- **Pausar/retomar a recepção** (card *Recepção de dados*, na página Coleta e na
+  página de cada estação; também há um botão no detalhe da estação): executa
+  `rsync-hub pause|resume <id|--todas>`. Suspende só a **chegada** de arquivos — as
+  credenciais continuam válidas, nada é apagado e as estações reenviam o que ficou
+  pendente quando a recepção volta. Aceita um *motivo*, que aparece na interface.
 - **Excluir estação definitivamente** (zona de perigo na página da estação):
   além de revogar, **apaga do servidor** `incoming/`, `archive/`, `quarantine/` e
   `stations/` da estação (via `rsync-hub purge <id>`) e a remove do cadastro do

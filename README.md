@@ -82,6 +82,11 @@ sudo ./collection/rsync-hub install   # GUIDED host installation — once
 sudo rsync-hub add flona01            # authorize by GENERATING the key here: stations/flona01/
                                       #   stores the key pair + activation INSTRUCOES.txt
 sudo rsync-hub add flona01 f.pub      # or authorize an existing public key
+sudo rsync-hub pause --todas "maintenance"   # PAUSE reception (all stations)
+sudo rsync-hub pause flona01          # pause a single station
+sudo rsync-hub resume --todas         # resume reception
+     rsync-hub diagnostico            # why can't the stations send? (disk, keys, home, pause)
+sudo rsync-hub diagnostico --reparar  # re-authorize stations from the .pub kept on the hub
      rsync-hub list                   # list authorized stations
      rsync-hub monitor                # live view of connections and station status
      rsync-hub cliente                # step-by-step client setup instructions

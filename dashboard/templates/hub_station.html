@@ -16,6 +16,11 @@
       <tr><th>Autenticação por usuário+senha</th>
           <td>{% if entry.pw_mode %}<span style="color:var(--green)">✓ autorizada</span> (rsync daemon, porta 873)
               {% else %}<span class="meta">não</span>{% endif %}</td></tr>
+      <tr><th>Recepção de dados</th>
+          <td>{% if entry.paused %}<span class="dot dot-paused"></span>
+                <strong>PAUSADA</strong>
+                {% if not entry.paused_own %}(pausa global do servidor){% endif %}
+              {% else %}<span class="dot dot-online"></span> ativa{% endif %}</td></tr>
       <tr><th>Fontes detectadas</th><td><small>{{ entry.sources | join(' · ') }}</small></td></tr>
       {% if st %}
       <tr><th>Status ao vivo</th>
@@ -82,6 +87,53 @@
       <summary><strong>INSTRUCOES.txt</strong> (ativação da estação — pode conter a senha)</summary>
       <pre class="mono">{{ creds.instrucoes }}</pre>
     </details>
+  {% endif %}
+</section>
+
+<section class="card pause-card {{ 'pause-card-on' if entry.paused }}">
+  <div class="page-head">
+    <h2>Recepção de dados</h2>
+    <span class="pause-state">
+      {% if entry.paused %}<span class="dot dot-paused"></span> PAUSADA
+      {% else %}<span class="dot dot-online"></span> Ativa{% endif %}
+    </span>
+  </div>
+  {% if entry.paused and not entry.paused_own %}
+    <p>Esta estação está parada pela <strong>pausa global</strong> do servidor
+      {%- if entry.pause.since_display %}, desde {{ entry.pause.since_display }}{% endif %}
+      {%- if entry.pause.reason %} (motivo: <em>{{ entry.pause.reason }}</em>){% endif %}.
+      Retome-a no card <em>Recepção de dados</em> da
+      <a href="{{ url_for('hub.index') }}">tela de Coleta</a>.</p>
+  {% elif entry.paused %}
+    <p>Recepção pausada só desta estação
+      {%- if entry.pause.since_display %}, desde {{ entry.pause.since_display }}{% endif %}
+      {%- if entry.pause.by %} (por {{ entry.pause.by }}){% endif %}
+      {%- if entry.pause.reason %} · motivo: <em>{{ entry.pause.reason }}</em>{% endif %}.
+      Ela continua autorizada: os arquivos ficam guardados na estação e sobem no
+      primeiro ciclo depois de retomada.</p>
+    <form method="post" action="{{ url_for('hub.resume') }}">
+      <input type="hidden" name="target" value="{{ entry.id }}">
+      <input type="hidden" name="back" value="hub_station">
+      <button class="btn btn-primary" type="submit"
+        {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
+        ▶ Retomar a recepção de {{ entry.id }}</button>
+    </form>
+  {% else %}
+    <p class="meta">Pausar suspende só a <strong>chegada</strong> de novos arquivos desta
+      estação — sem revogar a chave/senha e sem apagar nada. Ela tenta enviar, recebe uma
+      recusa e reenvia tudo quando a recepção for retomada.</p>
+    <form method="post" class="form form-inline" action="{{ url_for('hub.pause') }}"
+          onsubmit="return confirm('Pausar a recepção de {{ entry.id }}? Ela continua autorizada e reenvia os arquivos quando você retomar.');">
+      <input type="hidden" name="target" value="{{ entry.id }}">
+      <input type="hidden" name="back" value="hub_station">
+      <label>Motivo (opcional)
+        <input name="reason" autocomplete="off" placeholder="ex.: troca do disco da estação"
+               {% if not info.can_write %}disabled{% endif %}>
+      </label>
+      <button class="btn btn-danger" type="submit"
+        {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
+        ⏸ Pausar a recepção de {{ entry.id }}</button>
+    </form>
   {% endif %}
 </section>
 

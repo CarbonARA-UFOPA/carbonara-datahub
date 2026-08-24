@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config_store
@@ -47,7 +47,8 @@ def sudoers_hint(bin_path: str | None) -> str:
     dashboard/setup-hub-access.sh instala em /etc/sudoers.d/)."""
     b = bin_path or "/usr/local/bin/rsync-hub"
     user = os.environ.get("USER") or "usuario-da-dashboard"
-    return f"{user} ALL=(root) NOPASSWD: {b} add *, {b} remove *, {b} purge *, {b} move-root *"
+    return (f"{user} ALL=(root) NOPASSWD: {b} add *, {b} remove *, {b} purge *, "
+            f"{b} move-root *, {b} pause *, {b} resume *")
 
 
 def hub_base(cfg: dict) -> Path:
@@ -109,8 +110,28 @@ def hub_info(cfg: dict) -> dict:
         # (ex.: dev com ./data). O template avisa; as escritas usam a BASE do hub.
         "base_mismatch": bool(conf_base) and str(base) != conf_base,
         "can_write": _can_write(bin_path),
+        # Sonda separada: instalações que rodaram o setup-hub-access.sh ANTES da pausa
+        # existir têm sudoers sem 'pause'/'resume' — o resto continua funcionando e a
+        # tela pede só a atualização da regra, em vez de falhar no clique.
+        "can_pause": _can_run(bin_path, ["pause", "__sonda__"]),
         "sudoers_hint": sudoers_hint(bin_path),
     }
+
+
+def _can_run(bin_path: str | None, args: list[str]) -> bool:
+    """A dashboard consegue executar ``rsync-hub <args>`` como root sem senha?"""
+    if not bin_path:
+        return False
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return True
+    if not shutil.which("sudo"):
+        return False
+    try:
+        r = subprocess.run(["sudo", "-n", "-l", bin_path, *args],
+                           capture_output=True, text=True, timeout=10)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _can_write(bin_path: str | None) -> bool:
@@ -121,14 +142,7 @@ def _can_write(bin_path: str | None) -> bool:
     # ``sudo -n -l <cmd> <args>`` responde sem prompt: rc 0 = há regra NOPASSWD que
     # cobre ESSA invocação. Sondamos com 'add' + argumento fictício porque a regra
     # recomendada é restrita aos subcomandos ("rsync-hub add *", nunca o script todo).
-    if not shutil.which("sudo"):
-        return False
-    try:
-        r = subprocess.run(["sudo", "-n", "-l", bin_path, "add", "__sonda__"],
-                           capture_output=True, text=True, timeout=10)
-        return r.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    return _can_run(bin_path, ["add", "__sonda__"])
 
 
 def _run_hub(cfg: dict, args: list[str], timeout: int = 90) -> tuple[bool, str]:
@@ -160,18 +174,135 @@ def _run_hub(cfg: dict, args: list[str], timeout: int = 90) -> tuple[bool, str]:
     return True, out
 
 
+# --- Pausa da recepção -------------------------------------------------------------
+# Espelha `rsync-hub pause/resume` (collection/rsync-hub): marcadores em <BASE>/pause/
+# — ``_todas`` para a pausa global e ``<id>`` por estação. A LEITURA é direta (644/755,
+# política de leitura aberta do hub), então o estado aparece na interface mesmo sem a
+# regra de sudo; só PAUSAR/RETOMAR passa pelo rsync-hub como root.
+PAUSE_ALL = "_todas"      # nome do marcador global (igual ao do shell)
+PAUSE_FIELDS = {"desde": "since", "por": "by", "motivo": "reason"}
+
+
+def pause_dir(cfg: dict) -> Path:
+    return hub_base(cfg) / "pause"
+
+
+def _fmt_pause_ts(ts: str, cfg: dict) -> str:
+    """Carimbo UTC do marcador (``2026-08-24T12:00:00Z``) em hora local de exibição —
+    mesma convenção do status (config ``timezone`` manda, senão o fuso do processo)."""
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return ts or ""
+    tzname = cfg.get("timezone")
+    if tzname:
+        try:
+            from zoneinfo import ZoneInfo
+            return dt.astimezone(ZoneInfo(tzname)).strftime("%d/%m/%Y %H:%M")
+        except Exception:  # noqa: BLE001 — fuso inválido no config nunca quebra a tela
+            pass
+    return dt.astimezone().strftime("%d/%m/%Y %H:%M")
+
+
+def _read_marker(path: Path, cfg: dict, target: str) -> dict:
+    info = {"target": target, "since": "", "by": "", "reason": "", "since_display": ""}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return info
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        field = PAUSE_FIELDS.get(key.strip())
+        if field:
+            info[field] = value.strip()
+    info["since_display"] = _fmt_pause_ts(info["since"], cfg)
+    return info
+
+
+def pause_state(cfg: dict) -> dict:
+    """Estado da pausa: ``{all, stations, paused_ids, any}``. Nunca levanta — uma raiz
+    mal configurada só significa "nada pausado", jamais uma página quebrada."""
+    state = {"all": None, "stations": {}, "paused_ids": [], "any": False}
+    try:
+        d = pause_dir(cfg)
+        entries = sorted(d.iterdir()) if d.is_dir() else []
+    except OSError:
+        entries = []
+    for f in entries:
+        try:
+            if not f.is_file():
+                continue
+        except OSError:
+            continue
+        if f.name == PAUSE_ALL:
+            state["all"] = _read_marker(f, cfg, "todas")
+        elif valid_hub_id(f.name):
+            state["stations"][f.name] = _read_marker(f, cfg, f.name)
+    state["paused_ids"] = sorted(state["stations"])
+    state["any"] = bool(state["all"] or state["stations"])
+    return state
+
+
+def station_paused(state: dict, sid: str) -> bool:
+    """Uma estação está pausada pela pausa global OU pela sua própria."""
+    return bool(state.get("all")) or sid in (state.get("stations") or {})
+
+
+def pause_marker_for(state: dict, sid: str) -> dict | None:
+    """Marcador que EXPLICA a pausa da estação — a global tem prioridade (é ela que o
+    `serve` cita para a estação)."""
+    if state.get("all"):
+        return state["all"]
+    return (state.get("stations") or {}).get(sid)
+
+
+def _pause_target(target: str) -> tuple[str | None, str]:
+    """Normaliza o alvo do formulário: ``--todas`` (global) ou o id validado.
+    Sempre devolve um argumento EXPLÍCITO — a regra do sudoers é ``pause *``, que não
+    casa com o comando sem argumento nenhum."""
+    t = (target or "").strip().lower()
+    if t in ("", "todas", "all", "--todas", "--all"):
+        return "--todas", "todas as estações"
+    if not valid_hub_id(t):
+        return None, ""
+    return t, f"a estação '{t}'"
+
+
+def set_pause(cfg: dict, target: str, reason: str | None = None) -> tuple[bool, str]:
+    """``rsync-hub pause <id|--todas> [motivo]`` — suspende a recepção sem revogar
+    credenciais nem apagar dados; as estações reenviam quando a recepção voltar."""
+    arg, _label = _pause_target(target)
+    if arg is None:
+        return False, "id de estação inválido para pausar."
+    # Motivo vira uma linha do marcador (motivo=...): quebras de linha o corromperiam.
+    why = " ".join((reason or "").split())[:200]
+    return _run_hub(cfg, ["pause", arg] + ([why] if why else []))
+
+
+def clear_pause(cfg: dict, target: str) -> tuple[bool, str]:
+    """``rsync-hub resume <id|--todas>`` — retoma a recepção."""
+    arg, _label = _pause_target(target)
+    if arg is None:
+        return False, "id de estação inválido para retomar."
+    return _run_hub(cfg, ["resume", arg])
+
+
 # --- Estações: listar / autorizar / revogar ---------------------------------------
 def list_hub_stations(cfg: dict) -> list[dict]:
     """Lista de gerenciamento: além das fontes (detect_hub_stations), resolve o(s)
     modo(s) de autenticação e se há credenciais guardadas em ``stations/<id>/``."""
     detected = config_store.detect_hub_stations(cfg)
     base = hub_base(cfg)
+    pstate = pause_state(cfg)
     out = []
     for d in detected:
         sid = d["id"]
         creds_dir = base / "stations" / sid
         out.append({
             **d,
+            "paused": station_paused(pstate, sid),
+            "paused_own": sid in pstate["stations"],
+            "pause": pause_marker_for(pstate, sid),
             "key_mode": "authorized_keys" in d["sources"],
             "pw_mode": "rsyncd.secrets" in d["sources"],
             "has_creds": creds_dir.is_dir(),

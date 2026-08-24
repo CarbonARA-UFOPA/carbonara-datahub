@@ -35,6 +35,61 @@
 </div>
 {% endif %}
 
+<section class="card pause-card {{ 'pause-card-on' if pause.all }}">
+  <div class="page-head">
+    <h2>Recepção de dados</h2>
+    <span class="pause-state">
+      {% if pause.all %}<span class="dot dot-paused"></span> PAUSADA (todas as estações)
+      {% else %}<span class="dot dot-online"></span> Ativa{% endif %}
+    </span>
+  </div>
+  <p class="meta">Pausar suspende a <strong>chegada</strong> de arquivos ao servidor sem
+    revogar credenciais e sem apagar nada: as estações continuam autorizadas, tentam
+    enviar, recebem uma recusa e <strong>reenviam tudo quando a recepção voltar</strong>.
+    Vale para os dois modos de autenticação (chave SSH e usuário+senha). Útil em
+    manutenção do servidor (disco cheio, migração da raiz de dados, banco parado).</p>
+
+  {% if info.can_write and not info.can_pause %}
+    <div class="flash flash-error">
+      A regra do <code>sudo</code> deste servidor é anterior à pausa e não libera
+      <code>pause</code>/<code>resume</code>. Atualize-a rodando no servidor:
+      <pre class="mono">sudo dashboard/setup-hub-access.sh &lt;usuario-que-roda-a-dashboard&gt;</pre>
+    </div>
+  {% endif %}
+
+  {% if pause.all %}
+    <p>Pausada {% if pause.all.since_display %}em <strong>{{ pause.all.since_display }}</strong>{% endif %}
+      {%- if pause.all.by %} por <strong>{{ pause.all.by }}</strong>{% endif %}
+      {%- if pause.all.reason %} · motivo: <em>{{ pause.all.reason }}</em>{% endif %}.</p>
+    <form method="post" action="{{ url_for('hub.resume') }}">
+      <input type="hidden" name="target" value="todas">
+      <input type="hidden" name="back" value="hub">
+      <button class="btn btn-primary" type="submit"
+              {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
+        ▶ Retomar a recepção de todas as estações</button>
+    </form>
+  {% else %}
+    <form method="post" class="form form-inline" action="{{ url_for('hub.pause') }}"
+          onsubmit="return confirm('Pausar a recepção de TODAS as estações? Elas continuam autorizadas e reenviam os arquivos quando você retomar.');">
+      <input type="hidden" name="target" value="todas">
+      <input type="hidden" name="back" value="hub">
+      <label>Motivo (opcional — aparece para todo mundo na dashboard)
+        <input name="reason" autocomplete="off" placeholder="ex.: manutenção do servidor"
+               {% if not info.can_write %}disabled{% endif %}>
+      </label>
+      <button class="btn btn-danger" type="submit"
+              {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
+        ⏸ Pausar a recepção de todas as estações</button>
+    </form>
+  {% endif %}
+
+  {% if pause.paused_ids %}
+    <p class="meta">Pausas individuais em vigor (independentes da global):
+      {% for sid in pause.paused_ids %}<code>{{ sid }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+      — retome cada uma na linha da estação abaixo.</p>
+  {% endif %}
+</section>
+
 <section class="card">
   <div class="page-head"><h2>Navegar pelos arquivos</h2></div>
   <p>
@@ -56,7 +111,7 @@
   {% else %}
     <table class="table">
       <thead><tr>
-        <th>Estação</th><th>Autenticação</th><th>Credenciais no hub</th>
+        <th>Estação</th><th>Autenticação</th><th>Recepção</th><th>Credenciais no hub</th>
         <th>Na dashboard?</th><th></th>
       </tr></thead>
       <tbody>
@@ -69,6 +124,30 @@
             {%- if s.pw_mode %}usuário+senha{% endif %}
             {%- if not s.key_mode and not s.pw_mode %}<span class="meta">nenhuma (só dados)</span>{% endif %}
           </small></td>
+          <td>
+            {% if s.paused %}
+              <span class="dot dot-paused"></span>
+              <small>{% if s.paused_own %}pausada{% else %}pausa global{% endif %}</small>
+            {% else %}
+              <span class="dot dot-online"></span> <small>ativa</small>
+            {% endif %}
+            {% if s.paused_own %}
+              <form method="post" action="{{ url_for('hub.resume') }}" class="inline-form">
+                <input type="hidden" name="target" value="{{ s.id }}">
+                <input type="hidden" name="back" value="hub">
+                <button class="btn btn-sm" type="submit"
+                  {% if not info.can_write %}disabled{% endif %}>▶ retomar</button>
+              </form>
+            {% elif not pause.all %}
+              <form method="post" action="{{ url_for('hub.pause') }}" class="inline-form"
+                    onsubmit="return confirm('Pausar a recepção de {{ s.id }}? Ela continua autorizada e reenvia os arquivos quando você retomar.');">
+                <input type="hidden" name="target" value="{{ s.id }}">
+                <input type="hidden" name="back" value="hub">
+                <button class="btn btn-sm" type="submit"
+                  {% if not info.can_write %}disabled{% endif %}>⏸ pausar</button>
+              </form>
+            {% endif %}
+          </td>
           <td><small>{% if s.has_creds %}✓ stations/{{ s.id }}/{% else %}<span class="meta">—</span>{% endif %}</small></td>
           <td>
             {% if s.in_dashboard %}<span style="color:var(--green)">✓ sim</span>

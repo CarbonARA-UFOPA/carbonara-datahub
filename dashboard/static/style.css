@@ -1,7 +1,7 @@
 :root {
   --bg: #f5f7f6; --card: #ffffff; --ink: #1e2a24; --muted: #6b7a72;
   --line: #dde4e0; --green: #2e9e5b; --red: #d64545; --purple: #8a5cd6;
-  --gray: #9aa5a0; --accent: #1f6f4a;
+  --gray: #9aa5a0; --accent: #1f6f4a; --amber: #d99513;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -58,6 +58,8 @@ h2 { font-size: 1.05rem; margin: .2rem 0; }
 .dot-offline { background: var(--red); }
 .dot-receiving { background: var(--purple); box-shadow: 0 0 0 3px rgba(138,92,214,.25); }
 .dot-unknown { background: var(--gray); }
+/* Pausada: a recepção foi suspensa no hub (rsync-hub pause) — não é falha da estação. */
+.dot-paused { background: var(--amber); box-shadow: 0 0 0 3px rgba(217,149,19,.2); }
 
 .status-card dl { display: grid; grid-template-columns: max-content 1fr; gap: .15rem 1rem; margin: .6rem 0 0; }
 .status-card dt { color: var(--muted); }
@@ -274,3 +276,27 @@ body.map-modal-open { overflow: hidden; }
 #preview-area table { font-size: .8rem; margin-top: .8rem; display: block; overflow-x: auto; }
 #preview-area .diag { margin: .4rem 0; }
 code { background: #eef2f0; padding: .05rem .3rem; border-radius: 4px; font-size: .85em; }
+
+/* --- Pausa da recepção (rsync-hub pause) ------------------------------------------ */
+/* Faixa no topo de todas as páginas: com a recepção pausada, "sem dados novos" é
+   esperado — o aviso evita que isso seja lido como estação offline/falha. */
+.pause-banner { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+                background: #fdf3e0; border: 1px solid #efd39a; border-radius: 8px;
+                padding: .7rem 1rem; margin: .6rem 0; }
+.pause-banner-text { flex: 1 1 320px; }
+.pause-banner-text small { color: var(--muted); }
+.pause-icon { font-size: 1.3rem; line-height: 1; }
+.pause-banner-action { flex: none; }
+.pause-card-on { border: 1px solid #efd39a; background: #fffaf1; }
+.pause-state { font-size: .9rem; font-weight: 600; white-space: nowrap; }
+.pause-note { background: #fdf3e0; border-radius: 7px; padding: .5rem .8rem;
+              margin: .6rem 0 0; font-size: .9rem; }
+/* Formulário de uma linha só (motivo + botão), usado nos cards de pausa. */
+.form-inline { display: flex; align-items: flex-end; gap: .6rem; flex-wrap: wrap; }
+.form-inline label { flex: 1 1 260px; margin: .3rem 0; }
+/* Botão de pausa dentro de uma célula de tabela, ao lado do estado. */
+.inline-form { display: inline; }
+.status-pause { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+                margin: .6rem 0 0; }
+.status-pause input { padding: .35rem .6rem; border: 1px solid var(--line);
+                      border-radius: 7px; font: inherit; }

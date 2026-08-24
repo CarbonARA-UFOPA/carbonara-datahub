@@ -101,7 +101,8 @@ def _station_or_404(cfg, station_id):
 @pages.get("/")
 def index():
     cfg = _load()
-    stations = [status.station_status(cfg, s) for s in cfg["stations"]]
+    pause = hub.pause_state(cfg)
+    stations = [status.station_status(cfg, s, pause) for s in cfg["stations"]]
     # Quantas estações do rsync-hub ainda não estão na dashboard (banner de importação).
     # Só varre para quem pode editar, e nunca deixa uma raiz mal configurada quebrar a página.
     new_count = 0
