@@ -448,6 +448,11 @@ computes live station status. Viewing is open; edits require the admin login
   lock). Relative `data_root` resolves against the **config file's directory**, not cwd.
 - **Never loads whole data files** — `app/tailer.py` seeks from the end; keep it that
   way (datalogger `.dat`s grow unbounded). Campbell `NAN`/`±7999` become `None` (gaps).
+- **Space-separated files** (`.sfo` and many `.dat`): `separator: " "` makes
+  `tailer.parse_rows` use `str.split()` instead of `csv.reader` — runs of spaces are
+  alignment, never empty columns, and a phantom column would silently shift every
+  index-mapped variable after it. The form writes/reads it as `\s` (a lone space in a
+  text input is invisible and gets stripped); `\t` behaves the same way.
 - **Timestamp column**: `timestamp.format` is a strftime pattern OR the literal
   `epoch` (any of `config_store.EPOCH_MARKERS`, normalized to `epoch` on save), meaning
   Unix seconds — fraction preserved (`1787542188.433029` → microseconds) and ms/µs/ns

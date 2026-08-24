@@ -65,7 +65,9 @@ stations:
         #   path: incoming/flona01/torre/%Y-%m-%d__02-29-52.sfo
         #   dynamic_path: true
         tail_lines: 288                       # 288 × 30min = últimos ~6 dias
-        separator: ","
+        separator: ","                        # "," · "\t" (tab) · " " (espaço)
+        # Separador ESPAÇO divide por sequências de espaço/tab: espaços repetidos de
+        # alinhamento não viram colunas vazias (no formulário escreva \s).
         quotechar: '"'                        # TOA5 (Campbell) usa aspas; "" (vazio) =
                                               #   ignora aspas e divide os campos entre
                                               #   aspas pelas vírgulas internas (mapeie

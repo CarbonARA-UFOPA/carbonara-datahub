@@ -82,7 +82,7 @@
       Gráficos
       <span class="meta">
         últimas <strong>{{ f.tail_lines }}</strong> linhas ·
-        separador <code>{{ '\\t' if f.separator == '\t' else f.separator }}</code> ·
+        separador <code>{{ '\\t' if f.separator == '\t' else ('\\s' if f.separator == ' ' else f.separator) }}</code> ·
         {{ f.variables | length }} variável(is)
         <span class="series-info"></span>
       </span>

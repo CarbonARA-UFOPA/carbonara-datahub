@@ -561,8 +561,12 @@ def _parse_separator(raw: str) -> str:
     raw = raw or ","
     if raw in ("\\t", "tab", "TAB"):
         return "\t"
+    # Espaço é separador legítimo (.sfo e vários .dat), mas um espaço solo num campo de
+    # texto é invisível — e some no strip. Por isso os apelidos escritos.
+    if raw.strip().lower() in ("\\s", "space", "espaco", "espaço", "branco"):
+        return " "
     if raw.strip() == "" and " " in raw:
-        return " "  # separador espaço é válido (alguns .dat) — não pode virar ','
+        return " "
     return raw.strip() or ","
 
 

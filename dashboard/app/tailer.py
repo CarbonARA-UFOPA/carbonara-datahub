@@ -58,6 +58,13 @@ def parse_rows(lines: list[str], separator: str, quotechar: str) -> list[list[st
     # um campo entre aspas com vírgulas dentro (ex.: RadOut1 do Campbell,
     # "m -125,1,-1247,...") vira VÁRIAS colunas. As aspas ficam literais e são removidas
     # depois (to_float/strip). Com aspas, o comportamento normal (campo entre aspas = 1 col).
+    # Separador ESPAÇO: divide por sequências de espaço/tab (str.split()), não por um
+    # espaço isolado. Num formato delimitado por espaço não existe campo vazio — dois
+    # espaços seguidos são alinhamento, não coluna nula — e o csv.reader criaria uma
+    # coluna fantasma que desloca TODAS as seguintes (com ~100 colunas mapeadas por
+    # índice, o estrago é silencioso). Com um espaço só, o resultado é idêntico.
+    if separator == " ":
+        return [ln.split() for ln in lines]
     if quotechar:
         reader = csv.reader(lines, delimiter=separator, quotechar=quotechar)
     else:

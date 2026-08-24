@@ -37,6 +37,8 @@
         <option value="toa5">TOA5 — Campbell/LoggerNet (padrão)</option>
         <option value="csv">CSV com cabeçalho (1 linha)</option>
         <option value="tsv">TSV — separado por tabulação</option>
+        <option value="espaco_epoch">Separado por espaço + Unix epoch (.sfo)</option>
+        <option value="espaco">Separado por espaço, data em texto</option>
         <option value="csv_sem_cab">CSV sem cabeçalho</option>
         <option value="livre">Personalizado</option>
       </select>
@@ -59,8 +61,12 @@
 
     <div class="grid-3">
       <label>Separador de colunas
-        <input name="separator" value="{{ '\\t' if fcfg and fcfg.separator == '\t' else (fcfg.separator if fcfg else ',') }}">
-        <small><code>\t</code> = tabulação.</small>
+        {% set sep_vis = '\\t' if fcfg and fcfg.separator == '\t'
+                    else ('\\s' if fcfg and fcfg.separator == ' '
+                    else (fcfg.separator if fcfg else ',')) %}
+        <input name="separator" value="{{ sep_vis }}">
+        <small><code>\t</code> = tabulação · <code>\s</code> = espaço (aceita
+          espaços repetidos).</small>
       </label>
       <label>Caractere de aspas
         <input name="quotechar" value="{{ fcfg.quotechar if fcfg else '"' }}">
@@ -174,7 +180,9 @@
       toa5:        { separator: ",",   quotechar: '"', skip_header_lines: "4", header_line: "2", decimal: ".", ts_column: "0", ts_format: TS },
       csv:         { separator: ",",   quotechar: '"', skip_header_lines: "1", header_line: "1", decimal: ".", ts_column: "0", ts_format: TS },
       tsv:         { separator: "\\t", quotechar: '"', skip_header_lines: "1", header_line: "1", decimal: ".", ts_column: "0", ts_format: TS },
-      csv_sem_cab: { separator: ",",   quotechar: '"', skip_header_lines: "0", header_line: "",  decimal: ".", ts_column: "0", ts_format: TS }
+      csv_sem_cab: { separator: ",",   quotechar: '"', skip_header_lines: "0", header_line: "",  decimal: ".", ts_column: "0", ts_format: TS },
+      espaco_epoch:{ separator: "\\s", quotechar: '"', skip_header_lines: "0", header_line: "",  decimal: ".", ts_column: "0", ts_format: "epoch" },
+      espaco:      { separator: "\\s", quotechar: '"', skip_header_lines: "0", header_line: "",  decimal: ".", ts_column: "0", ts_format: TS }
     };
 
     function val(n) { return form.elements[n] ? String(form.elements[n].value).trim() : ""; }
@@ -241,8 +249,15 @@
       /* avisa quem observa os campos finos (seletor de formato + resumo) */
       inp.dispatchEvent(new Event("input", { bubbles: true }));
     }
+    function sincroniza() {          /* alguém (preset) mexeu no ts_format: acompanha */
+      var epoch = ehEpoch();
+      kind.value = epoch ? "epoch" : "texto";
+      box.hidden = epoch;
+      if (!epoch) ultimoTexto = inp.value;
+    }
     kind.addEventListener("change", aplica);
-    if (ehEpoch()) { kind.value = "epoch"; box.hidden = true; } else { ultimoTexto = inp.value; }
+    inp.addEventListener("input", sincroniza);   /* nunca redispara: só lê e ajusta */
+    sincroniza();
   })();
 
   /* Prévia do caminho com data/hora: mostra, com o relógio de AGORA, qual arquivo o
