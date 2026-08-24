@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-24.3"
+RSYNC_HUB_VERSION="2026-08-24.4"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -731,6 +731,27 @@ path_blocker() {   # $1=caminho absoluto → ecoa a pasta bloqueadora (rc 0) ou 
     return 1
 }
 
+MIGR_MARK=".rsync-hub-migracao"   # marca uma migração em andamento no DESTINO
+
+# Processos rodando como a conta de serviço — é exatamente o que faz o `usermod -d`
+# recusar ("user is currently used by process N"). Checar ANTES evita descobrir isso
+# depois de copiar gigabytes.
+hub_user_procs() {
+    ps -u "$HUB_USER" -o pid=,etime=,args= 2>/dev/null | sed 's/^[[:space:]]*//' | grep . || true
+}
+
+# O ponto de montagem que contém o caminho está declarado no /etc/fstab? Um disco em
+# /media montado pelo FSTAB é uma coisa (sobe no boot, permissões estáveis); montado
+# pelo udisks é outra (some ao desplugar, pasta recriada 700). Sem essa distinção o
+# aviso dispara em cima de uma configuração correta — e aviso que grita à toa deixa de
+# ser lido.
+in_fstab() {   # $1=caminho → rc 0 se o ponto de montagem que o contém está no fstab
+    command -v findmnt >/dev/null 2>&1 || return 1
+    if_mp="$(findmnt -n -o TARGET --target "$1" 2>/dev/null | tail -1)"
+    [ -n "$if_mp" ] || return 1
+    findmnt --fstab -n -o TARGET "$if_mp" >/dev/null 2>&1
+}
+
 # Sistema de arquivos do caminho (usa o ancestral existente mais profundo).
 fs_type_of() {   # $1=caminho → ecoa o tipo (ext4, exfat, fuseblk…) ou vazio
     ft_p="$1"
@@ -753,7 +774,15 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
     # absolutos. Mover um pedaço quebraria esses invariantes; mover a BASE mantém
     # o modelo com uma variável só. A raiz antiga NUNCA é apagada por este comando.
     need_root
-    new="${1:-}"; ok="${2:-}"
+    new=""; ok=""; ignora_busy=""; retomando=""
+    for mr_a in "$@"; do
+        case "$mr_a" in
+            --confirmo)        ok="--confirmo" ;;
+            --ignorar-ocupado) ignora_busy=1 ;;
+            -*) die "opção desconhecida: $mr_a (use --confirmo / --ignorar-ocupado)" ;;
+            *)  if [ -z "$new" ]; then new="$mr_a"; else die "argumento extra: $mr_a"; fi ;;
+        esac
+    done
     [ -n "$new" ] || die "uso: rsync-hub move-root <novo_caminho_absoluto> [--confirmo]"
     case "$new" in /*) : ;; *) die "use um caminho ABSOLUTO (começando com /)" ;; esac
     new="$(printf '%s' "$new" | sed 's:/*$::')"
@@ -774,14 +803,24 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
     if [ -e "$new" ]; then
         [ -d "$new" ] || die "o destino existe e não é uma pasta: $new"
         if [ -n "$(ls -A "$new" 2>/dev/null)" ]; then
-            # Um disco novo montado direto no destino traz 'lost+found' (ext4) — o
-            # caminho certo é migrar para uma SUBPASTA do ponto de montagem, não para
-            # o ponto em si; dizer isso aqui evita um segundo erro confuso.
-            if [ "$(ls -A "$new" 2>/dev/null)" = "lost+found" ]; then
-                echo "aviso: $new é um ponto de montagem recém-formatado (só tem lost+found)." >&2
-                echo "       Migre para uma SUBPASTA dele, ex.: $new/carbonara" >&2
+            # Migração interrompida DESTE MESMO hub: retomar é o certo — o rsync
+            # completa só o que falta. Sem isso, uma falha no passo 2 (usermod) deixava
+            # o administrador preso: a retentativa batia em "destino não está vazio" e a
+            # única saída seria apagar à mão o que acabou de ser copiado.
+            if [ -f "$new/$MIGR_MARK" ] && grep -Fqx "origem=$old" "$new/$MIGR_MARK" 2>/dev/null; then
+                retomando=1
+                echo "nota: há uma migração interrompida deste hub em $new — vou RETOMAR"
+                echo "      (o rsync copia só o que falta; nada é recopiado à toa)."
+            else
+                # Um disco novo montado direto no destino traz 'lost+found' (ext4) — o
+                # caminho certo é migrar para uma SUBPASTA do ponto de montagem, não
+                # para o ponto em si; dizer isso evita um segundo erro confuso.
+                if [ "$(ls -A "$new" 2>/dev/null)" = "lost+found" ]; then
+                    echo "aviso: $new é um ponto de montagem recém-formatado (só tem lost+found)." >&2
+                    echo "       Migre para uma SUBPASTA dele, ex.: $new/carbonara" >&2
+                fi
+                die "o destino existe e NÃO está vazio: $new"
             fi
-            die "o destino existe e NÃO está vazio: $new"
         fi
     fi
 
@@ -809,12 +848,41 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
     # volta a escrever no ponto de montagem VAZIO do disco interno.
     case "$new/" in
         /media/*|/run/media/*|/mnt/*)
-            echo "AVISO: $new parece um disco removível/montagem de usuário." >&2
-            echo "       A raiz do hub deve estar SEMPRE montada no mesmo lugar (fstab), senão" >&2
-            echo "       o home da conta '$HUB_USER' some quando o disco não estiver montado." >&2
-            echo "       Recomendado: montar o disco em /srv/carbonara-dados pelo /etc/fstab" >&2
-            echo "       (ext4, dono $HUB_USER) e migrar para lá." >&2 ;;
+            if in_fstab "$new"; then
+                echo "nota: o disco de destino está no /etc/fstab (monta no boot) — ok."
+                echo "      Dois pontos de atenção que sobram nesse caminho:"
+                echo "      1) /media/<usuario> é território do udisks: se ele recriar essa pasta"
+                echo "         (ao montar qualquer outro dispositivo para esse usuário), ela volta a"
+                echo "         700 e a conta '$HUB_USER' perde o acesso — estações fora do ar."
+                echo "         Mais seguro é mover o PONTO DE MONTAGEM para fora de /media,"
+                echo "         trocando só a linha do fstab (ex.: /srv/carbonara-dados)."
+                echo "      2) com 'nofail', um boot sem o disco deixa a raiz VAZIA e as estações"
+                echo "         sem autenticação — 'rsync-hub diagnostico' detecta e avisa."
+            else
+                echo "AVISO: $new parece um disco removível montado pelo usuário (não está no" >&2
+                echo "       /etc/fstab). A raiz do hub é o home da conta '$HUB_USER': se o disco" >&2
+                echo "       não estiver montado, o sshd não acha as chaves e as estações caem." >&2
+                echo "       Declare o disco no /etc/fstab, num caminho fixo (ex.: /srv/carbonara-dados)." >&2
+            fi ;;
     esac
+
+    # A troca do home (usermod) é recusada enquanto existir processo da conta de
+    # serviço — tipicamente uma estação enviando agora. Barra AQUI, antes da cópia.
+    mr_procs="$(hub_user_procs)"
+    if [ -n "$mr_procs" ] && [ -z "$ignora_busy" ]; then
+        echo "erro: há processo(s) rodando como a conta '$HUB_USER' — a troca do home" >&2
+        echo "      (passo 2) seria recusada e a cópia teria sido feita à toa:" >&2
+        printf '%s\n' "$mr_procs" | sed 's/^/        /' >&2
+        echo "      Feche a janela de envio das estações e migre com a recepção pausada:" >&2
+        echo "          sudo rsync-hub pause --todas \"migração da raiz de dados\"" >&2
+        [ -s "$RSYNCD_SECRETS" ] && \
+            echo "          sudo systemctl stop carbonara-rsyncd     # modo usuário+senha" >&2
+        echo "          # espere as sessões em curso terminarem (repita 'rsync-hub status')" >&2
+        echo "          sudo rsync-hub move-root $new" >&2
+        echo "          sudo rsync-hub resume --todas" >&2
+        echo "      Se os processos acima NÃO forem de estações, repita com --ignorar-ocupado." >&2
+        die "migração não iniciada (nada foi copiado)"
+    fi
 
     echo "Mover a raiz do hub:  $old  →  $new"
     echo "  - copia TUDO (incoming/, archive/, stations/, .ssh/, log/…) preservando dono/permissões;"
@@ -851,14 +919,33 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
         die "migração recusada (nada foi migrado)"
     fi
 
-    echo "[1/4] copiando os dados (primeira passada — pode demorar)…"
+    # Marca a migração em andamento: é o que permite RETOMAR se algo falhar no meio.
+    { echo "origem=$old"; echo "inicio=$(date -u +%FT%TZ)"; } > "$new/$MIGR_MARK" 2>/dev/null || true
+
+    if [ -n "$retomando" ]; then
+        echo "[1/4] completando a cópia interrompida…"
+    else
+        echo "[1/4] copiando os dados (primeira passada — pode demorar)…"
+    fi
     rsync -aH "$old"/ "$new"/ || die "cópia falhou — NADA foi alterado; a raiz continua $old"
 
     echo "[2/4] trocando a configuração para a nova raiz…"
     # Ordem deliberada: home primeiro (se falhar — ex.: estação conectada agora —
     # nada mudou e dá para tentar de novo); depois o conf, que redireciona o serve.
-    usermod -d "$new" "$HUB_USER" 2>/dev/null || \
-        die "não consegui mudar o home de '$HUB_USER' (alguma estação enviando agora?) — tente de novo; a raiz continua $old"
+    if ! mr_err="$(usermod -d "$new" "$HUB_USER" 2>&1)"; then
+        [ -n "$mr_err" ] && printf '%s\n' "$mr_err" | sed 's/^/      /' >&2
+        mr_procs="$(hub_user_procs)"
+        if [ -n "$mr_procs" ]; then
+            echo "      processos usando a conta '$HUB_USER' agora:" >&2
+            printf '%s\n' "$mr_procs" | sed 's/^/        /' >&2
+        fi
+        echo "      A CÓPIA JÁ ESTÁ EM $new e fica preservada: repita o mesmo comando com a" >&2
+        echo "      recepção pausada e ele RETOMA daqui (não recopia tudo):" >&2
+        echo "          sudo rsync-hub pause --todas \"migração da raiz de dados\"" >&2
+        echo "          sudo rsync-hub move-root $new" >&2
+        echo "          sudo rsync-hub resume --todas" >&2
+        die "home de '$HUB_USER' não foi alterado — a raiz continua $old"
+    fi
     BASE="$new"; derive_paths; save_conf
     grep -q "BASE=$new" "$CONF_FILE" 2>/dev/null || \
         echo "AVISO: confira $CONF_FILE — deveria conter BASE=$new"
@@ -889,6 +976,8 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
     else
         echo "  (modo senha não está em uso — nada a fazer no rsyncd.)"
     fi
+
+    rm -f "$new/$MIGR_MARK"    # migração concluída: o destino deixa de ser "em andamento"
 
     cat > "$old/RAIZ-MIGRADA.txt" <<EOF
 Esta raiz foi MIGRADA para: $new
@@ -1066,6 +1155,26 @@ diagnose() {
     if [ -n "$dg_use" ] && [ "$dg_use" -ge 95 ] 2>/dev/null; then
         echo "  PROBLEMA: partição em ${dg_use}% — libere espaço ANTES de qualquer outra coisa."
         echo "            (com o disco cheio, gravações de controle falham e nada mais se sustenta)"
+        dg_prob=$((dg_prob + 1))
+    fi
+
+    echo
+    echo "-- 1b. a raiz está montada? --"
+    if command -v findmnt >/dev/null 2>&1; then
+        findmnt -n -o TARGET,SOURCE,FSTYPE,OPTIONS --target "$BASE" 2>/dev/null | sed 's/^/  /' || true
+    else
+        df -PT "$BASE" 2>/dev/null | sed 's/^/  /' || true
+    fi
+    # Raiz em disco separado + boot sem o disco = ponto de montagem VAZIO no disco
+    # interno: o sshd não acha o authorized_keys e TODAS as estações caem. O sintoma
+    # (raiz existe, mas sem incoming/) é indistinguível de "instalação nova" — por
+    # isso o diagnóstico precisa dizer com todas as letras o que provavelmente é.
+    if [ -d "$BASE" ] && [ ! -d "$INCOMING" ]; then
+        echo "  PROBLEMA: $BASE existe mas NÃO contém incoming/."
+        echo "            Se a raiz mora num disco separado, ele provavelmente NÃO está"
+        echo "            montado agora — o sistema subiu com o ponto de montagem vazio."
+        echo "            Monte e confira:   sudo mount -a && ls -la $BASE"
+        echo "            (as estações ficam sem autenticação enquanto isso)"
         dg_prob=$((dg_prob + 1))
     fi
 
