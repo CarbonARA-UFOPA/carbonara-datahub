@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-24.4"
+RSYNC_HUB_VERSION="2026-08-24.5"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -740,6 +740,38 @@ hub_user_procs() {
     ps -u "$HUB_USER" -o pid=,etime=,args= 2>/dev/null | sed 's/^[[:space:]]*//' | grep . || true
 }
 
+# Explica QUEM está segurando a conta e como sair de cada caso — a distinção é o que
+# destrava o administrador. São duas naturezas bem diferentes:
+#   - sessão de ESTAÇÃO (sshd + serve + rrsync + rsync): termina sozinha; a pausa já
+#     impede que outra comece, então é só esperar (ou encerrar — o cliente reenvia);
+#   - restos do GERENCIADOR DE SESSÃO do systemd (systemd --user, sd-pam, pipewire,
+#     dbus-daemon, xdg-*): o pam_systemd os cria a cada login SSH da conta e eles
+#     sobrevivem à sessão. Esperar não resolve — só 'loginctl terminate-user'.
+explica_conta_ocupada() {   # $1 = saída de hub_user_procs
+    eco_p="$1"
+    eco_est="$(printf '%s\n' "$eco_p" | grep -E 'rsync-hub serve|rrsync|rsync --server|sshd:' || true)"
+    eco_ses="$(printf '%s\n' "$eco_p" | grep -E 'systemd --user|\(sd-pam\)|pipewire|dbus-daemon|xdg-' || true)"
+    eco_out="$(printf '%s\n' "$eco_p" | grep -vE 'rsync-hub serve|rrsync|rsync --server|sshd:|systemd --user|\(sd-pam\)|pipewire|dbus-daemon|xdg-' || true)"
+    if [ -n "$eco_est" ]; then
+        echo "      • ESTAÇÃO enviando agora — espere terminar (a pausa já impede novas):" >&2
+        printf '%s\n' "$eco_est" | sed 's/^/          /' >&2
+        echo "        acompanhe com:  ps -u $HUB_USER -o pid,etime,args" >&2
+        echo "        para encerrar já (seguro: o cliente reenvia no próximo ciclo):" >&2
+        echo "            sudo pkill -u $HUB_USER -f 'rsync-hub serve'" >&2
+    fi
+    if [ -n "$eco_ses" ]; then
+        echo "      • restos do GERENCIADOR DE SESSÃO do systemd — NÃO são estações; o" >&2
+        echo "        pam_systemd os cria a cada login SSH da conta e eles seguram o usermod:" >&2
+        printf '%s\n' "$eco_ses" | sed 's/^/          /' >&2
+        echo "        encerre com:    sudo loginctl terminate-user $HUB_USER" >&2
+        echo "        e, para não voltarem sozinhos:  sudo loginctl disable-linger $HUB_USER" >&2
+    fi
+    if [ -n "$eco_out" ]; then
+        echo "      • outros processos da conta:" >&2
+        printf '%s\n' "$eco_out" | sed 's/^/          /' >&2
+    fi
+}
+
 # O ponto de montagem que contém o caminho está declarado no /etc/fstab? Um disco em
 # /media montado pelo FSTAB é uma coisa (sobe no boot, permissões estáveis); montado
 # pelo udisks é outra (some ao desplugar, pasta recriada 700). Sem essa distinção o
@@ -871,16 +903,16 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
     mr_procs="$(hub_user_procs)"
     if [ -n "$mr_procs" ] && [ -z "$ignora_busy" ]; then
         echo "erro: há processo(s) rodando como a conta '$HUB_USER' — a troca do home" >&2
-        echo "      (passo 2) seria recusada e a cópia teria sido feita à toa:" >&2
-        printf '%s\n' "$mr_procs" | sed 's/^/        /' >&2
-        echo "      Feche a janela de envio das estações e migre com a recepção pausada:" >&2
-        echo "          sudo rsync-hub pause --todas \"migração da raiz de dados\"" >&2
-        [ -s "$RSYNCD_SECRETS" ] && \
-            echo "          sudo systemctl stop carbonara-rsyncd     # modo usuário+senha" >&2
-        echo "          # espere as sessões em curso terminarem (repita 'rsync-hub status')" >&2
+        echo "      (passo 2) seria recusada e a cópia teria sido feita à toa." >&2
+        explica_conta_ocupada "$mr_procs"
+        echo "      Com a conta livre (ps sem saída), repita:" >&2
         echo "          sudo rsync-hub move-root $new" >&2
+        echo "      A recepção pausada impede novas conexões durante a migração:" >&2
+        echo "          sudo rsync-hub pause --todas \"migração da raiz de dados\"" >&2
+        echo "          …migração…" >&2
         echo "          sudo rsync-hub resume --todas" >&2
-        echo "      Se os processos acima NÃO forem de estações, repita com --ignorar-ocupado." >&2
+        echo "      Se nada acima puder ser encerrado, repita com --ignorar-ocupado (o" >&2
+        echo "      usermod pode falhar mesmo assim — a cópia então fica retomável)." >&2
         die "migração não iniciada (nada foi copiado)"
     fi
 
@@ -936,8 +968,8 @@ move_root() {   # move-root <novo> [--confirmo] — migra a RAIZ INTEIRA do hub
         [ -n "$mr_err" ] && printf '%s\n' "$mr_err" | sed 's/^/      /' >&2
         mr_procs="$(hub_user_procs)"
         if [ -n "$mr_procs" ]; then
-            echo "      processos usando a conta '$HUB_USER' agora:" >&2
-            printf '%s\n' "$mr_procs" | sed 's/^/        /' >&2
+            echo "      quem está segurando a conta '$HUB_USER' agora:" >&2
+            explica_conta_ocupada "$mr_procs"
         fi
         echo "      A CÓPIA JÁ ESTÁ EM $new e fica preservada: repita o mesmo comando com a" >&2
         echo "      recepção pausada e ele RETOMA daqui (não recopia tudo):" >&2

@@ -459,6 +459,15 @@ computes live station status. Viewing is open; edits require the admin login
   hint on screen. Station deletion (`POST /hub/stations/<id>/purge`) re-validates
   the typed station name server-side (the JS unlock is convenience only) and, on
   success, also drops the station from the dashboard's own config.
+  **Changing the root always rewrites the stations' ABSOLUTE paths**
+  (`hub.rewrite_absolute_paths`, wired into all three entry points: the move-root
+  route, `pages.settings_save`, and `POST /hub/align-root`). A registered absolute
+  `heartbeat_file`/`files[].path`/`connections_log` would otherwise keep reading the
+  old, frozen tree — which looks exactly like "the stations went offline".
+  `/hub/align-root` covers the path the UI does not control: a `move-root` run from
+  the TERMINAL updates `/etc/rsync-hub.conf` but cannot touch the dashboard's config,
+  so the page detects the divergence (`base_mismatch`) and offers one click to adopt
+  the hub's BASE. Do not "simplify" any of these three call sites away.
   Moving the data root lives as a card in *Configurações* → POST `/hub/move-root`
   (`rsync-hub move-root <new> --confirmo`, long timeout); on success the dashboard
   updates its own `data_root`, while compose `.env` remains a manual follow-up (shown

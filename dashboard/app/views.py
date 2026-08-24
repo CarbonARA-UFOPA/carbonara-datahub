@@ -138,11 +138,29 @@ def settings_save():
             flash(e, "error")
         return render_template("settings.html", cfg={**cfg, **updated}, detected=[],
                                hub_info=None), 400
+    # Raízes ANTIGAS (antes da troca): cadastros gravados com caminho ABSOLUTO apontam
+    # para dentro delas e continuariam lendo a árvore velha, congelada — o sintoma é
+    # "as estações ficaram offline depois que mudei a raiz". O mesmo tratamento que a
+    # migração pela dashboard já fazia; aqui vale para a troca manual da raiz (típica
+    # depois de um `rsync-hub move-root` feito pelo terminal).
+    old_bases = []
+    for cand in (str(config_store.data_root(cfg)),
+                 cfg.get("data_root") if str(cfg.get("data_root", "")).startswith("/") else None):
+        if cand and cand not in old_bases:
+            old_bases.append(cand)
+
     cfg["data_root"] = updated["data_root"]
     cfg["connections_log"] = updated["connections_log"]
     cfg["timezone"] = updated["timezone"]
     cfg["stale_fallback_seconds"] = updated["stale_fallback_seconds"]
+    new_abs = str(config_store.data_root(cfg))
+    rewritten = 0
+    if new_abs not in old_bases:
+        rewritten = sum(hub.rewrite_absolute_paths(cfg, ob, new_abs) for ob in old_bases)
     _save(cfg)
+    if rewritten:
+        flash(f"{rewritten} caminho(s) absoluto(s) de cadastros (watchdog, arquivos "
+              "monitorados, log de conexões) foram reapontados para a nova raiz.", "ok")
     if updated.get("data_root_adjusted"):
         flash(f"A raiz apontava para uma pasta incoming/; ajustei para '{updated['data_root']}' "
               "(a raiz do hub é a que CONTÉM incoming/).", "ok")

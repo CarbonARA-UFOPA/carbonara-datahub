@@ -90,6 +90,41 @@ def resume():
     return _pause_redirect(request.form.get("back") or "", target)
 
 
+@hub_pages.post("/align-root")
+@admin_required
+def align_root():
+    """Alinha o ``data_root`` da dashboard com a BASE do rsync-hub instalado.
+
+    Existe para o caminho que a UI não controla: uma migração feita PELO TERMINAL
+    (``rsync-hub move-root``) muda /etc/rsync-hub.conf, mas não tem como mexer no
+    config da dashboard — que continua lendo a raiz antiga, congelada. Faz o mesmo
+    que a migração pela dashboard faria no fim: troca a raiz e reaponta os caminhos
+    absolutos dos cadastros."""
+    from . import config_store
+
+    cfg = _load()
+    conf_base = (hub.read_hub_conf().get("BASE") or "").strip()
+    if not conf_base.startswith("/"):
+        flash("Não consegui ler a BASE em /etc/rsync-hub.conf — ajuste a raiz à mão "
+              "em Configurações.", "error")
+        return redirect(url_for("hub.index"))
+    old_bases = []
+    for cand in (str(config_store.data_root(cfg)),
+                 cfg.get("data_root") if str(cfg.get("data_root", "")).startswith("/") else None):
+        if cand and cand not in old_bases:
+            old_bases.append(cand)
+    if conf_base in old_bases:
+        flash(f"A raiz da dashboard já é {conf_base} — nada a alinhar.", "ok")
+        return redirect(url_for("hub.index"))
+    cfg["data_root"] = conf_base
+    rewritten = sum(hub.rewrite_absolute_paths(cfg, ob, conf_base) for ob in old_bases)
+    current_app.store.save(cfg)
+    flash(f"Raiz da dashboard alinhada com o rsync-hub: {conf_base}."
+          + (f" {rewritten} caminho(s) absoluto(s) de cadastros foram reapontados." if rewritten else ""),
+          "ok")
+    return redirect(url_for("hub.index"))
+
+
 @hub_pages.post("/stations")
 @admin_required
 def station_add():
