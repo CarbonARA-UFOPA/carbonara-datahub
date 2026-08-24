@@ -311,6 +311,25 @@ the SSH key `SYSTEM:R` in addition to the user, otherwise the SYSTEM task couldn
 the key and the SSH send would fail. The send mutex is `Global\CarbonaraStationSend`
 (cross-session, SYSTEM task vs user window) with a local-namespace fallback.
 
+**Resilience invariants for unattended stations** (keep in sync across both clients —
+the operator may not visit the station for months):
+- **Nothing the client writes may grow without bound.** `envios.log` is capped each
+  send (`trim_log` / `Trim-EnvioLog`, ~2000 lines → keep 800). On Linux the trim
+  truncates the SAME inode: cron holds an append-mode fd on that file, so recreating it
+  would send every later cycle to an orphan inode. A client that fills the station's
+  disk is the failure it is supposed to survive.
+- **`sent.state` is written atomically** (temp + rename, both clients). Written in
+  place, a full local disk truncates it and the next cycle re-sends the entire
+  collection — harmless for the DB (idempotent) but hours of link on a slow station.
+- **Failures are classified, not just numbered** (`explain_failure` /
+  `Show-FailureHint`): server paused, credential refused, server disk full, network
+  down. The message must say whether the STATION needs anything — the honest answer is
+  almost always "no, and do NOT redo the wizard or generate a new key", because a
+  re-run wizard at a remote station is what turns a server-side outage into a
+  permanent one.
+- Never add retry loops inside a cycle: the schedule IS the retry, and `flock -n` /
+  the mutex keep cycles from stacking up.
+
 Concurrent-append safety (why reading live datalogger files is fine): clients only READ
 sources — a reader never blocks the datalogger's writes; if the writer holds an
 exclusive lock, it is the *send* that fails (rc 23 → distinct warning, state untouched,

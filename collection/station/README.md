@@ -131,6 +131,25 @@ não estar executando e como corrigir.
 - Em caso de falha, o estado não muda: o próximo ciclo tenta de novo, e o
   `rsync --partial` retoma transferências interrompidas (link instável).
 
+### Se o servidor cair (ou recusar), a estação se vira sozinha
+
+O cliente foi feito para ficar **meses sem visita**:
+
+- **Ele nunca desiste.** Falhou (servidor fora do ar, chave recusada, recepção pausada,
+  disco do servidor cheio)? O estado não avança e o ciclo seguinte tenta tudo de novo —
+  nada é perdido, só adiado. Não é preciso refazer o assistente nem gerar chave nova; na
+  prática, mexer na configuração da estação por causa de um problema do servidor é o que
+  transforma uma parada de um dia numa parada permanente.
+- **Ele diz de quem é o problema.** A mensagem final do ciclo classifica a falha
+  (`servidor pausado` · `credencial recusada — problema no servidor` · `disco do
+  servidor cheio` · `rede/servidor fora do ar`) em vez de só mostrar o código do rsync.
+- **Ele não enche o disco da estação.** O `envios.log` é podado a cada envio (últimas
+  ~800 linhas) e o `sent.state` é gravado de forma atômica — um disco local cheio não o
+  corrompe (o pior caso é reenviar arquivos que o servidor, idempotente, não duplica).
+- **Ele não empilha execuções nem trava.** `flock`/mutex garantem um envio por vez,
+  todo rsync tem `--timeout` e o SSH tem `ConnectTimeout` — um servidor que aceita a
+  conexão e depois emudece não deixa o cliente pendurado até o próximo reboot.
+
 ### E se o datalogger estiver gravando na hora do envio?
 
 **A coleta nunca é prejudicada** — o cliente só **lê** os arquivos, e leitura não

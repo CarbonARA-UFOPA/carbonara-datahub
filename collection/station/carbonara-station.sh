@@ -42,6 +42,11 @@ CONF_DIR="${CARBONARA_STATION_HOME:-$HOME/.config/carbonara-station}"
 CONF="$CONF_DIR/config"
 FOLDERS="$CONF_DIR/folders"      # uma pasta por linha: PATH<TAB>LABEL<TAB>FEXC<TAB>DEXC
 LOGF="$CONF_DIR/envios.log"
+# Teto do log: o cron redireciona a saída de CADA ciclo para cá, então sem poda o
+# arquivo cresce para sempre — numa estação que ninguém visita, isso um dia enche o
+# disco (e disco cheio é justamente o que quebra a coleta). Podado a cada envio.
+LOG_MAX_LINES="${CARBONARA_LOG_MAX:-2000}"   # acima disto, corta
+LOG_KEEP_LINES="${CARBONARA_LOG_KEEP:-800}"  # mantendo as últimas
 STATE="$CONF_DIR/sent.state"     # o que já foi enviado: rótulo/caminho<TAB>tamanho:mtime
 CRON_TAG="# carbonara-station send"
 HUB_DEFAULT_HOST="200.139.13.53" # servidor central do projeto (padrão sugerido no setup)
@@ -487,6 +492,57 @@ test_conn() {
     fi
 }
 
+# Poda o log MANTENDO O MESMO ARQUIVO (inode): o cron mantém aberto um descritor em modo
+# append apontando para ele; recriar o arquivo faria os ciclos seguintes gravarem num
+# inode órfão (log "vivo" que ninguém vê). Truncar in place preserva o append.
+trim_log() {
+    [ -f "$LOGF" ] || return 0
+    tl_n="$(wc -l < "$LOGF" 2>/dev/null | tr -d ' ')" || return 0
+    [ -n "$tl_n" ] || return 0
+    [ "$tl_n" -gt "$LOG_MAX_LINES" ] 2>/dev/null || return 0
+    tl_tmp="$(mktemp)" || return 0
+    if tail -n "$LOG_KEEP_LINES" "$LOGF" > "$tl_tmp" 2>/dev/null; then
+        cat "$tl_tmp" > "$LOGF" 2>/dev/null || true
+    fi
+    rm -f "$tl_tmp"
+    return 0
+}
+
+# Traduz a falha do rsync em orientação para quem está NA ESTAÇÃO. O ponto é responder
+# "preciso mexer em alguma coisa aqui?" — quase sempre NÃO: o cliente reenvia sozinho
+# quando o servidor voltar, e mexer no setup (gerar chave nova, refazer o assistente) só
+# atrapalha. Por isso as causas de SERVIDOR são ditas com todas as letras.
+explain_failure() {   # $1=arquivo com a saída de erro do rsync  $2=pior rc
+    ef="$1"; ef_rc="$2"
+    if [ -s "$ef" ] && grep -q 'PAUSADA' "$ef" 2>/dev/null; then
+        echo "→ o SERVIDOR está com a recepção PAUSADA pelo administrador (manutenção)." >&2
+        echo "  Nada a fazer aqui: os arquivos ficam guardados e sobem sozinhos quando ele retomar." >&2
+        return 0
+    fi
+    if [ -s "$ef" ] && grep -qiE 'permission denied \(publickey|auth failed|access denied' "$ef" 2>/dev/null; then
+        echo "→ o servidor NÃO aceitou a credencial desta estação." >&2
+        echo "  A causa está NO SERVIDOR (a configuração daqui continua válida)." >&2
+        echo "  Avise o administrador: no servidor, 'sudo rsync-hub diagnostico' aponta e conserta." >&2
+        echo "  NÃO refaça o assistente nem gere chave nova — o envio recomeça sozinho." >&2
+        return 0
+    fi
+    if [ -s "$ef" ] && grep -qi 'no space left' "$ef" 2>/dev/null; then
+        echo "→ sem espaço em disco NO SERVIDOR — avise o administrador (os dados ficam aqui)." >&2
+        return 0
+    fi
+    if [ -s "$ef" ] && grep -qiE 'connection refused|connection timed out|no route to host|could not resolve|network is unreachable|connection unexpectedly closed' "$ef" 2>/dev/null; then
+        echo "→ o servidor não respondeu (rede ou servidor fora do ar) — o próximo ciclo tenta de novo." >&2
+        return 0
+    fi
+    case "$ef_rc" in
+        23) echo "aviso: parte dos arquivos não pôde ser lida (em uso pelo datalogger?)." >&2
+            echo "       o que falhou não foi registrado; será tentado de novo no próximo ciclo." >&2 ;;
+        24) echo "aviso: um arquivo sumiu durante a transferência — o próximo ciclo se ajusta sozinho." >&2 ;;
+        *)  echo "falha em parte do envio (rsync rc=$ef_rc) — o estado não mudou p/ o que falhou; nova tentativa no próximo ciclo." >&2 ;;
+    esac
+    return 0
+}
+
 # --- Envio ---------------------------------------------------------------------------
 # Sincronização pura: NADA é movido ou apagado das pastas locais. A cada ciclo TODAS as
 # pastas são varridas de novo (novos arquivos entram automaticamente). O que já foi
@@ -502,6 +558,7 @@ send() {
         return 0
     fi
     [ -f "$STATE" ] || : > "$STATE"
+    trim_log
     # Carimbo do ciclo: o 'status' compara com o intervalo agendado para denunciar um
     # agendamento que existe mas não está executando (script movido, cron parado, …).
     date +%s > "$CONF_DIR/.last-send" 2>/dev/null || true
@@ -511,6 +568,7 @@ send() {
         echo "aviso: não consegui enviar o sinal de vida ao servidor (sem rede?)." >&2
     fi
     scan="$(mktemp)"; all="$(mktemp)"; tosend="$(mktemp)"; sentok="$(mktemp)"
+    allerr="$(mktemp)"
     scan_all > "$scan"                     # rótulo/caminho \t sig \t assentado
     cut -f1,2 "$scan" > "$all"             # inventário atual (chave \t sig)
     # A enviar: assentados cuja assinatura difere do estado (novos ou alterados).
@@ -521,7 +579,7 @@ send() {
     n="$(wc -l < "$tosend" | tr -d ' ')"
     if [ "$n" = 0 ]; then
         echo "nada novo a sincronizar (arquivos com menos de $MIN_AGE min não contam)."
-        rm -f "$scan" "$all" "$tosend" "$sentok"; return 0
+        rm -f "$scan" "$all" "$tosend" "$sentok" "$allerr"; return 0
     fi
     echo "sincronizando $n arquivo(s) novo(s)/alterado(s) com ${HUB_HOST}…"
     worst=0
@@ -539,6 +597,9 @@ send() {
         dest="$(rsync_dest)$label/"
         echo "  [$label] $cnt arquivo(s) de ${path}…"
         rc=0
+        # A saída de ERRO é copiada para $errf (e mostrada na hora) só para poder
+        # CLASSIFICAR a falha no fim do ciclo — ver explain_failure.
+        errf="$(mktemp)"
         # -rltz (sem -p/-o/-g) + --chmod: os arquivos chegam 644/755 no servidor —
         # legíveis pelos usuários locais do host, independentemente das permissões aqui.
         # --partial-dir: uma transferência cancelada/interrompida deixa o pedaço num
@@ -547,11 +608,13 @@ send() {
         if [ "$AUTH_MODE" = senha ]; then
             ( cd "$path" && RSYNC_PASSWORD="$PASSWORD" rsync -rltz --chmod=D755,F644 \
                 --partial-dir=.rsync-parcial --timeout=120 --files-from="$lista" \
-                ./ "$dest" ) || rc=$?
+                ./ "$dest" ) 2>"$errf" || rc=$?
         else
             ( cd "$path" && rsync -rltz --chmod=D755,F644 --partial-dir=.rsync-parcial \
-                --timeout=120 --files-from="$lista" -e "$(ssh_cmd)" ./ "$dest" ) || rc=$?
+                --timeout=120 --files-from="$lista" -e "$(ssh_cmd)" ./ "$dest" ) 2>"$errf" || rc=$?
         fi
+        if [ -s "$errf" ]; then cat "$errf" >&2; cat "$errf" >> "$allerr"; fi
+        rm -f "$errf"
         if [ "$rc" = 0 ]; then
             # anota como enviados (chave \t sig) os arquivos deste rótulo
             awk -F'\t' -v p="$label/" 'substr($1,1,length(p))==p' "$tosend" >> "$sentok"
@@ -564,10 +627,20 @@ send() {
     # Atualiza o estado: remove as chaves reenviadas, junta as recém-enviadas e poda
     # para só conter arquivos que ainda existem localmente. As pastas locais ficam intocadas.
     if [ -s "$sentok" ]; then
-        awk -F'\t' 'NR==FNR { u[$1]=1; next } !($1 in u)' "$sentok" "$STATE" > "$STATE.tmp" || true
-        cat "$sentok" >> "$STATE.tmp"
-        awk -F'\t' 'NR==FNR { ex[$1]=1; next } ($1 in ex)' "$all" "$STATE.tmp" > "$STATE"
-        rm -f "$STATE.tmp"
+        # Gravação ATÔMICA do estado: monta o conteúdo novo em temporários e só troca se
+        # tudo couber. Escrevendo direto em $STATE, um disco cheio AQUI o truncaria e o
+        # ciclo seguinte reenviaria a coleção inteira (o servidor não duplica, mas a
+        # estação gastaria horas de link à toa).
+        if { awk -F'\t' 'NR==FNR { u[$1]=1; next } !($1 in u)' "$sentok" "$STATE"
+             cat "$sentok"; } > "$STATE.novo" 2>/dev/null \
+           && awk -F'\t' 'NR==FNR { ex[$1]=1; next } ($1 in ex)' "$all" "$STATE.novo" > "$STATE.novo2" 2>/dev/null \
+           && mv "$STATE.novo2" "$STATE"; then
+            rm -f "$STATE.novo"
+        else
+            rm -f "$STATE.novo" "$STATE.novo2"
+            echo "aviso: não consegui atualizar o registro de enviados (disco cheio aqui?)." >&2
+            echo "       os arquivos FORAM enviados; o próximo ciclo pode reenviá-los (o servidor não duplica)." >&2
+        fi
         ok_n="$(wc -l < "$sentok" | tr -d ' ')"
         echo "$(date -u +%FT%TZ) OK $ok_n arquivo(s) sincronizados" >> "$LOGF"
         echo "ok: $ok_n arquivo(s) sincronizados (nada foi movido ou apagado localmente)."
@@ -577,14 +650,9 @@ send() {
     fi
     if [ "$worst" != 0 ]; then
         echo "$(date -u +%FT%TZ) FALHA rc=$worst (parte dos arquivos pendente)" >> "$LOGF"
-        case "$worst" in
-            23) echo "aviso: parte dos arquivos não pôde ser lida (em uso pelo datalogger?)." >&2
-                echo "       o que falhou não foi registrado; será tentado de novo no próximo ciclo." >&2 ;;
-            24) echo "aviso: um arquivo sumiu durante a transferência — o próximo ciclo se ajusta sozinho." >&2 ;;
-            *)  echo "falha em parte do envio (rsync rc=$worst) — o estado não mudou p/ o que falhou; nova tentativa no próximo ciclo." >&2 ;;
-        esac
+        explain_failure "$allerr" "$worst"
     fi
-    rm -f "$scan" "$all" "$tosend" "$sentok"
+    rm -f "$scan" "$all" "$tosend" "$sentok" "$allerr"
     return "$worst"
 }
 

@@ -112,6 +112,53 @@ function Write-EnvioLog([string]$Msg) {
     Add-Content -Path $LogFile -Value "$ts $Msg"
 }
 
+# Teto do log: sem poda o envios.log cresce para sempre — numa estação que ninguém
+# visita, isso um dia enche o disco (e disco cheio é o que quebra a coleta).
+function Trim-EnvioLog {
+    try {
+        if (-not (Test-Path -LiteralPath $LogFile)) { return }
+        $max = 2000; $keep = 800
+        $lines = @(Get-Content -LiteralPath $LogFile -ErrorAction Stop)
+        if ($lines.Count -le $max) { return }
+        $tail = @($lines[($lines.Count - $keep)..($lines.Count - 1)])
+        [IO.File]::WriteAllLines($LogFile, [string[]]$tail,
+                                 (New-Object System.Text.UTF8Encoding($false)))
+    } catch { }   # log é conveniência: nunca pode derrubar um ciclo de envio
+}
+
+# Traduz a falha do rsync em orientação para quem está NA ESTAÇÃO: o que importa é
+# responder "preciso mexer em alguma coisa aqui?" — quase sempre NÃO, e refazer o
+# assistente ou gerar chave nova só atrapalha. Espelha explain_failure do cliente Linux.
+function Show-FailureHint([string[]]$Out, [int]$Code) {
+    $txt = ($Out -join "`n")
+    if ($txt -match 'PAUSADA') {
+        Write-Host '-> o SERVIDOR está com a recepção PAUSADA pelo administrador (manutenção).'
+        Write-Host '   Nada a fazer aqui: os arquivos ficam guardados e sobem sozinhos quando ele retomar.'
+        return
+    }
+    if ($txt -match '(?i)permission denied \(publickey|auth failed|access denied') {
+        Write-Host '-> o servidor NÃO aceitou a credencial desta estação.'
+        Write-Host '   A causa está NO SERVIDOR (a configuração daqui continua válida).'
+        Write-Host "   Avise o administrador: no servidor, 'sudo rsync-hub diagnostico' aponta e conserta."
+        Write-Host '   NÃO refaça o assistente nem gere chave nova — o envio recomeça sozinho.'
+        return
+    }
+    if ($txt -match '(?i)no space left') {
+        Write-Host '-> sem espaço em disco NO SERVIDOR — avise o administrador (os dados ficam aqui).'
+        return
+    }
+    if ($txt -match '(?i)connection refused|timed out|no route to host|could not resolve|network is unreachable|connection unexpectedly closed') {
+        Write-Host '-> o servidor não respondeu (rede ou servidor fora do ar) — o próximo ciclo tenta de novo.'
+        return
+    }
+    switch ($Code) {
+        23 { Write-Host 'aviso: parte dos arquivos não pôde ser lida (em uso pelo datalogger?).'
+             Write-Host '       o que falhou não foi registrado; será tentado de novo no próximo ciclo.' }
+        24 { Write-Host 'aviso: um arquivo sumiu durante a transferência — o próximo ciclo se ajusta sozinho.' }
+        default { Write-Host ("falha em parte do envio (rsync rc={0}) — nova tentativa no próximo ciclo." -f $Code) }
+    }
+}
+
 function Test-IsAdmin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole(
@@ -513,7 +560,19 @@ function Get-SentState {
 function Save-SentState($State) {
     New-Item -ItemType Directory -Force -Path $ConfDir | Out-Null
     $lines = $State.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)`t$($_.Value)" }
-    [IO.File]::WriteAllLines($StateFile, [string[]]@($lines), (New-Object System.Text.UTF8Encoding($false)))
+    # Gravação ATÔMICA: escreve num temporário e só então substitui. Escrevendo direto
+    # no sent.state, um disco cheio AQUI o deixaria truncado e o ciclo seguinte
+    # reenviaria a coleção inteira (o servidor não duplica, mas seriam horas de link).
+    $tmp = "$StateFile.novo"
+    try {
+        [IO.File]::WriteAllLines($tmp, [string[]]@($lines),
+                                 (New-Object System.Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $tmp -Destination $StateFile -Force
+    } catch {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        Write-Host 'aviso: não consegui atualizar o registro de enviados (disco cheio aqui?).'
+        Write-Host '       os arquivos FORAM enviados; o próximo ciclo pode reenviá-los (o servidor não duplica).'
+    }
 }
 
 # --- Configuração guiada -----------------------------------------------------------
@@ -777,6 +836,7 @@ function Invoke-Send {
         if (-not (Send-Heartbeat $cfg)) {
             Write-Host 'aviso: não consegui enviar o sinal de vida ao servidor (sem rede?).'
         }
+        Trim-EnvioLog
         $state  = Get-SentState
         $all    = @(Get-LocalFiles $cfg)
         $tosend = @($all | Where-Object { $_.Settled -and $state[$_.Key] -ne $_.Sig })
@@ -789,6 +849,7 @@ function Invoke-Send {
         $list = Join-Path $ConfDir 'files-from.txt'
         $worst = 0
         $sent = @{}
+        $errAll = @()   # saída dos envios que falharam — só para classificar no fim
         # Um envio (e um files-from) por pasta — cada pasta vai para o seu sub-diretório
         # (rótulo) no servidor, o que evita colisão de nomes entre pastas diferentes.
         foreach ($fold in @(Get-Folders $cfg)) {
@@ -817,6 +878,7 @@ function Invoke-Send {
                 foreach ($it in $items) { $sent[$it.Key] = $it.Sig }
             } else {
                 if ($r.Code -gt $worst) { $worst = $r.Code }
+                $errAll += @($r.Out)
                 Write-Host ("  [{0}] falha (rsync rc={1}) — será tentado de novo no próximo ciclo." -f $label, $r.Code)
             }
         }
@@ -834,12 +896,7 @@ function Invoke-Send {
         }
         if ($worst -ne 0) {
             Write-EnvioLog ("FALHA rc={0} (parte dos arquivos pendente)" -f $worst)
-            switch ($worst) {
-                23 { Write-Host 'aviso: parte dos arquivos não pôde ser lida (em uso pelo datalogger?).'
-                     Write-Host '       o que falhou não foi registrado; será tentado de novo no próximo ciclo.' }
-                24 { Write-Host 'aviso: um arquivo sumiu durante a transferência — o próximo ciclo se ajusta sozinho.' }
-                default { Write-Host ("falha em parte do envio (rsync rc={0}) — nova tentativa no próximo ciclo." -f $worst) }
-            }
+            Show-FailureHint $errAll $worst
         }
     } finally {
         $mtx.ReleaseMutex() | Out-Null
