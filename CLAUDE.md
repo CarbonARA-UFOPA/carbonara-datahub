@@ -453,6 +453,14 @@ computes live station status. Viewing is open; edits require the admin login
   alignment, never empty columns, and a phantom column would silently shift every
   index-mapped variable after it. The form writes/reads it as `\s` (a lone space in a
   text input is invisible and gets stripped); `\t` behaves the same way.
+- **One display convention for data timestamps**: `series.TS_DISPLAY`
+  (`%d/%m/%Y %H:%M`) — full date, hour and minute, never seconds. It drives the chart
+  axis, `last_reading`, the compare page's labels (built in JS, keep them in sync) and
+  the parse preview. A file's timestamp is NEVER shown raw: the preview prints the raw
+  cell (that is the point of a parse check) with the converted value underneath, or
+  "não convertido" when the format doesn't match. Station liveness (`status._fmt_signal`)
+  deliberately keeps seconds — it answers "is it sending right now?", not "when was this
+  measured".
 - **Timestamp column**: `timestamp.format` is a strftime pattern OR the literal
   `epoch` (any of `config_store.EPOCH_MARKERS`, normalized to `epoch` on save), meaning
   Unix seconds — fraction preserved (`1787542188.433029` → microseconds) and ms/µs/ns

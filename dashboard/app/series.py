@@ -31,6 +31,12 @@ def _column_index(spec, header: list[str] | None, row_len: int) -> int | None:
     return cleaned.index(spec) if spec in cleaned else None
 
 
+# Formato ÚNICO de exibição de carimbo de tempo na dashboard: data completa + hora e
+# minuto, sem segundos. Vale para o eixo dos gráficos, a "última leitura" e o preview —
+# um carimbo de arquivo nunca é mostrado cru (epoch ou não), sempre convertido.
+TS_DISPLAY = "%d/%m/%Y %H:%M"
+
+
 def parse_epoch(raw: str) -> datetime | None:
     """Unix epoch → datetime (fuso do processo, como os carimbos de texto dos arquivos).
 
@@ -138,7 +144,7 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         dt = parse_timestamp(raw, ts_format)
         if dt is not None:
             dts.append(dt)
-            timestamps.append(dt.strftime("%d/%m %H:%M"))
+            timestamps.append(dt.strftime(TS_DISPLAY))
         else:
             dts.append(None)
             timestamps.append(raw)
@@ -186,8 +192,8 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         })
 
     # Última leitura em formato COMPLETO (com ano) para o tooltip do mapa — o eixo do
-    # gráfico usa '%d/%m %H:%M' (sem ano, para não poluir), mas o "última leitura" precisa
-    # do ano. Pega o timestamp mais novo que casou o formato.
+    # Mesmo formato do eixo (TS_DISPLAY): data completa, hora e minuto, sem segundos.
+    # Pega o timestamp mais novo que casou o formato.
     last_dt = next((d for d in reversed(dts) if d is not None), None)
     keep = _decimate(len(rows))
     if pinfo.get("fallback"):
@@ -201,7 +207,7 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         "path_info": pinfo,
         "rows_read": len(rows),
         "decimated": len(keep) < len(rows),
-        "last_reading": last_dt.strftime("%d/%m/%Y %H:%M") if last_dt else None,
+        "last_reading": last_dt.strftime(TS_DISPLAY) if last_dt else None,
         "timestamps": [timestamps[i] for i in keep],
         # Instante real de cada ponto (epoch, s) — permite ao cliente juntar séries de
         # ARQUIVOS DIFERENTES num eixo de tempo comum (tela Comparar). None = linha
@@ -276,10 +282,23 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
                      f"{pinfo['fallback']})")
         diagnostics.insert(0, note)
 
+    # Carimbo convertido por linha: o preview mostra o valor CRU (é a conferência do
+    # parse) e, embaixo, a data/hora que a dashboard vai usar. Sem isso um epoch fica
+    # como um número grande e não dá para saber se a leitura está certa.
+    ts_display: list[str | None] = []
+    if ts_idx is not None:
+        ts_fmt = (entry.get("timestamp") or {}).get("format")
+        for r in out_rows:
+            raw = r[ts_idx] if ts_idx < len(r) else ""
+            dt = parse_timestamp(raw, ts_fmt)
+            ts_display.append(dt.strftime(TS_DISPLAY) if dt else None)
+
     return {
         "path": str(path),
         "path_info": pinfo,
         "header": header,
         "rows": out_rows,
+        "ts_index": ts_idx,
+        "ts_display": ts_display,
         "diagnostics": diagnostics,
     }

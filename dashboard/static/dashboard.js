@@ -222,7 +222,9 @@ function initCompare() {
     const p2 = (n) => String(n).padStart(2, "0");
     const labels = epochs.map((e) => {
       const d = new Date(e * 1000);
-      return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+      /* mesma convenção do resto da dashboard: data completa, hora e minuto, sem segundos */
+      return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} ` +
+             `${p2(d.getHours())}:${p2(d.getMinutes())}`;
     });
     const datasets = series.map((s) => ({
       label: s.fullLabel,
@@ -862,8 +864,21 @@ function initFileForm() {
         html += `<th${cellCls(c)}>${c}${name}${labPart}</th>`;
       }
       html += "</tr></thead><tbody>";
-      rows.forEach((r) => {
-        html += "<tr>" + Array.from({ length: ncols }, (_, c) => `<td${cellCls(c)}>${esc(r[c] ?? "")}</td>`).join("") + "</tr>";
+      /* Na coluna do carimbo, mostra o valor cru (conferência do parse) e embaixo a
+         data/hora convertida — é assim que se vê num relance se um epoch virou a data
+         certa, ou se o formato não casou. */
+      const tsIndex = (data.ts_index === null || data.ts_index === undefined) ? -1 : data.ts_index;
+      const tsDisp = data.ts_display || [];
+      rows.forEach((r, ri) => {
+        html += "<tr>" + Array.from({ length: ncols }, (_, c) => {
+          let v = esc(r[c] ?? "");
+          if (c === tsIndex) {
+            v += tsDisp[ri]
+              ? `<br><span class='col-label'>${esc(tsDisp[ri])}</span>`
+              : "<br><span class='warn'>não convertido</span>";
+          }
+          return `<td${cellCls(c)}>${v}</td>`;
+        }).join("") + "</tr>";
       });
       html += "</tbody></table></div>";
       area.innerHTML = html;
