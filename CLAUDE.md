@@ -464,6 +464,10 @@ computes live station status. Viewing is open; edits require the admin login
   route, `pages.settings_save`, and `POST /hub/align-root`). A registered absolute
   `heartbeat_file`/`files[].path`/`connections_log` would otherwise keep reading the
   old, frozen tree — which looks exactly like "the stations went offline".
+  Page order on `/hub` is deliberate (user request): stations list → authorize a new
+  station → global reception pause, with a discreet base/version line last. There is
+  **no general "browse the areas" card** — it duplicated the per-station *arquivos* /
+  *gerenciar* buttons; `hub.files` stays reachable from those, so don't re-add it.
   Anything that acts on the ROOT itself (edit `data_root`, migrate it, align it with
   the hub) lives in *Configurações*, never in *Coleta* — Coleta is for stations, their
   credentials and the file browser. The `/hub` page only shows a one-line pointer when

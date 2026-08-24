@@ -8,8 +8,9 @@
 
 <section class="card help-card">
   Esta tela administra a <strong>coleta</strong> (o rsync-hub) pela dashboard:
-  autorizar e revogar estações, ver/baixar credenciais e navegar pelos arquivos
-  recebidos. As operações de escrita executam o próprio <code>rsync-hub</code>
+  autorizar e revogar estações, ver/baixar credenciais e navegar pelos arquivos de
+  cada estação (botão <em>arquivos</em> na lista, ou <em>gerenciar</em> para
+  recebidos/arquivados/quarentena). As operações de escrita executam o próprio <code>rsync-hub</code>
   no host — a lógica de chaves continua num lugar só.
 </section>
 
@@ -48,79 +49,6 @@
   <a href="{{ url_for('pages.settings') }}">Configurações</a>.
 </div>
 {% endif %}
-
-<section class="card pause-card {{ 'pause-card-on' if pause.all }}">
-  <div class="page-head">
-    <h2>Recepção de dados</h2>
-    <span class="pause-state">
-      {% if pause.all %}<span class="dot dot-paused"></span> PAUSADA (todas as estações)
-      {% else %}<span class="dot dot-online"></span> Ativa{% endif %}
-    </span>
-  </div>
-  <p class="meta">Pausar suspende a <strong>chegada</strong> de arquivos ao servidor sem
-    revogar credenciais e sem apagar nada: as estações continuam autorizadas, tentam
-    enviar, recebem uma recusa e <strong>reenviam tudo quando a recepção voltar</strong>.
-    Vale para os dois modos de autenticação (chave SSH e usuário+senha). Útil em
-    manutenção do servidor (disco cheio, migração da raiz de dados, banco parado).</p>
-
-  {% if info.can_write and not info.can_pause %}
-    <div class="flash flash-error">
-      A regra do <code>sudo</code> deste servidor é anterior à pausa e não libera
-      <code>pause</code>/<code>resume</code>. Atualize-a rodando no servidor:
-      <pre class="mono">sudo dashboard/setup-hub-access.sh &lt;usuario-que-roda-a-dashboard&gt;</pre>
-    </div>
-  {% endif %}
-
-  {% if pause.all %}
-    <p>Pausada {% if pause.all.since_display %}em <strong>{{ pause.all.since_display }}</strong>{% endif %}
-      {%- if pause.all.by %} por <strong>{{ pause.all.by }}</strong>{% endif %}
-      {%- if pause.all.reason %} · motivo: <em>{{ pause.all.reason }}</em>{% endif %}.</p>
-    <form method="post" action="{{ url_for('hub.resume') }}">
-      <input type="hidden" name="target" value="todas">
-      <input type="hidden" name="back" value="hub">
-      <button class="btn btn-primary" type="submit"
-              {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
-        ▶ Retomar a recepção de todas as estações</button>
-    </form>
-  {% else %}
-    <form method="post" class="form form-inline" action="{{ url_for('hub.pause') }}"
-          onsubmit="return confirm('Pausar a recepção de TODAS as estações? Elas continuam autorizadas e reenviam os arquivos quando você retomar.');">
-      <input type="hidden" name="target" value="todas">
-      <input type="hidden" name="back" value="hub">
-      <label>Motivo (opcional — aparece para todo mundo na dashboard)
-        <input name="reason" autocomplete="off" placeholder="ex.: manutenção do servidor"
-               {% if not info.can_write %}disabled{% endif %}>
-      </label>
-      <button class="btn btn-danger" type="submit"
-              {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
-        ⏸ Pausar a recepção de todas as estações</button>
-    </form>
-  {% endif %}
-
-  {% if pause.paused_ids %}
-    <p class="meta">Pausas individuais em vigor (independentes da global):
-      {% for sid in pause.paused_ids %}<code>{{ sid }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-      — retome cada uma na linha da estação abaixo.</p>
-  {% endif %}
-</section>
-
-<section class="card">
-  <div class="page-head"><h2>Navegar pelos arquivos</h2></div>
-  <p>
-    {% for slug, (sub, label) in areas.items() %}
-      <a class="btn" href="{{ url_for('hub.files', area=slug) }}">{{ label }}</a>
-    {% endfor %}
-  </p>
-  <p class="meta">Base do hub: <code>{{ info.base }}</code>
-    {% if info.conf_base %} · <code>/etc/rsync-hub.conf</code>: <code>{{ info.conf_base }}</code>
-    {% else %} · <span class="warn">não consegui ler <code>/etc/rsync-hub.conf</code></span>
-      — sem ele não dá para conferir se a dashboard está lendo a mesma raiz que o
-      rsync-hub usa (confira as permissões: deve ser 644)
-    {% endif %}
-    {% if info.version %} · rsync-hub <code>{{ info.version }}</code>{% endif %}
-    {% if info.bin %} · executável: <code>{{ info.bin }}</code>{% endif %}
-  </p>
-</section>
 
 <section class="card">
   <div class="page-head"><h2>Estações autorizadas no hub</h2></div>
@@ -224,6 +152,66 @@
     </div>
   </form>
 </section>
+
+<section class="card pause-card {{ 'pause-card-on' if pause.all }}">
+  <div class="page-head">
+    <h2>Recepção de dados</h2>
+    <span class="pause-state">
+      {% if pause.all %}<span class="dot dot-paused"></span> PAUSADA (todas as estações)
+      {% else %}<span class="dot dot-online"></span> Ativa{% endif %}
+    </span>
+  </div>
+  <p class="meta">Pausar suspende a <strong>chegada</strong> de arquivos ao servidor sem
+    revogar credenciais e sem apagar nada: as estações continuam autorizadas, tentam
+    enviar, recebem uma recusa e <strong>reenviam tudo quando a recepção voltar</strong>.
+    Vale para os dois modos de autenticação (chave SSH e usuário+senha). Útil em
+    manutenção do servidor (disco cheio, migração da raiz de dados, banco parado).</p>
+
+  {% if info.can_write and not info.can_pause %}
+    <div class="flash flash-error">
+      A regra do <code>sudo</code> deste servidor é anterior à pausa e não libera
+      <code>pause</code>/<code>resume</code>. Atualize-a rodando no servidor:
+      <pre class="mono">sudo dashboard/setup-hub-access.sh &lt;usuario-que-roda-a-dashboard&gt;</pre>
+    </div>
+  {% endif %}
+
+  {% if pause.all %}
+    <p>Pausada {% if pause.all.since_display %}em <strong>{{ pause.all.since_display }}</strong>{% endif %}
+      {%- if pause.all.by %} por <strong>{{ pause.all.by }}</strong>{% endif %}
+      {%- if pause.all.reason %} · motivo: <em>{{ pause.all.reason }}</em>{% endif %}.</p>
+    <form method="post" action="{{ url_for('hub.resume') }}">
+      <input type="hidden" name="target" value="todas">
+      <input type="hidden" name="back" value="hub">
+      <button class="btn btn-primary" type="submit"
+              {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
+        ▶ Retomar a recepção de todas as estações</button>
+    </form>
+  {% else %}
+    <form method="post" class="form form-inline" action="{{ url_for('hub.pause') }}"
+          onsubmit="return confirm('Pausar a recepção de TODAS as estações? Elas continuam autorizadas e reenviam os arquivos quando você retomar.');">
+      <input type="hidden" name="target" value="todas">
+      <input type="hidden" name="back" value="hub">
+      <label>Motivo (opcional — aparece para todo mundo na dashboard)
+        <input name="reason" autocomplete="off" placeholder="ex.: manutenção do servidor"
+               {% if not info.can_write %}disabled{% endif %}>
+      </label>
+      <button class="btn btn-danger" type="submit"
+              {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
+        ⏸ Pausar a recepção de todas as estações</button>
+    </form>
+  {% endif %}
+
+  {% if pause.paused_ids %}
+    <p class="meta">Pausas individuais em vigor (independentes da global):
+      {% for sid in pause.paused_ids %}<code>{{ sid }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+      — retome cada uma na linha da estação abaixo.</p>
+  {% endif %}
+</section>
+
+<p class="meta">Base do hub: <code>{{ info.base }}</code>
+  {% if info.version %} · rsync-hub <code>{{ info.version }}</code>{% endif %}
+  {% if info.bin %} · executável: <code>{{ info.bin }}</code>{% endif %}
+</p>
 
 <script>
   (function () {
