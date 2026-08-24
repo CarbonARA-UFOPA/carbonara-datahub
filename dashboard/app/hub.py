@@ -42,11 +42,26 @@ AREAS = {
 MAX_LIST_ENTRIES = 2000  # teto de entradas por listagem (pastas gigantes de archive)
 
 
+def dashboard_user() -> str:
+    """Usuário REAL do processo — é ELE que precisa estar na regra do sudoers.
+
+    Deliberadamente não confia no ``$USER`` do ambiente: quando a dashboard sobe por
+    systemd (``dashboardctl servico``) ou por ``sudo -u``, o ambiente pode carregar o
+    usuário da sessão que disparou, e não o dono do processo. Uma regra instalada para
+    o nome errado é indistinguível de "sudo não configurado" — e foi assim que a tela
+    já sugeriu o nome errado ao administrador."""
+    try:
+        import pwd
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except Exception:  # noqa: BLE001 — sem pwd (não-POSIX) cai no ambiente
+        return os.environ.get("USER") or "usuario-da-dashboard"
+
+
 def sudoers_hint(bin_path: str | None) -> str:
     """Regra sudoers que o gerenciamento precisa (a mesma que o script
     dashboard/setup-hub-access.sh instala em /etc/sudoers.d/)."""
     b = bin_path or "/usr/local/bin/rsync-hub"
-    user = os.environ.get("USER") or "usuario-da-dashboard"
+    user = dashboard_user()
     return (f"{user} ALL=(root) NOPASSWD: {b} add *, {b} remove *, {b} purge *, "
             f"{b} move-root *, {b} pause *, {b} resume *")
 
@@ -101,15 +116,21 @@ def hub_info(cfg: dict) -> dict:
     conf = read_hub_conf()
     base = hub_base(cfg)
     conf_base = conf.get("BASE")
+    can_write, sudo_error = _probe_sudo(bin_path, ["add", "__sonda__"])
     return {
         "bin": bin_path,
         "version": version,
+        # Usuário REAL do processo — o que precisa constar da regra do sudoers.
+        "user": dashboard_user(),
+        # Mensagem crua do sudo quando ele recusa: é o que diferencia "regra ausente"
+        # de "regra instalada para outro usuário" ou "sudoers.d não é lido".
+        "sudo_error": sudo_error,
         "base": str(base),
         "conf_base": conf_base,
         # BASE divergente = a dashboard lê de um lugar e o rsync-hub escreve em outro
         # (ex.: dev com ./data). O template avisa; as escritas usam a BASE do hub.
         "base_mismatch": bool(conf_base) and str(base) != conf_base,
-        "can_write": _can_write(bin_path),
+        "can_write": can_write,
         # Sonda separada: instalações que rodaram o setup-hub-access.sh ANTES da pausa
         # existir têm sudoers sem 'pause'/'resume' — o resto continua funcionando e a
         # tela pede só a atualização da regra, em vez de falhar no clique.
@@ -118,31 +139,38 @@ def hub_info(cfg: dict) -> dict:
     }
 
 
-def _can_run(bin_path: str | None, args: list[str]) -> bool:
-    """A dashboard consegue executar ``rsync-hub <args>`` como root sem senha?"""
+def _probe_sudo(bin_path: str | None, args: list[str]) -> tuple[bool, str]:
+    """Sonda ``sudo -n -l <bin> <args>`` e devolve (pode?, MOTIVO da recusa).
+
+    O motivo é o que o próprio sudo diz — "a password is required" (regra existe mas
+    não é NOPASSWD, ou nem é a regra que casou), "Sorry, user X may not run…" (nenhuma
+    regra para ESTE usuário/comando) etc. Sem isso a tela só sabia dizer "sem
+    permissão", que não distingue regra ausente de regra no usuário errado."""
     if not bin_path:
-        return False
+        return False, "rsync-hub não encontrado neste host."
     if hasattr(os, "geteuid") and os.geteuid() == 0:
-        return True
+        return True, ""
     if not shutil.which("sudo"):
-        return False
+        return False, "o comando 'sudo' não existe (ou não está no PATH deste processo)."
     try:
         r = subprocess.run(["sudo", "-n", "-l", bin_path, *args],
                            capture_output=True, text=True, timeout=10)
-        return r.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    except subprocess.TimeoutExpired:
+        return False, "o 'sudo' não respondeu em 10s (pediu senha e ficou esperando?)."
+    except OSError as exc:
+        return False, f"falha ao executar o sudo: {exc}"
+    if r.returncode == 0:
+        return True, ""
+    msg = ((r.stderr or "") + " " + (r.stdout or "")).strip()
+    return False, msg or f"sudo recusou (rc={r.returncode}) sem mensagem."
 
 
-def _can_write(bin_path: str | None) -> bool:
-    if not bin_path:
-        return False
-    if hasattr(os, "geteuid") and os.geteuid() == 0:
-        return True
-    # ``sudo -n -l <cmd> <args>`` responde sem prompt: rc 0 = há regra NOPASSWD que
-    # cobre ESSA invocação. Sondamos com 'add' + argumento fictício porque a regra
-    # recomendada é restrita aos subcomandos ("rsync-hub add *", nunca o script todo).
-    return _can_run(bin_path, ["add", "__sonda__"])
+def _can_run(bin_path: str | None, args: list[str]) -> bool:
+    """A dashboard consegue executar ``rsync-hub <args>`` como root sem senha?
+    ``sudo -n -l <cmd> <args>`` responde sem prompt: rc 0 = há regra NOPASSWD que cobre
+    ESSA invocação. Sondamos com argumento fictício porque a regra recomendada é
+    restrita aos subcomandos ("rsync-hub add *", nunca o script inteiro)."""
+    return _probe_sudo(bin_path, args)[0]
 
 
 def _run_hub(cfg: dict, args: list[str], timeout: int = 90) -> tuple[bool, str]:

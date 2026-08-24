@@ -20,6 +20,28 @@ set -eu
 
 die() { echo "erro: $*" >&2; exit 1; }
 
+# Quem está RODANDO a dashboard agora — é este usuário que precisa da regra, e errar o
+# nome aqui produz o pior sintoma possível: script "bem-sucedido" e tela continuando em
+# somente leitura. Tenta, nesta ordem: PID file do dashboardctl, unidade systemd,
+# processo do run.py. Ecoa vazio quando não achar (aí o default cai no dono da pasta).
+detect_dash_user() {
+    du_pid=""
+    [ -r "$HERE/.dashboard.pid" ] && du_pid="$(cat "$HERE/.dashboard.pid" 2>/dev/null)"
+    if [ -z "$du_pid" ] && command -v systemctl >/dev/null 2>&1; then
+        du_u="$(systemctl show -p User --value carbonara-dashboard 2>/dev/null || true)"
+        if [ -n "$du_u" ]; then printf '%s\n' "$du_u"; return 0; fi
+        du_pid="$(systemctl show -p MainPID --value carbonara-dashboard 2>/dev/null || true)"
+        [ "$du_pid" = 0 ] && du_pid=""
+    fi
+    if [ -z "$du_pid" ] && command -v pgrep >/dev/null 2>&1; then
+        du_pid="$(pgrep -f '[r]un\.py' 2>/dev/null | head -1 || true)"
+    fi
+    if [ -n "$du_pid" ]; then
+        ps -o user= -p "$du_pid" 2>/dev/null | tr -d ' [:space:]' || true
+    fi
+    return 0
+}
+
 [ "$(id -u)" = 0 ] || die "execute como root: sudo $0 [usuario-da-dashboard]"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -49,7 +71,20 @@ grep -q "pause_reception" "$BIN" || \
 # --- 2) usuário que roda a dashboard ----------------------------------------------
 DASH_USER="${1:-}"
 if [ -z "$DASH_USER" ]; then
-    default="${SUDO_USER:-}"
+    # Quem chamou o sudo é o palpite natural — MAS a partir de um shell já root
+    # (sudo su -) o SUDO_USER é root/vazio e aceitar isso instalaria a regra para o
+    # usuário errado (ou nenhuma). Nesse caso, sugere o DONO da pasta da dashboard,
+    # que é como o 'dashboardctl servico' escolhe o usuário do serviço.
+    default="$(detect_dash_user)"
+    if [ -n "$default" ]; then
+        echo "detectei a dashboard rodando como: $default"
+    else
+        default="${SUDO_USER:-}"
+        if [ -z "$default" ] || [ "$default" = root ]; then
+            default="$(stat -c %U "$HERE" 2>/dev/null || stat -f %Su "$HERE" 2>/dev/null || echo '')"
+        fi
+        echo "(não achei a dashboard rodando — se ela estiver parada, informe o usuário à mão)"
+    fi
     if [ -n "$default" ]; then
         printf "Usuário que RODA a dashboard (dono do processo run.py) [%s]: " "$default"
     else
@@ -61,11 +96,25 @@ fi
 [ -n "$DASH_USER" ] || die "informe o usuário: sudo $0 <usuario-da-dashboard>"
 id "$DASH_USER" >/dev/null 2>&1 || die "usuário não existe: $DASH_USER"
 if [ "$DASH_USER" = root ]; then
-    echo "ok: a dashboard roda como root — já tem os poderes; regra sudoers desnecessária."
+    echo "AVISO: '$DASH_USER' foi informado como usuário da dashboard."
+    echo "       Rodando como root ela já tem os poderes e a regra é desnecessária —"
+    echo "       mas se a tela 'Coleta' continua em modo somente leitura, então o"
+    echo "       processo NÃO roda como root e a regra foi instalada para o nome errado."
+    echo "       Confira quem realmente roda a dashboard:"
+    echo "           ps -eo user,pid,args | grep '[r]un.py'"
+    echo "           systemctl show -p User --value carbonara-dashboard"
+    echo "       e rode de novo:  sudo $0 <usuario-que-apareceu>"
     exit 0
 fi
 
 # --- 3) regra sudoers (restrita e validada) ---------------------------------------
+# Sem a diretiva de inclusão, /etc/sudoers.d é IGNORADO e a regra não vale nada — um
+# arquivo instalado com sucesso e nenhum efeito é o pior dos dois mundos.
+if ! grep -Eq '^[[:space:]]*[#@]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers 2>/dev/null; then
+    echo "AVISO: /etc/sudoers não inclui /etc/sudoers.d — a regra abaixo NÃO teria efeito."
+    echo "       Adicione (com visudo) a última linha:  #includedir /etc/sudoers.d"
+    echo "       (o '#' faz parte da diretiva, não é comentário)"
+fi
 SUDOERS_FILE=/etc/sudoers.d/carbonara-dashboard
 TMP="$(mktemp)"
 cat > "$TMP" <<EOF
@@ -88,8 +137,11 @@ grep -v '^#' "$SUDOERS_FILE" | sed 's/^/    /'
 if sudo -l -U "$DASH_USER" 2>/dev/null | grep -q "$BIN"; then
     echo "ok: o sudo confirma os comandos liberados para '$DASH_USER'."
 else
-    echo "AVISO: 'sudo -l -U $DASH_USER' não mostrou a regra — algum Defaults global"
-    echo "       pode estar interferindo; teste na conta: sudo -n $BIN add teste_sudoers"
+    echo "AVISO: 'sudo -l -U $DASH_USER' não mostrou a regra. Verifique, nesta ordem:"
+    echo "       1) /etc/sudoers termina com:  #includedir /etc/sudoers.d"
+    echo "       2) a dashboard roda mesmo como '$DASH_USER':"
+    echo "          ps -eo user,pid,args | grep '[r]un.py'"
+    echo "       3) na conta dela:  sudo -n -l $BIN add teste_sudoers ; echo rc=\$?"
 fi
 
 BASE=/srv/carbonara

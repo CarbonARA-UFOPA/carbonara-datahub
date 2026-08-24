@@ -21,8 +21,18 @@
     <code>sudo ./collection/rsync-hub install</code>.
   {% else %}
     A dashboard não tem permissão para executar <code>{{ info.bin }}</code> como root
-    sem senha. Rode no servidor:
-    <pre class="mono">sudo dashboard/setup-hub-access.sh &lt;usuario-que-roda-a-dashboard&gt;</pre>
+    sem senha.
+    {% if info.sudo_error %}
+      <br>Resposta do <code>sudo</code>:
+      <pre class="mono">{{ info.sudo_error }}</pre>
+    {% endif %}
+    A dashboard roda como <strong>{{ info.user }}</strong> — é ESTE o usuário que
+    precisa estar na regra (se o script foi rodado com outro nome, ou a partir de um
+    shell já root, a regra não vale aqui). Rode no servidor:
+    <pre class="mono">sudo dashboard/setup-hub-access.sh {{ info.user }}</pre>
+    Confira depois com <code>sudo -l -U {{ info.user }}</code>; se a regra aparece lá e
+    mesmo assim não vale, veja se o <code>/etc/sudoers</code> tem a linha
+    <code>#includedir /etc/sudoers.d</code>.
     (ou libere manualmente no <code>visudo</code>: <code>{{ info.sudoers_hint }}</code>)
   {% endif %}
   Enquanto isso, listagem, credenciais e downloads continuam funcionando.
