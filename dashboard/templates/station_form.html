@@ -116,7 +116,7 @@
     separador de colunas, o cabeçalho, o timestamp e as variáveis a plotar.</p>
   {% else %}
     <table class="table">
-      <thead><tr><th>Arquivo · caminho</th><th>Apelido</th><th>Separador</th><th>Linhas do final</th><th>Variáveis</th><th></th></tr></thead>
+      <thead><tr><th>Arquivo · caminho</th><th>Apelido</th><th>Linhas do final</th><th>Variáveis</th><th></th></tr></thead>
       <tbody>
       {% for f in station['files'] %}
         <tr>
@@ -130,12 +130,17 @@
             </form>
           </td>
           <td>{% if f.alias %}{{ f.alias }}{% else %}<span class="meta">—</span>{% endif %}</td>
-          <td><code>{{ '\\t' if f.separator == '\t' else f.separator }}</code></td>
           <td>{{ f.tail_lines }}</td>
-          <td><small>{{ f.variables | map(attribute='label') | join(' · ') }}</small></td>
+          {# Lista longa demais para a célula: mostra o começo e joga a lista inteira
+             (uma por linha) no balão do title — a coluna fica estreita e ainda dá para
+             conferir tudo sem abrir o cadastro. #}
+          {% set rotulos = f.variables | map(attribute='label') | list %}
+          <td class="vars-cell" title="{{ rotulos | join('\n') }}">
+            <strong>{{ rotulos | length }}</strong>
+            {% if rotulos %}<small>{{ rotulos | join(' · ') | truncate(26, True, '…') }}</small>{% endif %}
+          </td>
           <td class="actions">
-            <a class="btn" href="{{ url_for('pages.file_edit', station_id=station['id'], file_id=f.id) }}">
-              Editar (separador, variáveis…)</a>
+            <a class="btn" href="{{ url_for('pages.file_edit', station_id=station['id'], file_id=f.id) }}">Editar</a>
           </td>
         </tr>
       {% endfor %}

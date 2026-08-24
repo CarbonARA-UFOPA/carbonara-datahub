@@ -3,116 +3,98 @@
 <h1>{{ 'Editar arquivo — ' ~ fcfg.id if fcfg else 'Novo arquivo em monitoramento' }}
     <small>estação {{ station.id }}</small></h1>
 
-<section class="card help-card">
-  <strong>Como o dashboard lê este arquivo:</strong> ele pega as <em>últimas N linhas</em>,
-  divide cada linha em colunas usando o <em>separador</em>, encontra o horário na
-  <em>coluna do timestamp</em> e plota <em>um gráfico por linha da tabela de variáveis</em>.
-  Use o botão <em>Pré-visualizar parse</em> para conferir se a divisão em colunas ficou
-  certa antes de salvar.
-  <br><small>Receita para <code>.dat</code> TOA5 (Campbell/LoggerNet): separador <code>,</code> ·
-  aspas <code>"</code> · pular <code>4</code> linhas de cabeçalho · nomes das colunas na linha
-  <code>2</code> · timestamp na coluna <code>0</code> com formato <code>%Y-%m-%d %H:%M:%S</code>.</small>
-</section>
+<p class="meta">O dashboard lê as <strong>últimas linhas</strong> do arquivo, separa em
+  colunas, acha o horário e plota <strong>um gráfico por variável</strong>. Confira com
+  <em>Pré-visualizar parse</em> antes de salvar.</p>
 
 <form method="post" class="card form" id="file-form"
       action="{{ url_for('pages.file_update', station_id=station.id, file_id=fcfg.id) if fcfg else url_for('pages.file_create', station_id=station.id) }}">
 
-  <label>Caminho do arquivo (.dat, .csv, ...)
+  <label>Caminho do arquivo
     <input name="path" required value="{{ fcfg.path if fcfg else '' }}"
-           placeholder="ex.: incoming/{{ station.id }}/{{ station.id }}.dat (relativo à raiz de dados) ou /caminho/absoluto">
+           placeholder="ex.: incoming/{{ station.id }}/{{ station.id }}.dat (relativo à raiz) ou /caminho/absoluto">
   </label>
 
-  <label>Apelido (opcional)
-    <input name="alias" value="{{ fcfg.alias if fcfg and fcfg.get('alias') else '' }}"
-           placeholder="ex.: Torre Norte — nome amigável p/ distinguir arquivos de mesmo nome">
-    <small>Nome de exibição do arquivo nos gráficos e listas. Não altera o identificador
-    interno (<code>id</code>). Deixe vazio para usar só o identificador.</small>
-  </label>
+  <div class="form-row">
+    <label>Formato do arquivo
+      {# Sem `name`: não é campo do cadastro, só preenche os de baixo. O que vale para o
+         servidor continua sendo separador/aspas/cabeçalho/timestamp. #}
+      <select id="fmt-preset">
+        <option value="toa5">TOA5 — Campbell/LoggerNet (padrão)</option>
+        <option value="csv">CSV com cabeçalho (1 linha)</option>
+        <option value="tsv">TSV — separado por tabulação</option>
+        <option value="csv_sem_cab">CSV sem cabeçalho</option>
+        <option value="livre">Personalizado</option>
+      </select>
+      <small id="fmt-resumo" class="meta"></small>
+    </label>
 
-  <div class="grid-3">
     <label>Linhas do final a plotar
       <input name="tail_lines" type="number" min="1" max="10000"
              value="{{ fcfg.tail_lines if fcfg else 100 }}">
     </label>
-    <label>Período a plotar (horas, opcional)
-      <input name="window_hours" type="number" min="1" max="8760"
-             value="{{ fcfg.window_hours if fcfg and fcfg.get('window_hours') else '' }}"
-             placeholder="vazio = todas as linhas lidas">
-      <small>Recorta os gráficos às últimas N horas. As linhas lidas continuam
-      limitadas por "Linhas do final" — se não cobrirem o período, o gráfico avisa.</small>
-    </label>
-    <label>Separador de colunas
-      <input name="separator" value="{{ '\\t' if fcfg and fcfg.separator == '\t' else (fcfg.separator if fcfg else ',') }}">
-      <small>Use <code>\t</code> para tabulação.</small>
-    </label>
-    <label>Caractere de aspas
-      <input name="quotechar" value="{{ fcfg.quotechar if fcfg else '"' }}">
-      <small>TOA5 (Campbell) usa <code>"</code>.</small>
-    </label>
   </div>
 
-  <label class="check-row">
-    <input type="checkbox" name="no_quotes" value="1"
-           {{ 'checked' if fcfg and fcfg.quotechar == '' else '' }}>
-    <span><strong>Ignorar aspas</strong> — divide os campos entre aspas pelas vírgulas de
-      dentro (ex.: RadOut1: <code>"m -125,1,-1247,…"</code>). Vira várias colunas; mapeie
-      por <strong>índice</strong> (os nomes do cabeçalho deixam de alinhar depois da
-      coluna quebrada).</span>
+  <label>Apelido (opcional)
+    <input name="alias" value="{{ fcfg.alias if fcfg and fcfg.get('alias') else '' }}"
+           placeholder="ex.: Torre Norte — nome de exibição nos gráficos">
   </label>
 
-  <div class="grid-3">
-    <label>Separador decimal
-      <input name="decimal" value="{{ fcfg.decimal if fcfg else '.' }}">
-    </label>
-    <label>Linhas de cabeçalho a pular
-      <input name="skip_header_lines" type="number" min="0" max="100"
-             value="{{ fcfg.skip_header_lines if fcfg else 0 }}">
-      <small>TOA5 = 4 · CSV com cabeçalho = 1.</small>
-    </label>
-    <label>Linha com os nomes das colunas (opcional)
-      <input name="header_line" type="number" min="1" max="100"
-             value="{{ fcfg.header_line if fcfg and fcfg.header_line else '' }}">
-      <small>TOA5 = 2. Permite referenciar colunas por nome.</small>
-    </label>
-    <label>Remover dos valores (regex, opcional)
-      <input name="strip_regex" value="{{ fcfg.strip_regex if fcfg and fcfg.strip_regex else '' }}"
-             placeholder="ex.: [A-Za-z]">
-      <small>Apaga de cada valor os trechos casados (não mexe no timestamp). Ex.:
-        <code>[A-Za-z]</code> tira o <code>m</code> de <code>m -125</code>;
-        <code>[^0-9.,+\-]</code> deixa só número/sinal.</small>
-    </label>
-  </div>
+  <details class="adv" id="adv-parse">
+    <summary>Ajuste fino do parse e do período</summary>
 
-  <div class="grid-3">
-    <label>Coluna do timestamp
-      <input name="ts_column" value="{{ fcfg.timestamp.column if fcfg else 0 }}">
-      <small>Índice (0 = primeira) ou nome da coluna.</small>
+    <div class="grid-3">
+      <label>Separador de colunas
+        <input name="separator" value="{{ '\\t' if fcfg and fcfg.separator == '\t' else (fcfg.separator if fcfg else ',') }}">
+        <small><code>\t</code> = tabulação.</small>
+      </label>
+      <label>Caractere de aspas
+        <input name="quotechar" value="{{ fcfg.quotechar if fcfg else '"' }}">
+      </label>
+      <label>Separador decimal
+        <input name="decimal" value="{{ fcfg.decimal if fcfg else '.' }}">
+      </label>
+      <label>Linhas de cabeçalho a pular
+        <input name="skip_header_lines" type="number" min="0" max="100"
+               value="{{ fcfg.skip_header_lines if fcfg else 0 }}">
+      </label>
+      <label>Linha com os nomes das colunas
+        <input name="header_line" type="number" min="1" max="100"
+               value="{{ fcfg.header_line if fcfg and fcfg.header_line else '' }}"
+               placeholder="vazio = sem nomes">
+      </label>
+      <label>Período a plotar (horas)
+        <input name="window_hours" type="number" min="1" max="8760"
+               value="{{ fcfg.window_hours if fcfg and fcfg.get('window_hours') else '' }}"
+               placeholder="vazio = tudo que foi lido">
+      </label>
+      <label>Coluna do timestamp
+        <input name="ts_column" value="{{ fcfg.timestamp.column if fcfg else 0 }}">
+        <small>Índice (0 = primeira) ou nome.</small>
+      </label>
+      <label>Formato do timestamp
+        <input name="ts_format" value="{{ fcfg.timestamp.format if fcfg else '%Y-%m-%d %H:%M:%S' }}">
+      </label>
+      <label>Remover dos valores (regex)
+        <input name="strip_regex" value="{{ fcfg.strip_regex if fcfg and fcfg.strip_regex else '' }}"
+               placeholder="ex.: [A-Za-z]">
+        <small>Limpa cada valor; não mexe no timestamp.</small>
+      </label>
+    </div>
+
+    <label class="check-row">
+      <input type="checkbox" name="no_quotes" value="1"
+             {{ 'checked' if fcfg and fcfg.quotechar == '' else '' }}>
+      <span><strong>Ignorar aspas</strong> — quebra também os campos entre aspas pelas
+        vírgulas de dentro (ex.: <code>"m -125,1,-1247"</code>). Depois da coluna
+        quebrada os nomes do cabeçalho deixam de alinhar: mapeie por índice.</span>
     </label>
-    <label>Formato do timestamp
-      <input name="ts_format" value="{{ fcfg.timestamp.format if fcfg else '%Y-%m-%d %H:%M:%S' }}">
-      <small>Formato Python, ex.: <code>%Y-%m-%d %H:%M:%S</code>.</small>
-    </label>
-  </div>
+  </details>
 
   <h2>Variáveis a plotar</h2>
-  <div class="help-card">
-    <strong>Cada linha desta tabela = uma variável = um gráfico.</strong>
-    <ul class="help-list">
-      <li><em>Índice</em> — a posição da coluna no arquivo (<code>0</code> = primeira,
-          <code>1</code> = segunda, …). <strong>Não editável</strong>: cada nova linha
-          recebe o próximo índice livre (índices repetidos não são permitidos) e a
-          coluna do timestamp fica de fora. Use <em>⇊ Todas as colunas do arquivo</em>
-          para listar de uma vez todas as colunas detectadas no arquivo.</li>
-      <li><em>Rótulo</em> — o título que aparece no gráfico (ex.: "Temperatura do painel").</li>
-      <li><em>Unidade</em> — só para exibição na legenda (ex.: <code>°C</code>, <code>V</code>, <code>%</code>).</li>
-      <li><em>Mín / Máx físicos</em> (opcionais) — limites plausíveis da variável: viram
-          <strong>linhas tracejadas de marcação</strong> no gráfico e os trechos fora deles
-          ficam <strong style="color:#d64545">vermelhos</strong> — dado bom vs. dado ruim à
-          primeira vista (mesma ideia do range_check da camada de processamento).</li>
-    </ul>
-    <small>Use <em>+ Variável</em> para acrescentar linhas e <em>×</em> para remover.
-    Valores não numéricos (<code>NAN</code> etc.) viram lacunas no gráfico.</small>
-  </div>
+  <p class="meta">Uma linha = uma variável = um gráfico. Use
+    <em>⇊ Todas as colunas do arquivo</em> para trazer as colunas detectadas de uma vez.</p>
+
   <table class="table" id="vars-table">
     <thead><tr><th>Índice</th><th>Rótulo</th><th>Unidade</th><th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
     <tbody>
@@ -131,6 +113,19 @@
   <button type="button" class="btn" id="btn-add-var">+ Variável</button>
   <button type="button" class="btn" id="btn-fill-cols">⇊ Todas as colunas do arquivo</button>
 
+  <details class="adv">
+    <summary>O que significa cada coluna</summary>
+    <ul class="help-list">
+      <li><em>Índice</em> — posição da coluna no arquivo (0 = primeira). Não editável:
+        cada linha nova recebe o próximo índice livre e a coluna do timestamp fica de fora.</li>
+      <li><em>Rótulo</em> — título do gráfico. <em>Unidade</em> — só exibição na legenda.</li>
+      <li><em>Mín / Máx físicos</em> — limites plausíveis: viram linhas tracejadas no
+        gráfico e os trechos fora deles ficam
+        <strong style="color:#d64545">vermelhos</strong>.</li>
+    </ul>
+    <small>Valores não numéricos (<code>NAN</code>, <code>±7999</code>) viram lacunas.</small>
+  </details>
+
   <div class="form-actions">
     <button type="button" class="btn" id="btn-preview">Pré-visualizar parse</button>
     <button class="btn btn-primary" type="submit">Salvar</button>
@@ -139,4 +134,61 @@
 
   <div id="preview-area"></div>
 </form>
+
+<script>
+  /* Formato do arquivo: um seletor no lugar de sete campos. TOA5 é o padrão do projeto
+     (LoggerNet), mas outros formatos existem — por isso o preenchimento é só um atalho
+     para os campos do "Ajuste fino", que continuam sendo a verdade enviada ao servidor. */
+  (function () {
+    var form = document.getElementById("file-form");
+    var sel = document.getElementById("fmt-preset");
+    var resumo = document.getElementById("fmt-resumo");
+    if (!form || !sel) return;
+
+    var TS = "%Y-%m-%d %H:%M:%S";
+    var PRESETS = {
+      toa5:        { separator: ",",   quotechar: '"', skip_header_lines: "4", header_line: "2", decimal: ".", ts_column: "0", ts_format: TS },
+      csv:         { separator: ",",   quotechar: '"', skip_header_lines: "1", header_line: "1", decimal: ".", ts_column: "0", ts_format: TS },
+      tsv:         { separator: "\\t", quotechar: '"', skip_header_lines: "1", header_line: "1", decimal: ".", ts_column: "0", ts_format: TS },
+      csv_sem_cab: { separator: ",",   quotechar: '"', skip_header_lines: "0", header_line: "",  decimal: ".", ts_column: "0", ts_format: TS }
+    };
+
+    function val(n) { return form.elements[n] ? String(form.elements[n].value).trim() : ""; }
+
+    function detecta() {           /* qual preset descreve o que está nos campos hoje? */
+      for (var k in PRESETS) {
+        var p = PRESETS[k], igual = true;
+        for (var campo in p) { if (val(campo) !== p[campo]) { igual = false; break; } }
+        if (igual) return k;
+      }
+      return "livre";
+    }
+
+    function mostraResumo() {      /* lê dos CAMPOS, não do preset: continua verdadeiro
+                                      depois de qualquer ajuste manual */
+      var nomes = val("header_line");
+      resumo.textContent =
+        "separador " + (val("separator") || "—") +
+        " · aspas " + (val("quotechar") || "nenhuma") +
+        " · pula " + (val("skip_header_lines") || "0") + " linha(s)" +
+        (nomes ? " · nomes na linha " + nomes : " · sem nomes de coluna") +
+        " · timestamp na coluna " + (val("ts_column") || "0");
+    }
+
+    sel.addEventListener("change", function () {
+      var p = PRESETS[sel.value];
+      if (!p) { mostraResumo(); return; }        /* "Personalizado" não mexe em nada */
+      for (var campo in p) { if (form.elements[campo]) form.elements[campo].value = p[campo]; }
+      if (form.elements.no_quotes) form.elements.no_quotes.checked = false;
+      mostraResumo();
+    });
+
+    /* Editar um campo fino à mão pode desalinhar do preset — o seletor acompanha. */
+    var adv = document.getElementById("adv-parse");
+    if (adv) adv.addEventListener("input", function () { sel.value = detecta(); mostraResumo(); });
+
+    sel.value = detecta();
+    mostraResumo();
+  })();
+</script>
 {% endblock %}
