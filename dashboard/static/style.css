@@ -141,9 +141,6 @@ main.wide { max-width: 97vw; }
 .cmp-block .series-error:empty { display: none; }
 .num-input { max-width: 90px; }
 .path-cell { min-width: 320px; }
-.path-form { display: flex; gap: .4rem; margin-top: .3rem; }
-.path-form input { flex: 1; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px;
-                   font: .8rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* Filtro da listagem de arquivos da estação (client-side, tela Editar estação). */
 .discover-filter { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
@@ -305,3 +302,7 @@ code { background: #eef2f0; padding: .05rem .3rem; border-radius: 4px; font-size
    completa fica no balão (title), então a célula pode ser estreita. */
 .vars-cell { white-space: nowrap; cursor: help; }
 .vars-cell small { color: var(--muted); margin-left: .35rem; }
+/* Caminho do arquivo: exibição apenas (edita-se no cadastro do arquivo). Corta com
+   reticências para não esticar a coluna; o caminho inteiro fica no balão (title). */
+.path-text { display: block; max-width: 46ch; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; margin-top: .2rem; }

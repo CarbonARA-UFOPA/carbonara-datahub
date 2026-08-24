@@ -31,22 +31,13 @@
   <small class="coords-hint">Coordenadas geográficas (WGS84, graus decimais; sul e oeste são negativos).
   Necessárias para a estação aparecer na página <strong>Mapa</strong> — opcionais no restante do dashboard.</small>
 
-  <label>Arquivo de watchdog (heartbeat do rsync-hub)
-    <input name="heartbeat_file" value="{{ station['heartbeat_file'] if station and station.get('heartbeat_file') else '' }}"
-           placeholder="vazio = incoming/&lt;id&gt;/.carbonara-status (padrão)">
-    <small>Caminho relativo à raiz de dados ou absoluto. O status Online/Offline usa a
-    data de modificação deste arquivo e o <code>interval_min</code> escrito nele —
-    a mesma regra do <code>rsync-hub monitor</code> (2×intervalo + 2 min).</small>
-  </label>
-
-  <label>Janela de offline personalizada (minutos, opcional)
-    <input name="offline_window_min" type="number" min="1" max="10080"
-           value="{{ station['offline_window_min'] if station and station.get('offline_window_min') else '' }}"
-           placeholder="vazio = automática (2×intervalo do heartbeat + 2 min)">
-    <small>Atenção: definir um valor fixa a janela SÓ no dashboard e faz o status daqui
-    divergir do <code>rsync-hub monitor</code>. Deixe vazio para a janela automática,
-    que acompanha o intervalo de envio declarado pela estação.</small>
-  </label>
+  <p class="meta">O status <strong>Online/Offline</strong> não se configura aqui: vem do
+    sinal de vida que a própria estação envia (<code>.carbonara-status</code> em
+    <code>incoming/{{ station['id'] if station else '&lt;id&gt;' }}/</code>), com o
+    intervalo de reciclagem declarado por ela. A janela de offline acompanha esse
+    intervalo — <strong>2× o intervalo + 2 min</strong>, a mesma regra do
+    <code>rsync-hub monitor</code> e do watchdog do cliente. Para mudá-la, mude o
+    tempo de reciclagem <em>na estação</em>.</p>
 
   <div class="form-actions">
     <button class="btn btn-primary" type="submit">Salvar</button>
@@ -120,24 +111,29 @@
       <tbody>
       {% for f in station['files'] %}
         <tr>
+          {# Só exibição: o caminho se edita no cadastro do arquivo (botão Editar),
+             junto com separador/timestamp/variáveis — um campo solto aqui competia
+             com aquela tela e salvava metade da configuração. #}
           <td class="path-cell">
             <strong>{{ f.id }}</strong>
-            <form method="post" class="path-form"
-                  action="{{ url_for('pages.file_update_path', station_id=station['id'], file_id=f.id) }}">
-              <input name="path" value="{{ f.path }}" required
-                     placeholder="caminho relativo à raiz de dados ou absoluto">
-              <button class="btn" type="submit">Salvar caminho</button>
-            </form>
+            <code class="path-text" title="{{ f.path }}">{{ f.path }}</code>
           </td>
           <td>{% if f.alias %}{{ f.alias }}{% else %}<span class="meta">—</span>{% endif %}</td>
           <td>{{ f.tail_lines }}</td>
           {# Lista longa demais para a célula: mostra o começo e joga a lista inteira
              (uma por linha) no balão do title — a coluna fica estreita e ainda dá para
              conferir tudo sem abrir o cadastro. #}
-          {% set rotulos = f.variables | map(attribute='label') | list %}
+          {% set rotulos = [] %}
+          {% for v in f.variables %}
+            {% set _ = rotulos.append(v.label if v.label else 'coluna ' ~ v.column) %}
+          {% endfor %}
           <td class="vars-cell" title="{{ rotulos | join('\n') }}">
-            <strong>{{ rotulos | length }}</strong>
-            {% if rotulos %}<small>{{ rotulos | join(' · ') | truncate(26, True, '…') }}</small>{% endif %}
+            {% if rotulos %}
+              <strong>{{ rotulos | length }}</strong> var.
+              <small>{{ rotulos | join(' · ') | truncate(26, True, '…') }}</small>
+            {% else %}
+              <span class="meta">nenhuma</span>
+            {% endif %}
           </td>
           <td class="actions">
             <a class="btn" href="{{ url_for('pages.file_edit', station_id=station['id'], file_id=f.id) }}">Editar</a>

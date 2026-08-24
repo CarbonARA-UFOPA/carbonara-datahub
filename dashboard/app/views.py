@@ -315,11 +315,11 @@ def station_update(station_id):
         for e in errors:
             flash(e, "error")
         return render_template("station_form.html", station=station), 400
+    # heartbeat_file/offline_window_min não vêm mais do formulário; um valor legado no
+    # YAML é preservado como está (não é editável nem apagável pela tela).
     station["name"] = updated["name"]
-    station["heartbeat_file"] = updated["heartbeat_file"]
     station["latitude"] = updated["latitude"]
     station["longitude"] = updated["longitude"]
-    station["offline_window_min"] = updated["offline_window_min"]
     _save(cfg)
     flash("Estação atualizada.", "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))
@@ -451,35 +451,6 @@ def file_update(station_id, file_id):
     _save(cfg)
     flash("Configuração do arquivo atualizada.", "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))
-
-
-@pages.post("/stations/<station_id>/files/<file_id>/path")
-@admin_required
-def file_update_path(station_id, file_id):
-    """Atalho da tela 'Editar estação': troca só o caminho do arquivo monitorado."""
-    cfg = _load()
-    station = _station_or_404(cfg, station_id)
-    fcfg = config_store.get_file(station, file_id)
-    if not fcfg:
-        abort(404)
-    path = (request.form.get("path") or "").strip()
-    if not path:
-        flash("O caminho do arquivo não pode ficar vazio.", "error")
-    else:
-        fcfg["path"] = path
-        _save(cfg)
-        try:
-            resolved = config_store.resolve_data_path(cfg, path)
-            if resolved.is_file():
-                flash(f"Caminho de '{file_id}' atualizado.", "ok")
-            else:
-                flash(
-                    f"Caminho de '{file_id}' salvo, mas o arquivo não existe ainda: {resolved}",
-                    "error",
-                )
-        except ValueError as exc:
-            flash(f"Caminho salvo, mas inválido: {exc}", "error")
-    return redirect(url_for("pages.station_edit", station_id=station_id))
 
 
 @pages.post("/stations/<station_id>/files/<file_id>/delete")

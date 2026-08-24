@@ -303,7 +303,7 @@ def new_station_entry(station_id: str, name: str | None = None) -> dict:
     """Estação mínima para importação: sem overrides — pastas, heartbeat e log usam os
     locais padrão sob a raiz do hub, então mudar a config master reposiciona todas."""
     return {"id": station_id, "name": name or station_id, "heartbeat_file": None,
-            "latitude": None, "longitude": None, "offline_window_min": None, "files": []}
+            "latitude": None, "longitude": None, "files": []}
 
 
 def unique_file_id(station: dict, path: str) -> str:
@@ -495,15 +495,6 @@ def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list
     errors: list[str] = []
     sid = (form.get("id") or "").strip().lower()
     name = (form.get("name") or "").strip()
-    heartbeat = (form.get("heartbeat_file") or "").strip() or None
-    if heartbeat:
-        try:
-            resolve_data_path(cfg, heartbeat)
-        except (ValueError, KeyError):
-            errors.append("Arquivo de watchdog: caminho inválido "
-                          "('../' não pode escapar da raiz de dados).")
-            heartbeat = None
-
     if not ID_RE.match(sid):
         errors.append("Identificador inválido: use apenas letras minúsculas, números, '-' e '_'.")
     if is_new and get_station(cfg, sid):
@@ -532,21 +523,12 @@ def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list
         errors.append("Coordenadas: informe latitude E longitude (ou deixe ambas vazias).")
         latitude = longitude = None
 
-    # Override opcional da janela de offline (min). Vazio = automática (heartbeat).
-    offline_window_min = None
-    raw = (form.get("offline_window_min") or "").strip()
-    if raw:
-        try:
-            offline_window_min = int(raw)
-            if not (1 <= offline_window_min <= 10080):
-                raise ValueError
-        except ValueError:
-            errors.append(f"Janela de offline: valor inválido ('{raw}') — use minutos entre 1 e 10080.")
-            offline_window_min = None
-
-    return {"id": sid, "name": name, "heartbeat_file": heartbeat,
-            "latitude": latitude, "longitude": longitude,
-            "offline_window_min": offline_window_min, "files": []}, errors
+    # Watchdog e janela de offline NÃO vêm do formulário: os dois são do rsync-hub/
+    # cliente — o heartbeat que a estação envia declara o intervalo e a janela é sempre
+    # 2×intervalo + 2 min. Um 'heartbeat_file' legado no YAML continua sendo respeitado
+    # como override manual; só não se edita mais pela dashboard.
+    return {"id": sid, "name": name,
+            "latitude": latitude, "longitude": longitude, "files": []}, errors
 
 
 def _parse_separator(raw: str) -> str:

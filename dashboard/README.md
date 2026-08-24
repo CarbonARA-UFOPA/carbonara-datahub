@@ -94,13 +94,13 @@ Estações **não são criadas na aba Estações**: elas nascem na aba **Coleta*
 no rsync-hub) ou pelo botão *Importar do rsync-hub* — assim toda estação da dashboard
 tem par no hub. A aba Estações lista e edita o que já existe.
 
-1. **Estação**: id (igual ao do rsync-hub), nome de exibição, coordenadas geográficas
+1. **Estação**: id (igual ao do rsync-hub), nome de exibição e coordenadas geográficas
    (latitude/longitude em graus decimais WGS84, opcionais — necessárias apenas para a
-   estação aparecer na tela Mapa), opcionalmente o caminho do watchdog
-   (default: `incoming/<id>/.carbonara-status`) e, também opcional, uma **janela de
-   offline personalizada** em minutos — vazio usa a automática (2×intervalo do
-   heartbeat + 2 min); um valor fixo vale **só no dashboard** e faz o status daqui
-   divergir do `rsync-hub monitor`.
+   estação aparecer na tela Mapa). Só isso: o **watchdog** e a **janela de offline**
+   não se configuram aqui, porque não são do dashboard — o heartbeat é enviado pela
+   própria estação (`incoming/<id>/.carbonara-status`, com o `interval_min` que ela
+   declara) e a janela deriva dele, sempre `2×intervalo + 2 min`. Para mudar a
+   cadência, muda-se o tempo de reciclagem **no cliente da estação**.
 2. **Arquivo de monitoramento** (por estação, quantos quiser): caminho do `.dat`,
    quantas linhas do final ler, **período a plotar em horas** (opcional: recorta os
    gráficos às últimas N horas dentro das linhas lidas — se elas não cobrirem o

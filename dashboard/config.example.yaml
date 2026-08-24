@@ -47,9 +47,12 @@ stations:
     # Necessárias para a estação aparecer na página Mapa; opcionais no restante.
     latitude: -3.578041
     longitude: -55.074330
-    # Watchdog: arquivo de heartbeat do rsync-hub. O status usa o mtime dele +
-    # o interval_min do conteúdo (janela = 2×intervalo + 2 min).
-    # null = <data_root>/incoming/flona01/.carbonara-status (padrão)
+    # Watchdog: arquivo de heartbeat que a ESTAÇÃO envia. O status usa o mtime dele +
+    # o interval_min do conteúdo (janela = 2×intervalo + 2 min, igual ao
+    # `rsync-hub monitor`). Não há override de janela por estação: a cadência é
+    # decidida no cliente (tempo de reciclagem).
+    # null = <data_root>/incoming/flona01/.carbonara-status (padrão). Só preencha em
+    # instalação fora do padrão — a interface não edita este campo.
     heartbeat_file: null
     files:
       - id: dados30min

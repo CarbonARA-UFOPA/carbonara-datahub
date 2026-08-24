@@ -422,7 +422,14 @@ computes live station status. Viewing is open; edits require the admin login
   = `interval_min*120 + 120`s (interval from heartbeat CONTENT, liveness from its
   MTIME), fallback `stale_fallback_seconds` (1h). A hub pause overrides the computed
   state with `paused` (see the pause bullet above). If the shell logic changes, change
-  `status.py` with it.
+  `status.py` with it. There is **no per-station override** of the window and the
+  watchdog path is not editable in the UI (user request): both belong to the
+  station/client (the heartbeat declares `interval_min`), and the same
+  `interval*120 + 120` lives in three places — `rsync-hub print_status`, `status.py`
+  and the client's own `status` watchdog. A dashboard-only knob would silently
+  disagree with all three. Legacy `heartbeat_file`/`offline_window_min` keys in an
+  existing config are preserved but ignored (`heartbeat_file` still honored as a
+  manual YAML override); don't re-add form fields for them.
 - **Pause of reception in the UI** (`hub.pause_state/set_pause/clear_pause` +
   `POST /hub/pause|/hub/resume`): reading the markers is a plain filesystem read, so
   the state shows even without the sudoers rule; pausing/resuming shells out to

@@ -129,11 +129,11 @@ def station_status(cfg: dict, station: dict, pause: dict | None = None) -> dict:
     candidates = [t for t in (hb_mtime, data_mtime, last_connect) if t is not None]
     act = max(candidates) if candidates else None
 
-    # Override manual por estação (dashboard-only — diverge do rsync-hub monitor);
-    # sem ele, a janela automática: 2×intervalo do heartbeat + 2 min, ou o fallback.
-    if station.get("offline_window_min"):
-        limit = int(station["offline_window_min"]) * 60
-    elif interval_min:
+    # Janela SEMPRE derivada do heartbeat (2×intervalo + 2 min) ou do fallback global —
+    # não há override por estação: a cadência é decidida na estação (tempo de
+    # reciclagem do cliente), e um ajuste local só faria a dashboard divergir do
+    # `rsync-hub monitor` e do watchdog do próprio cliente, que usam a mesma conta.
+    if interval_min:
         limit = interval_min * 120 + 120
     else:
         limit = int(cfg["stale_fallback_seconds"])
