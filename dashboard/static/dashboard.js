@@ -805,6 +805,7 @@ function initFileForm() {
       '<option value="numero">Número</option><option value="inteiro">Inteiro</option>' +
       '<option value="booleano">Booleano</option>' +
       '<option value="epoch">Data/hora (epoch)</option>' +
+      '<option value="timestamp">Data/hora (texto)</option>' +
       '<option value="texto">Texto</option></select></td>' +
       '<td><input name="var_label"></td>' +
       '<td><input name="var_unit"></td>' +
@@ -928,12 +929,18 @@ function initFileForm() {
          certa, ou se o formato não casou. */
       const tsIndex = (data.ts_index === null || data.ts_index === undefined) ? -1 : data.ts_index;
       const tsDisp = data.ts_display || [];
+      const colDisp = data.col_display || {};   /* {coluna: [convertido por linha]} */
       rows.forEach((r, ri) => {
         html += "<tr>" + Array.from({ length: ncols }, (_, c) => {
           let v = esc(r[c] ?? "");
           if (c === tsIndex) {
             v += tsDisp[ri]
               ? `<br><span class='col-label'>${esc(tsDisp[ri])}</span>`
+              : "<br><span class='warn'>não convertido</span>";
+          } else if (colDisp[c]) {
+            /* coluna mapeada com tipo (epoch, timestamp, booleano, inteiro) */
+            v += colDisp[c][ri]
+              ? `<br><span class='col-label'>${esc(colDisp[c][ri])}</span>`
               : "<br><span class='warn'>não convertido</span>";
           }
           return `<td${cellCls(c)}>${v}</td>`;

@@ -75,7 +75,7 @@ def parse_rows(lines: list[str], separator: str, quotechar: str) -> list[list[st
 # Tipos primitivos que uma coluna pode ter. O padrão continua sendo número — os demais
 # existem porque um arquivo real mistura tudo na mesma linha: contadores inteiros,
 # flags 0/1, carimbos epoch de cada bloco de sensor e códigos em texto.
-COLUMN_TYPES = ("numero", "inteiro", "booleano", "epoch", "texto")
+COLUMN_TYPES = ("numero", "inteiro", "booleano", "epoch", "timestamp", "texto")
 _TRUE = {"1", "true", "t", "sim", "s", "yes", "y", "on", "ligado", "verdadeiro"}
 _FALSE = {"0", "false", "f", "nao", "não", "n", "no", "off", "desligado", "falso"}
 

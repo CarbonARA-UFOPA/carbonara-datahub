@@ -88,9 +88,10 @@ stations:
           # em ms/µs/ns (a escala é deduzida pela ordem de grandeza).
         variables:                            # um gráfico por variável
           # type (opcional, padrão "numero"): numero · inteiro · booleano · epoch ·
-          # texto. "epoch" é para OUTRAS colunas de carimbo do arquivo (a linha mostra
-          # quando aquele bloco avançou, exibida como hora); "texto" não vira gráfico,
-          # a tela mostra o último valor lido.
+          # timestamp · texto. "epoch" e "timestamp" são para OUTRAS colunas de carimbo
+          # do arquivo (epoch = número; timestamp = data/hora por extenso): a linha
+          # mostra quando aquele bloco avançou, exibida como hora. "texto" não vira
+          # gráfico — a tela mostra o último valor lido.
           # min/max (opcionais) = limites FÍSICOS plausíveis: viram linhas de marcação
           # no gráfico e os trechos fora deles ficam vermelhos (dado bom vs. ruim).
           - { column: 1,         label: "Temperatura do ar", unit: "°C",  min: -10, max: 50 }

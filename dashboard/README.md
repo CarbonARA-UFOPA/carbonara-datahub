@@ -59,9 +59,10 @@ python run.py                          # http://localhost:8080
 - **Gráficos por variável** das últimas N linhas de cada arquivo monitorado (tail
   eficiente — o arquivo nunca é lido inteiro), com auto-atualização.
 - **Tipo por coluna** (no cadastro de cada variável): *Número* (padrão), *Inteiro*,
-  *Booleano* (0/1, sim/não, on/off), *Data/hora (epoch)* — para as outras colunas de
-  carimbo do arquivo, exibidas como hora em vez de número — e *Texto*, que não vira
-  gráfico e aparece como "último valor lido".
+  *Booleano* (0/1, sim/não, on/off), *Data/hora (epoch)* e *Data/hora (texto)* — para as
+  outras colunas de carimbo do arquivo, exibidas como hora em vez de número — e *Texto*,
+  que não vira gráfico e aparece como "último valor lido". Os tipos valem também na
+  pré-visualização: cada coluna mapeada mostra o valor convertido embaixo do valor cru.
 - **Resolução do carimbo acompanha os dados**: data completa sempre; o relógio mostra
   minutos para um datalogger de 30 min, segundos para arquivos por segundo e
   milissegundos para cadência sub-segundo — assim registros diferentes nunca viram o

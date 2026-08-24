@@ -128,6 +128,28 @@ def parse_timestamp(raw: str, fmt: str | None) -> datetime | None:
     return None
 
 
+# Formatos tentados para uma coluna do tipo "timestamp" (data/hora em TEXTO). Não há
+# formato por variável no cadastro — seria um campo a mais em cada linha da tabela —,
+# então tentamos o do arquivo (quando não é epoch) e depois os usuais. parse_timestamp
+# já cobre, para cada um, a variante com fração de segundo.
+_TEXT_TS_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M",
+                    "%Y-%m-%d", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
+                    "%Y%m%d%H%M%S", "%Y%m%d", "%H:%M:%S", "%H:%M")
+
+
+def parse_datetime_text(raw: str, prefer: str | None = None) -> datetime | None:
+    """Data/hora em texto, descobrindo o formato entre os usuais (o do arquivo primeiro)."""
+    tentativas = []
+    if prefer and not config_store.is_epoch_format(prefer):
+        tentativas.append(prefer)
+    tentativas.extend(f for f in _TEXT_TS_FORMATS if f != prefer)
+    for f in tentativas:
+        dt = parse_timestamp(raw, f)
+        if dt is not None:
+            return dt
+    return None
+
+
 def _read_header(path, fcfg) -> list[str] | None:
     hl = fcfg.get("header_line")
     if not hl:
@@ -144,6 +166,31 @@ def _decimate(indices_len: int) -> list[int]:
         return list(range(indices_len))
     step = indices_len / MAX_POINTS
     return [int(i * step) for i in range(MAX_POINTS)]
+
+
+def column_datetimes(cells: list[str], vtype: str, ts_format: str | None) -> list:
+    """Carimbos de uma coluna do tipo 'epoch' ou 'timestamp' (None onde não converteu)."""
+    if vtype == "epoch":
+        return [parse_epoch(c) for c in cells]
+    return [parse_datetime_text(c, ts_format) for c in cells]
+
+
+def column_display(cells: list[str], vtype: str, ts_format: str | None,
+                   decimal: str = ".", strip_re=None) -> list:
+    """Como cada célula APARECE, dado o tipo da coluna — é o que o preview mostra
+    embaixo do valor cru, para conferir a conversão antes de salvar. None = não há o que
+    converter (tipo número/texto) ou a conversão falhou."""
+    if vtype in ("epoch", "timestamp"):
+        dts = column_datetimes(cells, vtype, ts_format)
+        fmt = ts_display_format(dts)
+        return [fmt_ts(d, fmt) if d else None for d in dts]
+    if vtype == "booleano":
+        return [None if (b := tailer.to_bool(c)) is None else ("sim" if b else "não")
+                for c in cells]
+    if vtype == "inteiro":
+        return [None if (v := tailer.to_int(c, decimal, strip_re)) is None
+                else str(int(v)) for c in cells]
+    return [None] * len(cells)
 
 
 def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
@@ -235,11 +282,11 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
             limpos = [(c or "").strip().strip('"') for c in cells]
             entry["values"] = [None] * len(cells)
             entry["last_text"] = next((c for c in reversed(limpos) if c), None)
-        elif vtype == "epoch":
+        elif vtype in ("epoch", "timestamp"):
             # Carimbo epoch numa coluna QUALQUER: o valor plotado é o próprio epoch em
             # segundos (a linha mostra quando aquele bloco de sensor avançou) e a
             # formatação para data/hora acontece na exibição.
-            dts_var = [parse_epoch(c) for c in cells]
+            dts_var = column_datetimes(cells, vtype, ts_format)
             entry["values"] = [d.timestamp() if d else None for d in dts_var]
             f = ts_display_format(dts_var)
             entry["ts_res"] = ("ms" if f == TS_DISPLAY_MS
@@ -346,13 +393,29 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
     # Carimbo convertido por linha: o preview mostra o valor CRU (é a conferência do
     # parse) e, embaixo, a data/hora que a dashboard vai usar. Sem isso um epoch fica
     # como um número grande e não dá para saber se a leitura está certa.
+    ts_fmt = (entry.get("timestamp") or {}).get("format")
     ts_display: list[str | None] = []
     if ts_idx is not None:
-        ts_fmt = (entry.get("timestamp") or {}).get("format")
         dts_prev = [parse_timestamp(r[ts_idx] if ts_idx < len(r) else "", ts_fmt)
                     for r in out_rows]
         disp_fmt = ts_display_format(dts_prev)
         ts_display = [fmt_ts(d, disp_fmt) if d else None for d in dts_prev]
+
+    # Conversão de TODAS as colunas mapeadas, conforme o tipo de cada variável — sem
+    # isto o preview só convertia o carimbo principal e uma coluna marcada como
+    # 'epoch' continuava aparecendo como um número de dez dígitos, sem como conferir.
+    ncols = max((len(r) for r in out_rows), default=0)
+    col_display: dict[str, list] = {}
+    for var in entry.get("variables", []):
+        vtype = var.get("type") or "numero"
+        if vtype in ("numero", "texto"):
+            continue
+        vidx = _column_index(var["column"], header, ncols)
+        if vidx is None:
+            continue
+        cells = [r[vidx] if vidx < len(r) else "" for r in out_rows]
+        col_display[str(vidx)] = column_display(cells, vtype, ts_fmt,
+                                                entry.get("decimal", "."), strip_re)
 
     return {
         "path": str(path),
@@ -361,5 +424,6 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
         "rows": out_rows,
         "ts_index": ts_idx,
         "ts_display": ts_display,
+        "col_display": col_display,
         "diagnostics": diagnostics,
     }

@@ -140,6 +140,7 @@
             <option value="inteiro" {{ 'selected' if vt == 'inteiro' }}>Inteiro</option>
             <option value="booleano" {{ 'selected' if vt == 'booleano' }}>Booleano</option>
             <option value="epoch" {{ 'selected' if vt == 'epoch' }}>Data/hora (epoch)</option>
+            <option value="timestamp" {{ 'selected' if vt == 'timestamp' }}>Data/hora (texto)</option>
             <option value="texto" {{ 'selected' if vt == 'texto' }}>Texto</option>
           </select>
         </td>
@@ -170,8 +171,12 @@
         <code>sim/não</code>, <code>true/false</code>, <code>on/off</code>) ·
         <strong>Data/hora (epoch)</strong> — para as OUTRAS colunas de carimbo do
         arquivo: a linha mostra quando aquele bloco avançou e os valores aparecem como
-        hora, não como número · <strong>Texto</strong> — não vira gráfico; a tela
-        mostra o último valor lido.</li>
+        hora, não como número · <strong>Data/hora (texto)</strong> — idem, para
+        carimbos escritos por extenso (<code>2026-08-24</code>,
+        <code>24/08/2026 00:30</code>): o formato é descoberto entre os usuais ·
+        <strong>Texto</strong> — não vira gráfico; a tela mostra o último valor lido.
+        <br>Os tipos valem também na <em>pré-visualização</em>: cada coluna mapeada
+        mostra o valor convertido embaixo do valor cru.</li>
       <li><em>Mín / Máx físicos</em> — limites plausíveis: viram linhas tracejadas no
         gráfico e os trechos fora deles ficam
         <strong style="color:#d64545">vermelhos</strong>.</li>

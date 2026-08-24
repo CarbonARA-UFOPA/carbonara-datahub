@@ -455,13 +455,20 @@ computes live station status. Viewing is open; edits require the admin login
   text input is invisible and gets stripped); `\t` behaves the same way.
 - **Each variable has a primitive `type`** (`tailer.COLUMN_TYPES`, default `numero`,
   absent = `numero` for old configs): `numero` · `inteiro` · `booleano` (0/1, also
-  sim/não·true/false·on/off, and numeric fallback so `0000` is false) · `epoch` · `texto`.
-  The plotted value is ALWAYS numeric — the type changes how it is READ: an `epoch`
-  column plots the epoch seconds and is displayed as a clock (the API sends `ts_res`,
+  sim/não·true/false·on/off, and numeric fallback so `0000` is false) · `epoch` ·
+  `timestamp` (date/time as TEXT — no per-variable format field: `parse_datetime_text`
+  tries the file's `ts_format` then the usual patterns) · `texto`.
+  The plotted value is ALWAYS numeric — the type changes how it is READ: `epoch`/
+  `timestamp` plot epoch seconds and are displayed as a clock (the API sends `ts_res`,
   the JS formats), `booleano` becomes sim/não with a 0–1 axis, `inteiro` drops decimals.
   `texto` is the exception: it is NOT a time series, so `station_detail.html` renders a
   last-value box instead of a canvas and the compare picker skips it (a text variable
   would otherwise be an unexplained empty line).
+  **The types must also apply in the parse PREVIEW** (`build_preview.col_display`,
+  keyed by column index): the preview is where you verify a mapping before saving, so
+  every mapped column shows its converted value under the raw cell — a column typed
+  `epoch` that still reads as a 10-digit number is the bug this closes. Keep
+  `column_display` as the single conversion path shared by the preview.
 - **Variable column index is user-editable** (a 118-column `.sfo` makes "add rows until
   you reach column 104" absurd). New rows still auto-fill the next free index. The
   guards are SERVER-side in `validate_file_entry` — no duplicates, never the timestamp
