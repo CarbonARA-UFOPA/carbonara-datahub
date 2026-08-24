@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Coleta (rsync-hub) · CARBONARA{% endblock %}
 {% block content %}
+{# Tolerante a um processo antigo servindo este template (git pull sem reiniciar):
+   sem `pause` no contexto, a página degrada em vez de estourar 500. #}
+{% set pause = pause if pause is defined and pause else {'all': None, 'stations': {}, 'paused_ids': [], 'any': False} %}
 <h1>Coleta — gerenciamento do rsync-hub</h1>
 
 <section class="card help-card">

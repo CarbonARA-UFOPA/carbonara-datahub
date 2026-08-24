@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ entry.id }} · Coleta · CARBONARA{% endblock %}
 {% block content %}
+{% set pause = pause if pause is defined and pause else {'all': None, 'stations': {}, 'paused_ids': [], 'any': False} %}
 <div class="page-head">
   <h1>Estação <code>{{ entry.id }}</code> — coleta</h1>
   <a class="btn" href="{{ url_for('hub.index') }}">← Voltar ao gerenciamento</a>
