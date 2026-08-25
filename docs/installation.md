@@ -111,7 +111,18 @@ agora ou arquivos chegando); ● **verde** = *Online* (atividade na última hora
 com `RSYNC_HUB_STALE`); ● **vermelho** = *Offline* (sem atividade além da janela);
 ● **amarelo** = *Pausada* (recepção suspensa de propósito — veja abaixo).
 
-### A4. Quando as estações param de enviar
+### A4. Quanto cada estação consome
+
+```bash
+rsync-hub volume          # hoje, 7 dias e 30 dias, por estação, + TOTAL
+rsync-hub volume 90       # outra janela
+```
+
+Soma o payload entregue por sessão (o mesmo `bytes=` que alimenta a coluna VELOCIDADE).
+Serve para dimensionar plano de dados/link: quem consome mais, quem consome menos. Só
+conta sessões ocorridas a partir da versão que registra a medição.
+
+### A5. Quando as estações param de enviar
 
 ```bash
 rsync-hub diagnostico              # só leitura: disco, chaves, home da conta, pausa, log
@@ -124,7 +135,7 @@ Mensagens típicas na estação e o que significam:
 |---|---|---|
 | `Permission denied (publickey,password)` | autenticação do **sshd** — nem chegou ao rsync-hub | a chave saiu do `authorized_keys` (ex.: gravação com o **disco cheio**), ou o home da conta de serviço não é mais a raiz (`move-root` interrompido) |
 | `rsync-hub: somente rsync (envio) é permitido` | comando forçado | alguém tentou usar a chave para outra coisa |
-| `rsync-hub: recepção de dados PAUSADA` | comando forçado | pausa intencional (veja A5) |
+| `rsync-hub: recepção de dados PAUSADA` | comando forçado | pausa intencional (veja A6) |
 | `No space left on device` / rc 11 | gravação em `incoming/` | disco do servidor cheio |
 
 **Disco cheio é a causa raiz mais frequente**: libere espaço primeiro (`df -h`,
@@ -132,7 +143,7 @@ arquivos antigos em `archive/`), depois rode o `diagnostico`. Se ele apontar est
 `RECUPERÁVEL`, o `--reparar` recoloca as chaves usando os `.pub` guardados em
 `<raiz>/stations/<id>/` — a estação **não** precisa de chave nova nem de reconfiguração.
 
-### A5. Pausar e retomar a recepção
+### A6. Pausar e retomar a recepção
 
 Para uma manutenção (disco, migração da raiz, banco parado) você pode suspender a
 **chegada** de dados sem revogar nada e sem apagar nada:

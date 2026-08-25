@@ -167,6 +167,18 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   `/usr/local/bin/rsync-hub` (the forced-command path), active pauses, and per-station
   key vs stored `stations/<id>/*.pub`. `--reparar` re-authorizes stations whose public
   key is still stored on the hub — the station keeps its own key, nothing is reissued.
+- **Per-station data volume in the dashboard** (`status.volumes`, column *Consumo
+  (30 d)*): ONE scan serves every station and the result is cached for 60 s — summing
+  the period per station on every refresh would be pure waste. The scan itself is
+  bounded by the PERIOD, not by the log size: `tailer.tail_lines_since` walks the file
+  backwards and stops at the first line older than the cutoff (the ISO-UTC stamp orders
+  as text), which matters because `connections.log` is never rotated.
+- **Per-station data volume**: `rsync-hub volume [dias]` sums the same `bytes=` field
+  per station over today / 7 days / N days (default 30), plus a TOTAL row. Cutoffs are
+  computed in LOCAL time and converted to UTC (`date -d … -u`) because the log is UTC
+  but "today" for the reader is the local day; comparison against the ISO stamp is
+  textual, which already orders correctly. Sessions logged before this feature have no
+  `bytes=` and are skipped rather than counted as zero.
 - **Per-station speed**: `serve` measures the delivered payload (`dir_bytes` on
   `incoming/<id>` before/after) and the session duration in ms, and appends
   `bytes=<n> ms=<n>` to the DISCONNECT line — extra fields at the END, so every existing

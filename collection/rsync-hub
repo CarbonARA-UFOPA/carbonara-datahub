@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-25.2"
+RSYNC_HUB_VERSION="2026-08-25.3"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -1504,6 +1504,58 @@ station_speed() {   # $1=id → "3.1 MB/s · méd 2.8 MB/s" ou "-"
     return 0
 }
 
+# --- Consumo de dados por estação --------------------------------------------------
+# Soma dos bytes= das sessões, por janela de tempo. Os cortes são calculados em HORA
+# LOCAL e convertidos para UTC ('date -d ... -u'), porque o log é UTC mas "hoje" para
+# quem lê é o dia local; a comparação com o carimbo ISO é textual, que já ordena certo.
+volume_report() {   # volume [dias]  (padrão: 30)
+    vr_dias="${1:-30}"
+    case "$vr_dias" in ''|*[!0-9]*) die "uso: rsync-hub volume [dias]  (ex.: volume 7)" ;; esac
+    [ -s "$LOG" ] || { echo "(sem registros em $LOG)"; return 0; }
+    vr_hoje="$(date -d 'today 00:00' -u +%FT%TZ 2>/dev/null || true)"
+    vr_c7="$(date -d '7 days ago' -u +%FT%TZ 2>/dev/null || true)"
+    vr_cn="$(date -d "$vr_dias days ago" -u +%FT%TZ 2>/dev/null || true)"
+    if [ -z "$vr_hoje" ]; then
+        echo "aviso: 'date -d' indisponível neste sistema — sem recortes por período." >&2
+        vr_hoje="9999"; vr_c7="9999"; vr_cn=""
+    fi
+    echo "consumo de dados por estação (payload recebido; fonte: $LOG)"
+    printf '  %-16s %12s %12s %12s %10s\n' "ESTAÇÃO" "HOJE" "7 DIAS" "${vr_dias} DIAS" "SESSÕES"
+    awk -v hoje="$vr_hoje" -v c7="$vr_c7" -v cn="$vr_cn" '
+        function fmt(v,   u, i) {
+            if (v <= 0) return "-"
+            split("B kB MB GB TB", u, " "); i = 1
+            while (v >= 1000 && i < 5) { v /= 1000; i++ }
+            return sprintf("%.1f %s", v, u[i])
+        }
+        $2 == "DISCONNECT" {
+            b = -1
+            for (i = 5; i <= NF; i++) if ($i ~ /^bytes=/) b = substr($i, 7) + 0
+            if (b < 0) next                      # sessão anterior à medição: ignora
+            id = $3; vistos[id] = 1
+            if (cn == "" || $1 >= cn) { tn[id] += b; sn[id]++ }
+            if ($1 >= c7)   t7[id] += b
+            if ($1 >= hoje) th[id] += b
+        }
+        END {
+            n = 0
+            for (id in vistos) ids[++n] = id
+            for (i = 1; i < n; i++) for (j = i + 1; j <= n; j++)
+                if (ids[i] > ids[j]) { t = ids[i]; ids[i] = ids[j]; ids[j] = t }
+            for (i = 1; i <= n; i++) {
+                id = ids[i]
+                printf "  %-16s %12s %12s %12s %10d\n", id, fmt(th[id]), fmt(t7[id]),
+                       fmt(tn[id]), sn[id]
+                gh += th[id]; g7 += t7[id]; gn += tn[id]; gs += sn[id]
+            }
+            if (!n) { print "  (nenhuma sessão com medição ainda — só sessões a partir da"
+                      print "   versão que grava bytes= no log entram na conta)"; exit }
+            printf "  %-16s %12s %12s %12s %10d\n", "TOTAL", fmt(gh), fmt(g7), fmt(gn), gs
+        }
+    ' "$LOG"
+    return 0
+}
+
 # $1/$2/$3 = rx, tx e epoch da leitura ANTERIOR (o monitor passa; o status não tem).
 print_network() {
     pn_if="$(net_default_iface || true)"
@@ -1637,8 +1689,6 @@ print_status() {
         printf '%s %-16s %-18s %-22s %-8s %s\n' "$dot" "$id" "$txt" "$when" "$cyc" "$(station_speed "$id")"
     done
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
-    echo "  (pastas em $INCOMING/<estação> · velocidade = payload entregue ÷ duração da"
-    echo "   sessão, ignorando sessões abaixo de 64 kB, onde a latência domina)"
 }
 
 # Converte, para EXIBIÇÃO, o 1º campo (carimbo UTC ISO gravado por serve()) de cada
@@ -1689,9 +1739,10 @@ menu() {
         echo " 5) Status agora"
         echo " 6) PAUSAR a recepção de dados"
         echo " 7) RETOMAR a recepção de dados"
-        echo " 8) Diagnosticar acesso das estações"
-        echo " 9) Monitorar conexões (ao vivo)"
-        echo "10) Como configurar um cliente (estação)"
+        echo " 8) Consumo de dados por estação"
+        echo " 9) Diagnosticar acesso das estações"
+        echo "10) Monitorar conexões (ao vivo)"
+        echo "11) Como configurar um cliente (estação)"
         echo " 0) Sair"
         printf "opção> "
         read -r op || exit 0
@@ -1710,12 +1761,13 @@ menu() {
             5) net_prime_sample; print_status ;;
             6) menu_pause ;;
             7) menu_resume ;;
-            8) ( diagnose ) || true
+            8) volume_report ;;
+            9) ( diagnose ) || true
                if is_root && ask_yn "tentar reparar as chaves perdidas agora?" n; then
                    ( diagnose --reparar ) || true
                fi ;;
-            9) monitor ;;
-            10) client_help ;;
+            10) monitor ;;
+            11) client_help ;;
             0|q|"") exit 0 ;;
             *) echo "opção inválida" ;;
         esac
@@ -1751,6 +1803,8 @@ uso:
   sudo rsync-hub diagnostico --reparar
                                      reautoriza as estações cuja chave pública ainda
                                      está guardada em <raiz>/stations/<id>/
+       rsync-hub volume [dias]       consumo de dados por estação (hoje, 7 dias e o
+                                     período pedido; padrão 30 dias)
        rsync-hub list                lista as estações autorizadas
        rsync-hub monitor             modo ao vivo: quem conectou e o que chegou (Ctrl-C sai)
        rsync-hub status              uma leitura do status
@@ -1788,6 +1842,7 @@ case "${1:-}" in
     purge)   shift; purge_station "$@" ;;
     move-root) shift; move_root "$@" ;;
     diagnostico|diagnostico-acesso|doctor|diagnose) shift; diagnose "${1:-}" ;;
+    volume|consumo) shift; volume_report "${1:-}" ;;
     list)    list_stations ;;
     monitor) monitor ;;
     status)  net_prime_sample; print_status ;;

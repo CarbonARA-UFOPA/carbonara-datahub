@@ -43,6 +43,37 @@ def tail_data_lines(path: Path, n: int, skip_header_lines: int) -> list[str]:
     return lines[-n:]
 
 
+def tail_lines_since(path: Path, min_ts: str, max_bytes: int = 32 * 1024 * 1024) -> list[str]:
+    """Linhas do FIM do arquivo cujo 1º campo (carimbo ISO) seja >= ``min_ts``.
+
+    O connections.log é cronológico e cresce para sempre; somar 30 dias lendo o arquivo
+    inteiro ficaria caro com o tempo. Aqui lemos blocos de trás para frente e paramos
+    assim que a primeira linha do buffer já é anterior ao corte — o custo passa a ser
+    proporcional ao PERÍODO pedido, não ao tamanho do log. Comparação textual: o carimbo
+    ISO UTC ordena como string."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            pos = fh.tell()
+            data = b""
+            while pos > 0 and len(data) < max_bytes:
+                step = min(_BLOCK * 16, pos)
+                pos -= step
+                fh.seek(pos)
+                data = fh.read(step) + data
+                nl = data.find(b"\n")
+                if nl > 0:
+                    primeiro = data[:nl].split(b" ", 1)[0].decode("utf-8", errors="replace")
+                    if primeiro < min_ts:
+                        break
+    except OSError:
+        return []
+    linhas = data.decode("utf-8", errors="replace").splitlines()
+    if pos > 0 and linhas:
+        linhas = linhas[1:]          # a primeira pode ter sido cortada no meio
+    return [ln for ln in linhas if ln[:len(min_ts)] >= min_ts]
+
+
 def head_lines(path: Path, n: int) -> list[str]:
     out: list[str] = []
     with open(path, encoding="utf-8", errors="replace") as fh:

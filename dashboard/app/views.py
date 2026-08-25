@@ -29,6 +29,18 @@ from . import config_store, hub, status
 pages = Blueprint("pages", __name__)
 
 
+@pages.app_template_filter("hbytes")
+def _fmt_hbytes(v):
+    """Volume de dados em unidade legível (mesma escala do `rsync-hub volume`)."""
+    if not v:
+        return "—"
+    for unidade in ("B", "kB", "MB", "GB", "TB"):
+        if v < 1000 or unidade == "TB":
+            return f"{v:.0f} {unidade}" if unidade == "B" else f"{v:.1f} {unidade}"
+        v /= 1000
+    return f"{v:.1f} TB"
+
+
 @pages.app_template_filter("bps")
 def _fmt_bps(v):
     """Bytes por segundo em unidade legível (mesma escala do monitor no terminal)."""

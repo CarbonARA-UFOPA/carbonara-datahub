@@ -33,6 +33,38 @@ _INTERVAL_RE = re.compile(r"^interval_min=(\d+)\s*$", re.M)
 # entregue e a duração da sessão. Sessões pequenas ficam de fora — abaixo disso a
 # latência domina e o número diria mais sobre o ping do que sobre a banda.
 _SPEED_MIN_BYTES = 65536
+
+# Consumo de 30 dias: uma única varredura do log serve TODAS as estações, e o resultado
+# vale por um minuto — a página recalcula a cada refresh e somar o período inteiro por
+# estação, a cada carga, seria desperdício puro.
+_VOL_DAYS = 30
+_VOL_TTL = 60.0
+_vol_cache: dict = {"t": 0.0, "path": None, "data": {}}
+
+
+def volumes(cfg: dict) -> dict[str, int]:
+    """{estação: bytes recebidos nos últimos 30 dias}, do log do rsync-hub."""
+    try:
+        path = config_store.connections_log_path(cfg)
+    except (ValueError, KeyError):
+        return {}
+    agora = time.time()
+    if (_vol_cache["path"] == str(path)
+            and agora - _vol_cache["t"] < _VOL_TTL):
+        return _vol_cache["data"]
+    corte = datetime.fromtimestamp(agora - _VOL_DAYS * 86400, timezone.utc)
+    min_ts = corte.strftime("%Y-%m-%dT%H:%M:%SZ")
+    total: dict[str, int] = {}
+    for linha in tailer.tail_lines_since(path, min_ts):
+        parts = linha.split()
+        if len(parts) < 5 or parts[1] != "DISCONNECT":
+            continue
+        for campo in parts[4:]:
+            chave, _, valor = campo.partition("=")
+            if chave == "bytes" and valor.isdigit():
+                total[parts[2]] = total.get(parts[2], 0) + int(valor)
+    _vol_cache.update(t=agora, path=str(path), data=total)
+    return total
 _LOG_TAIL = 500  # linhas do fim do connections.log a examinar
 
 
@@ -191,6 +223,8 @@ def station_status(cfg: dict, station: dict, pause: dict | None = None) -> dict:
         "last_bps": speeds["last_bps"],
         "avg_bps": speeds["avg_bps"],
         "speed_sessions": speeds["sessions"],
+        # Consumo acumulado no período (varredura única, em cache — ver volumes()).
+        "bytes_30d": volumes(cfg).get(station["id"], 0),
         "limit_seconds": limit,
         "heartbeat_file": hb_display,
         "heartbeat_found": hb_found,
