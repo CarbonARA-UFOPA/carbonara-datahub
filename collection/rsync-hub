@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-25.3"
+RSYNC_HUB_VERSION="2026-08-25.4"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -1496,10 +1496,54 @@ load_speeds() {   # uma passada no fim do log por ciclo (não por estação)
     return 0
 }
 
+# Consumo de 30 dias + nº de sessões, para as colunas do monitor. Recalculado no
+# máximo 1×/min: a varredura é de 30 dias de log, enquanto a velocidade sai do fim do
+# arquivo a cada ciclo. Com 'tac' a leitura vai do fim para o começo e PARA no corte —
+# o custo passa a ser proporcional ao período, não ao tamanho do log (que nunca rotaciona).
+VOL30=""; VOL30_T=0
+VOL30_TTL=60
+
+load_volumes() {
+    lv_now="$(date +%s)"
+    [ -n "$VOL30" ] && [ "$(( lv_now - VOL30_T ))" -lt "$VOL30_TTL" ] && return 0
+    VOL30=""; VOL30_T="$lv_now"
+    [ -s "$LOG" ] || return 0
+    lv_corte="$(date -d '30 days ago' -u +%FT%TZ 2>/dev/null || true)"
+    [ -n "$lv_corte" ] || return 0        # sem 'date -d': coluna fica vazia
+    lv_awk='
+        function fmt(v,   u, i) {
+            if (v <= 0) return "-"
+            split("B kB MB GB TB", u, " "); i = 1
+            while (v >= 1000 && i < 5) { v /= 1000; i++ }
+            return sprintf("%.1f %s", v, u[i])
+        }
+        rev && $1 < corte { exit }            # lendo de trás para frente: já passou
+        $2 == "DISCONNECT" {
+            if (!rev && $1 < corte) next
+            b = -1
+            for (i = 5; i <= NF; i++) if ($i ~ /^bytes=/) b = substr($i, 7) + 0
+            if (b >= 0) { vol[$3] += b; ses[$3]++ }
+        }
+        END { for (id in vol) printf "%s|%s|%d\n", id, fmt(vol[id]), ses[id] }'
+    if command -v tac >/dev/null 2>&1; then
+        VOL30="$(tac "$LOG" 2>/dev/null | awk -v corte="$lv_corte" -v rev=1 "$lv_awk")" || VOL30=""
+    else
+        VOL30="$(tail -n 200000 "$LOG" 2>/dev/null | awk -v corte="$lv_corte" -v rev=0 "$lv_awk")" || VOL30=""
+    fi
+    return 0
+}
+
+station_volume() {   # $1=id → "7.2 GB|4320" (volume 30 d e nº de sessões medidas)
+    [ -n "$VOL30" ] || { printf '%s' "-|0"; return 0; }
+    sv="$(printf '%s\n' "$VOL30" | awk -F'|' -v id="$1" '$1==id {printf "%s|%s", $2, $3; exit}')"
+    [ -n "$sv" ] && printf '%s' "$sv" || printf '%s' "-|0"
+    return 0
+}
+
 station_speed() {   # $1=id → "3.1 MB/s · méd 2.8 MB/s" ou "-"
     [ -n "$SPEEDS" ] || { printf '%s' "-"; return 0; }
     ss="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" \
-        '$1==id {printf "%s · méd %s", $2, $3; exit}')"
+        '$1==id {printf "%s · %s", $2, $3; exit}')"
     [ -n "$ss" ] && printf '%s' "$ss" || printf '%s' "-"
     return 0
 }
@@ -1637,8 +1681,10 @@ print_status() {
     print_network
     echo
     load_speeds
-    printf '  %-16s %-18s %-22s %-8s %s\n' \
-        "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "VELOCIDADE (últ. sessão · média)"
+    load_volumes
+    printf '  %-16s %-18s %-21s %-7s %-24s %10s %8s\n' \
+        "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "VELOCIDADE (últ · méd)" \
+        "30 DIAS" "SESSÕES"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
     found=0
     for d in "$INCOMING"/*/; do
@@ -1686,7 +1732,10 @@ print_status() {
         else
             dot="${C_OFF}●${C_0}"; txt="Offline"
         fi
-        printf '%s %-16s %-18s %-22s %-8s %s\n' "$dot" "$id" "$txt" "$when" "$cyc" "$(station_speed "$id")"
+        vs="$(station_volume "$id")"
+        printf '%s %-16s %-18s %-21s %-7s %-24s %10s %8s\n' \
+            "$dot" "$id" "$txt" "$when" "$cyc" "$(station_speed "$id")" \
+            "${vs%%|*}" "${vs##*|}"
     done
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
 }

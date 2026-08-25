@@ -95,8 +95,11 @@ rsync-hub status       # uma leitura só
 rsync-hub              # menu interativo com todas as opções acima
 ```
 
-A coluna **VELOCIDADE** mostra a taxa útil da última sessão de cada estação e a média
-das medidas (payload entregue ÷ duração da sessão). Só aparece para sessões ocorridas a
+As colunas **VELOCIDADE**, **30 DIAS** e **SESSÕES** mostram, por estação, a taxa útil
+(última sessão · média das medidas), o total recebido em 30 dias e quantas sessões
+entraram na conta. A velocidade acompanha cada ciclo do monitor; o consumo é recalculado
+no máximo uma vez por minuto (a varredura é de 30 dias de log).
+A taxa é payload entregue ÷ duração da sessão. Só aparece para sessões ocorridas a
 partir desta versão, e ignora sessões abaixo de 64 kB — nelas o tempo é quase todo
 handshake, e a "velocidade" falaria do ping, não do enlace.
 

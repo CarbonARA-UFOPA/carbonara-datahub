@@ -173,6 +173,11 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   bounded by the PERIOD, not by the log size: `tailer.tail_lines_since` walks the file
   backwards and stops at the first line older than the cutoff (the ISO-UTC stamp orders
   as text), which matters because `connections.log` is never rotated.
+- **Monitor columns** `30 DIAS` / `SESSÕES` come from `load_volumes`, refreshed at most
+  once a minute (`VOL30_TTL`) while the speed columns refresh every cycle — the volume
+  scan covers 30 days of log, the speed only its tail. With `tac` the scan reads
+  backwards and EXITS at the cutoff, so its cost follows the period, not the (never
+  rotated) log size; without `tac` it falls back to `tail -n 200000`.
 - **Per-station data volume**: `rsync-hub volume [dias]` sums the same `bytes=` field
   per station over today / 7 days / N days (default 30), plus a TOTAL row. Cutoffs are
   computed in LOCAL time and converted to UTC (`date -d … -u`) because the log is UTC
