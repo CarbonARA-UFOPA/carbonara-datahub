@@ -2,7 +2,7 @@ server:
   host: 0.0.0.0
   port: 8080
   refresh_seconds: 60
-data_root: /srv/carbonara/
+data_root: /srv/carbonara-dados/carbonara
 connections_log: null
 timezone: null
 stale_fallback_seconds: 3600
@@ -15,9 +15,9 @@ stations:
   name: Radiometro JPL
   latitude: -2.6792
   longitude: -54.533
-  heartbeat_file: /srv/carbonara/incoming/eddyfarm/.carbonara-status
+  heartbeat_file: /srv/carbonara-dados/carbonara/incoming/eddyfarm/.carbonara-status
   files:
-  - path: /srv/carbonara/incoming/eddyfarm/loggernet/CR1000_Proc3K.dat
+  - path: /srv/carbonara-dados/carbonara/incoming/eddyfarm/loggernet/CR1000_Proc3K.dat
     tail_lines: 360
     separator: ','
     quotechar: '"'
@@ -339,7 +339,7 @@ stations:
       min: null
       max: null
     id: cr1000_proc3k
-  - path: /srv/carbonara/incoming/eddyfarm/loggernet/CR1000_Public.dat
+  - path: /srv/carbonara-dados/carbonara/incoming/eddyfarm/loggernet/CR1000_Public.dat
     tail_lines: 360
     separator: ','
     quotechar: ''
@@ -678,15 +678,340 @@ stations:
     id: cr1000_public
     window_hours: null
     strip_regex: '"m -125'
+  - path: incoming/eddyfarm/loggernet/CR1KX_RAD_NASA_Proc3K.dat
+    alias: loggernet/CR1KX_RAD_NASA_Proc3K
+    dynamic_path: false
+    tail_lines: 100
+    window_hours: null
+    separator: ','
+    quotechar: '"'
+    decimal: .
+    skip_header_lines: 4
+    header_line: 2
+    timestamp:
+      column: 0
+      format: '%Y-%m-%d %H:%M:%S'
+    variables:
+    - column: 1
+      label: RECORD
+      unit: null
+      min: null
+      max: null
+    - column: 2
+      label: LgrBatryVolts
+      unit: null
+      min: null
+      max: null
+    - column: 3
+      label: PanelDgC
+      unit: null
+      min: null
+      max: null
+    - column: 4
+      label: Rad1_A(1)
+      unit: null
+      min: null
+      max: null
+    - column: 5
+      label: Rad1_A(2)
+      unit: null
+      min: null
+      max: null
+    - column: 6
+      label: Rad1_A(3)
+      unit: null
+      min: null
+      max: null
+    - column: 7
+      label: Rad1_A(4)
+      unit: null
+      min: null
+      max: null
+    - column: 8
+      label: Rad1_A(5)
+      unit: null
+      min: null
+      max: null
+    - column: 9
+      label: Rad1_A(6)
+      unit: null
+      min: null
+      max: null
+    - column: 10
+      label: Rad1_A(7)
+      unit: null
+      min: null
+      max: null
+    - column: 11
+      label: Rad1_A(8)
+      unit: null
+      min: null
+      max: null
+    - column: 12
+      label: Rad1_A(9)
+      unit: null
+      min: null
+      max: null
+    - column: 13
+      label: Rad1_A(10)
+      unit: null
+      min: null
+      max: null
+    - column: 14
+      label: Rad1_A(11)
+      unit: null
+      min: null
+      max: null
+    - column: 15
+      label: Rad1_B(1)
+      unit: null
+      min: null
+      max: null
+    - column: 16
+      label: Rad1_B(2)
+      unit: null
+      min: null
+      max: null
+    - column: 17
+      label: Rad1_B(3)
+      unit: null
+      min: null
+      max: null
+    - column: 18
+      label: Rad1_B(4)
+      unit: null
+      min: null
+      max: null
+    - column: 19
+      label: Rad1_B(5)
+      unit: null
+      min: null
+      max: null
+    - column: 20
+      label: Rad1_B(6)
+      unit: null
+      min: null
+      max: null
+    - column: 21
+      label: Rad1_B(7)
+      unit: null
+      min: null
+      max: null
+    - column: 22
+      label: Rad1_B(8)
+      unit: null
+      min: null
+      max: null
+    - column: 23
+      label: Rad1_B(9)
+      unit: null
+      min: null
+      max: null
+    - column: 24
+      label: Rad1_B(10)
+      unit: null
+      min: null
+      max: null
+    - column: 25
+      label: Rad1_B(11)
+      unit: null
+      min: null
+      max: null
+    - column: 26
+      label: Rad1_C(1)
+      unit: null
+      min: null
+      max: null
+    - column: 27
+      label: Rad1_C(2)
+      unit: null
+      min: null
+      max: null
+    - column: 28
+      label: Rad1_C(3)
+      unit: null
+      min: null
+      max: null
+    - column: 29
+      label: Rad1_C(4)
+      unit: null
+      min: null
+      max: null
+    - column: 30
+      label: Rad1_C(5)
+      unit: null
+      min: null
+      max: null
+    - column: 31
+      label: Rad1_C(6)
+      unit: null
+      min: null
+      max: null
+    - column: 32
+      label: Rad1_C(7)
+      unit: null
+      min: null
+      max: null
+    - column: 33
+      label: Rad1_C(8)
+      unit: null
+      min: null
+      max: null
+    - column: 34
+      label: Rad1_C(9)
+      unit: null
+      min: null
+      max: null
+    - column: 35
+      label: Rad1_C(10)
+      unit: null
+      min: null
+      max: null
+    - column: 36
+      label: Rad1_C(11)
+      unit: null
+      min: null
+      max: null
+    - column: 37
+      label: Rad1_D(1)
+      unit: null
+      min: null
+      max: null
+    - column: 38
+      label: Rad1_D(2)
+      unit: null
+      min: null
+      max: null
+    - column: 39
+      label: Rad1_D(3)
+      unit: null
+      min: null
+      max: null
+    - column: 40
+      label: Rad1_D(4)
+      unit: null
+      min: null
+      max: null
+    - column: 41
+      label: Rad1_D(5)
+      unit: null
+      min: null
+      max: null
+    - column: 42
+      label: Rad1_D(6)
+      unit: null
+      min: null
+      max: null
+    - column: 43
+      label: Rad1_D(7)
+      unit: null
+      min: null
+      max: null
+    - column: 44
+      label: Rad1_D(8)
+      unit: null
+      min: null
+      max: null
+    - column: 45
+      label: Rad1_D(9)
+      unit: null
+      min: null
+      max: null
+    - column: 46
+      label: Rad1_D(10)
+      unit: null
+      min: null
+      max: null
+    - column: 47
+      label: Rad1_D(11)
+      unit: null
+      min: null
+      max: null
+    - column: 48
+      label: Rad1_E(1)
+      unit: null
+      min: null
+      max: null
+    - column: 49
+      label: Rad1_E(2)
+      unit: null
+      min: null
+      max: null
+    - column: 50
+      label: Rad1_E(3)
+      unit: null
+      min: null
+      max: null
+    - column: 51
+      label: Rad1_E(4)
+      unit: null
+      min: null
+      max: null
+    - column: 52
+      label: Rad1_E(5)
+      unit: null
+      min: null
+      max: null
+    - column: 53
+      label: Rad1_E(6)
+      unit: null
+      min: null
+      max: null
+    - column: 54
+      label: Rad1_E(7)
+      unit: null
+      min: null
+      max: null
+    - column: 55
+      label: Rad1_E(8)
+      unit: null
+      min: null
+      max: null
+    - column: 56
+      label: Rad1_E(9)
+      unit: null
+      min: null
+      max: null
+    - column: 57
+      label: Rad1_E(10)
+      unit: null
+      min: null
+      max: null
+    - column: 58
+      label: Rad1_E(11)
+      unit: null
+      min: null
+      max: null
+    - column: 59
+      label: r1_runt_count
+      unit: null
+      min: null
+      max: null
+    - column: 60
+      label: r1_runt_flag
+      unit: null
+      min: null
+      max: null
+    - column: 61
+      label: PollRad1_flag
+      unit: null
+      min: null
+      max: null
+    - column: 62
+      label: PowerRad1_flag
+      unit: null
+      min: null
+      max: null
+    id: cr1kx_rad_nasa_proc3k
   offline_window_min: null
 - id: fluxfarm
   name: fluxfarm
-  heartbeat_file: /srv/carbonara/incoming/fluxfarm/.carbonara-status
+  heartbeat_file: /srv/carbonara-dados/carbonara/incoming/fluxfarm/.carbonara-status
   latitude: -2.686364653392554
   longitude: -54.53922342877982
   offline_window_min: null
   files:
-  - path: /srv/carbonara/incoming/fluxfarm/loggernet/CR1K-X-EC-FARM_Flux_AmeriFluxFormat.dat
+  - path: /srv/carbonara-dados/carbonara/incoming/fluxfarm/loggernet/CR1K-X-EC-FARM_Flux_AmeriFluxFormat.dat
     alias: loggernet/CR1K-X-EC-FARM_Flux_AmeriFluxFormat
     tail_lines: 100
     window_hours: null
@@ -1000,7 +1325,7 @@ stations:
       min: null
       max: null
     id: cr1k-x-ec-farm_flux_amerifluxformat
-  - path: /srv/carbonara/incoming/fluxfarm/loggernet//CR1K-X-EC-FARM_Flux_CSFormat.dat
+  - path: /srv/carbonara-dados/carbonara/incoming/fluxfarm/loggernet//CR1K-X-EC-FARM_Flux_CSFormat.dat
     alias: loggernet/CR1K-X-EC-FARM_Flux_CSFormat
     tail_lines: 100
     window_hours: null
@@ -1490,7 +1815,724 @@ stations:
   latitude: -2.679653
   longitude: -54.533591
   offline_window_min: null
-  files: []
+  files:
+  - path: incoming/profsfo/torre/%Y-%m-%d__02-29-52.sfo
+    alias: torre/02-29-52
+    dynamic_path: true
+    tail_lines: 100
+    window_hours: null
+    separator: ' '
+    quotechar: '"'
+    decimal: .
+    skip_header_lines: 0
+    header_line: null
+    timestamp:
+      column: 70
+      format: epoch
+    variables:
+    - column: 0
+      label: coluna 0
+      unit: null
+      min: null
+      max: null
+      type: epoch
+    - column: 1
+      label: colune 1
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 2
+      label: coluna 2
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 3
+      label: coluna 3
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 4
+      label: coluna 4
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 5
+      label: coluna 5
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 6
+      label: coluna 6
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 7
+      label: coluna 7
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 8
+      label: coluna 8
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 9
+      label: coluna 9
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 10
+      label: coluna 10
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 11
+      label: coluna 11
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 12
+      label: coluna 12
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 13
+      label: coluna 13
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 14
+      label: coluna 14
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 15
+      label: coluna 15
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 16
+      label: coluna 16
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 17
+      label: coluna 17
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 18
+      label: coluna 18
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 19
+      label: coluna 19
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 20
+      label: coluna 20
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 21
+      label: coluna 21
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 22
+      label: coluna 22
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 23
+      label: coluna 23
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 24
+      label: coluna 24
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 25
+      label: coluna 25
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 26
+      label: coluna 26
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 27
+      label: coluna 27
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 28
+      label: coluna 28
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 29
+      label: coluna 29
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 30
+      label: coluna 30
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 31
+      label: coluna 31
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 32
+      label: coluna 32
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 33
+      label: coluna 33
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 34
+      label: coluna 34
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 35
+      label: coluna 35
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 36
+      label: coluna 36
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 37
+      label: coluna 37
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 38
+      label: coluna 38
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 39
+      label: coluna 39
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 40
+      label: coluna 40
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 41
+      label: coluna 41
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 42
+      label: coluna 42
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 43
+      label: coluna 43
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 44
+      label: coluna 44
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 45
+      label: coluna 45
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 46
+      label: coluna 46
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 47
+      label: coluna 47
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 48
+      label: coluna 48
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 49
+      label: coluna 49
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 50
+      label: coluna 50
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 51
+      label: coluna 51
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 52
+      label: coluna 52
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 53
+      label: coluna 53
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 54
+      label: coluna 54
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 55
+      label: coluna 55
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 56
+      label: coluna 56
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 57
+      label: coluna 57
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 58
+      label: coluna 58
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 59
+      label: coluna 59
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 60
+      label: coluna 60
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 61
+      label: coluna 61
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 62
+      label: coluna 62
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 63
+      label: coluna 63
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 64
+      label: coluna 64
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 65
+      label: coluna 65
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 66
+      label: coluna 66
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 67
+      label: coluna 67
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 68
+      label: coluna 68
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 69
+      label: coluna 69
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 71
+      label: timestamp
+      unit: null
+      min: null
+      max: null
+      type: epoch
+    - column: 72
+      label: coluna 72
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 73
+      label: coluna 73
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 74
+      label: coluna 74
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 75
+      label: coluna 75
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 76
+      label: coluna 76
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 77
+      label: coluna 77
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 78
+      label: coluna 78
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 79
+      label: coluna 79
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 80
+      label: coluna 80
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 81
+      label: coluna 81
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 82
+      label: coluna 82
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 83
+      label: coluna 83
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 84
+      label: coluna 84
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 85
+      label: coluna 85
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 86
+      label: coluna 86
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 87
+      label: coluna 87
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 88
+      label: coluna 88
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 89
+      label: coluna 89
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 90
+      label: coluna 90
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 91
+      label: coluna 91
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 92
+      label: coluna 92
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 93
+      label: coluna 93
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 94
+      label: coluna 94
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 95
+      label: coluna 95
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 96
+      label: coluna 96
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 97
+      label: coluna 97
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 98
+      label: coluna 98
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 99
+      label: coluna 99
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 100
+      label: coluna 100
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 101
+      label: coluna 101
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 102
+      label: coluna 102
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 103
+      label: coluna 103
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 104
+      label: coluna 104
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 105
+      label: coluna 105
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 106
+      label: coluna 106
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 107
+      label: coluna 107
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 108
+      label: coluna 108
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 109
+      label: coluna 109
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 110
+      label: coluna 110
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 111
+      label: coluna 111
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 112
+      label: coluna 112
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 113
+      label: coluna 113
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 114
+      label: coluna 114
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 115
+      label: coluna 115
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 116
+      label: coluna 116
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 117
+      label: coluna 117
+      unit: null
+      min: null
+      max: null
+      type: numero
+    id: 2026-08-24__02-29-52
 - id: km67
   name: km67
   heartbeat_file: null
@@ -1625,6 +2667,13 @@ stations:
   files: []
 - id: walkuptower
   name: walkuptower
+  heartbeat_file: null
+  latitude: null
+  longitude: null
+  offline_window_min: null
+  files: []
+- id: pandora
+  name: pandora
   heartbeat_file: null
   latitude: null
   longitude: null
