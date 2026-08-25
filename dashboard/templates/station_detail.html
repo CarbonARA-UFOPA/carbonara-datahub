@@ -63,9 +63,13 @@
 <section class="card file-block"
          data-series-url="{{ url_for('api.file_series', station_id=station.id, file_id=f.id) }}">
   <div class="page-head">
+    {# id e apelido são CONGELADOS no cadastro: num caminho dinâmico eles guardam o
+       nome do arquivo do dia em que a estação foi cadastrada e passam a mentir no dia
+       seguinte. Por isso o card mostra, ao vivo, qual arquivo está sendo lido agora. #}
     <h2><span class="file-chip">{{ f.id }}</span>
         {% if f.alias %}<span class="file-alias">{{ f.alias }}</span>{% endif %}
-        <small><code>{{ f.path }}</code></small></h2>
+        <small><code>{{ f.path }}</code></small>
+        <small class="live-file meta"></small></h2>
     <div>
       {% if is_admin %}
         <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar</a>

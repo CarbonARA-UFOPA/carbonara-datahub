@@ -153,11 +153,21 @@ def has_time_tokens(path: str) -> bool:
     return bool(_TIME_TOKEN_RE.search(path or ""))
 
 
-def time_path_glob(pattern: str) -> str:
+GLOB_CHARS = "*?["
+
+
+def has_glob(path: str) -> bool:
+    """O caminho traz curinga escrito pelo usuário?"""
+    return any(c in (path or "") for c in GLOB_CHARS)
+
+
+def time_path_glob(pattern: str, keep_wildcards: bool = False) -> str:
     """Converte o padrão strftime num glob: cada campo vira '?' na largura certa
     (``%Y`` → ``????``), o resto do caminho é escapado para não virar curinga sem
     querer. É o que permite achar o arquivo mais recente quando o do momento ainda
-    não foi criado."""
+    não foi criado. Com ``keep_wildcards``, os curingas ESCRITOS no padrão são
+    preservados — é o que faz ``%Y-%m-%d__*.sfo`` casar o arquivo de hoje seja qual for
+    a hora no nome (o equipamento nomeia o arquivo pelo instante em que o criou)."""
     out: list[str] = []
     i = 0
     while i < len(pattern):
@@ -171,15 +181,26 @@ def time_path_glob(pattern: str) -> str:
                 out.append("?" * w if w else "*")
             i += 2
         else:
-            out.append(glob.escape(ch) if ch in "*?[" else ch)
+            manter = keep_wildcards and ch in GLOB_CHARS
+            out.append(ch if manter else (glob.escape(ch) if ch in GLOB_CHARS else ch))
             i += 1
     return "".join(out)
 
 
-def _newest_matching(pattern: str) -> Path | None:
+def _newest_glob(padrao: str) -> Path | None:
+    """Arquivo mais recente (mtime) que casa com um glob já pronto."""
+    try:
+        hits = [Path(p) for p in glob.glob(padrao)]
+    except OSError:
+        return None
+    files = [p for p in hits if p.is_file()]
+    return max(files, key=lambda p: p.stat().st_mtime) if files else None
+
+
+def _newest_matching(pattern: str, keep_wildcards: bool = False) -> Path | None:
     """Arquivo mais recente (mtime) que casa com o padrão de tempo. None se nenhum."""
     try:
-        hits = [Path(p) for p in glob.glob(time_path_glob(pattern))]
+        hits = [Path(p) for p in glob.glob(time_path_glob(pattern, keep_wildcards))]
     except OSError:
         return None
     files = [p for p in hits if p.is_file()]
@@ -198,7 +219,9 @@ def resolve_file_path(cfg: dict, fcfg: dict) -> tuple[Path, dict]:
     (``pattern``/``expanded``/``fallback``) é o que a UI mostra para o usuário saber
     exatamente qual arquivo foi lido."""
     raw = (fcfg.get("path") or "").strip()
-    if not fcfg.get("dynamic_path") or not has_time_tokens(raw):
+    # Curinga sozinho (sem campo de tempo) também é caminho dinâmico: "o arquivo mais
+    # recente desta pasta" é um pedido legítimo.
+    if not fcfg.get("dynamic_path") or not (has_time_tokens(raw) or has_glob(raw)):
         return resolve_data_path(cfg, raw), {}
     pattern = resolve_data_path(cfg, raw)
     expanded = Path(datetime.now().strftime(str(pattern)))
@@ -209,9 +232,20 @@ def resolve_file_path(cfg: dict, fcfg: dict) -> tuple[Path, dict]:
         if root not in expanded.resolve().parents and expanded.resolve() != root:
             raise ValueError(f"caminho com data/hora escapa de data_root: {expanded}")
     info = {"dynamic": True, "pattern": str(pattern), "expanded": str(expanded)}
-    if expanded.is_file():
+    curinga = has_glob(str(expanded))
+    if curinga:
+        # Curinga no padrão: o "arquivo do momento" é o mais recente que casa com a
+        # data de HOJE — o equipamento nomeia o arquivo com o instante em que o criou
+        # (2026-08-25__07-13-05.sfo), então exigir a hora exata nunca acertaria.
+        hoje = _newest_glob(str(expanded))
+        if hoje is not None:
+            info["matched"] = str(hoje)
+            return hoje, info
+    elif expanded.is_file():
         return expanded, info
-    newest = _newest_matching(str(pattern))
+    # Nada para hoje: cai no mais recente de QUALQUER dia — tipicamente o arquivo de
+    # ontem, que é onde a estação ainda está gravando até virar para o próximo.
+    newest = _newest_matching(str(pattern), keep_wildcards=curinga)
     if newest is not None:
         info["fallback"] = str(newest)
         return newest, info
@@ -588,12 +622,14 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
     dynamic_path = bool(form.get("dynamic_path"))
     if dynamic_path:
         path = normalize_time_tokens(path)
-    if dynamic_path and path and not has_time_tokens(path):
-        errors.append("Caminho com data/hora marcado, mas o caminho não tem nenhum campo "
-                      "de tempo (%Y, %m, %d, %H…). Ex.: incoming/est/dados_%Y%m%d.dat")
-    if not dynamic_path and path and has_time_tokens(path):
-        errors.append("O caminho tem campos de tempo (%Y, %m, %d, %H…) — marque "
-                      "\"Caminho com data/hora\" para que sejam resolvidos, ou remova-os.")
+    if dynamic_path and path and not (has_time_tokens(path) or has_glob(path)):
+        errors.append("Caminho com data/hora marcado, mas o caminho não tem campo de "
+                      "tempo (%Y, %m, %d, %H…) nem curinga (*). "
+                      "Ex.: incoming/est/dados_%Y%m%d.dat ou incoming/est/%Y-%m-%d__*.sfo")
+    if not dynamic_path and path and (has_time_tokens(path) or any(c in path for c in "*?")):
+        errors.append("O caminho tem campos de tempo (%Y, %m, %d, %H…) ou curinga (*) — "
+                      "marque \"O nome do arquivo muda com a data/hora\" para que sejam "
+                      "resolvidos, ou remova-os.")
 
     def _int(field: str, default: int | None, lo: int, hi: int, label: str) -> int | None:
         raw = (form.get(field) or "").strip()

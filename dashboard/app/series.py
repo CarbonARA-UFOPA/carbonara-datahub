@@ -385,6 +385,8 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
         # No preview o usuário PRECISA ver o padrão virando arquivo — é como ele
         # confere se os campos %Y/%m/%d/%H estão certos antes de salvar.
         note = f"Caminho com data/hora: {pinfo['pattern']} → {pinfo['expanded']}"
+        if pinfo.get("matched"):
+            note += f" (arquivo lido: {Path(pinfo['matched']).name})"
         if pinfo.get("fallback"):
             note += (" (ainda não existe — lendo o mais recente que casa com o padrão: "
                      f"{pinfo['fallback']})")

@@ -497,9 +497,14 @@ computes live station status. Viewing is open; edits require the admin login
   century). It applies to whatever column is the time axis — the marker is in the
   FORMAT, not the position. `EPOCH_MARKERS` lives in `config_store` because `series`
   already imports it (the reverse would be a cycle).
-- **Rotating filenames** (`dynamic_path` + a strftime `path`): resolved on EVERY read
-  from the server clock (`config_store.resolve_file_path`), so one registration follows
-  the current day/hour file. Missing current file → falls back to the newest match of
+- **Rotating filenames** (`dynamic_path` + a strftime `path`, optionally with `*`):
+  resolved on EVERY read from the server clock (`config_store.resolve_file_path`), so
+  one registration follows the current day/hour file. **Wildcards are part of the
+  contract**: equipment often names the file after the instant it was CREATED
+  (`2026-08-25__07-13-05.sfo`), so only the date is predictable — `%Y-%m-%d__*.sfo`
+  matches today's file whatever the time in the name (newest wins), and a glob with no
+  time token at all (`*.sfo`) means "the newest file in this folder".
+  `time_path_glob(..., keep_wildcards=True)` stops escaping them for that case. Missing current file → falls back to the newest match of
   the pattern (`time_path_glob` turns `%Y` into `????`), reported in `path_info` and as
   a `problems` note. Nothing matches at all → `{"pending": True, ...}`, which the UI
   renders in a NEUTRAL tone and hides the charts (`.series-pending`) — a file that has

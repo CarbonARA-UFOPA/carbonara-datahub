@@ -24,8 +24,14 @@
       <code>%H</code> hora · <code>%M</code> min · <code>%S</code> seg.
       Ex.: <code>incoming/profsfo/torre/%Y-%m-%d__02-29-52.sfo</code> lê sempre o
       arquivo do dia. (<code>%YYYY</code>, <code>%mm</code> e <code>%DD</code> também
-      são aceitos e convertidos.) Se o arquivo de hoje ainda não chegou, o gráfico usa
-      o mais recente que casa com o padrão.
+      são aceitos e convertidos.)
+      <br><strong>Use <code>*</code> na parte que varia sem regra</strong> — quando o
+      equipamento nomeia o arquivo com a hora em que o criou, só a data é previsível:
+      <code>%Y-%m-%d__*.sfo</code> pega o arquivo de hoje seja qual for a hora no nome
+      (o mais recente, se houver vários). Sozinho, <code>*.sfo</code> significa "o
+      arquivo mais recente desta pasta".
+      Se o arquivo de hoje ainda não chegou, o gráfico usa o mais recente que casa com
+      o padrão — normalmente o de ontem, que é onde a estação ainda está gravando.
       <span id="dyn-preview" class="meta"></span></span>
   </label>
 
@@ -313,7 +319,10 @@
     function render() {
       var p = pathInp.value.trim();
       if (!chk.checked || !p) { out.textContent = ""; return; }
-      out.innerHTML = "<br>Agora isto aponta para: <code>" + expande(p) + "</code>";
+      var alvo = expande(p);
+      out.innerHTML = "<br>Agora isto aponta para: <code>" + alvo + "</code>" +
+        (alvo.indexOf("*") >= 0 || alvo.indexOf("?") >= 0
+          ? " <em>(curinga: o mais recente que casar)</em>" : "");
     }
     chk.addEventListener("change", render);
     pathInp.addEventListener("input", render);

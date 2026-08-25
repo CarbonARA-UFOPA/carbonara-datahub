@@ -62,8 +62,10 @@ stations:
         # SERVIDOR, seguindo sozinho o arquivo do dia/hora. Se o do momento ainda não
         # chegou, lê o mais recente que casa com o padrão; se nenhum existe, a tela
         # avisa em tom neutro e não plota (não é erro).
-        #   path: incoming/flona01/torre/%Y-%m-%d__02-29-52.sfo
+        #   path: incoming/flona01/torre/%Y-%m-%d__*.sfo
         #   dynamic_path: true
+        # O '*' cobre a parte que varia sem regra (a hora de criação no nome). Só o
+        # curinga, sem campo de tempo, significa "o arquivo mais recente da pasta".
         tail_lines: 288                       # 288 × 30min = últimos ~6 dias
         separator: ","                        # "," · "\t" (tab) · " " (espaço)
         # Separador ESPAÇO divide por sequências de espaço/tab: espaços repetidos de

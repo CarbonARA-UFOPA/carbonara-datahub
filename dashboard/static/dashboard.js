@@ -190,6 +190,16 @@ async function loadSeries(block) {
     errEl.classList.add("warn");
     errEl.classList.remove("meta");
     block.classList.remove("series-pending");
+    /* Arquivo REALMENTE lido agora (caminho dinâmico muda de arquivo sozinho; o id e o
+       apelido do cadastro ficaram congelados no dia em que ele foi criado). */
+    const liveEl = block.querySelector(".live-file");
+    if (liveEl) {
+      const pi = data.path_info || {};
+      const nome = (data.path || "").split("/").pop();
+      liveEl.textContent = pi.dynamic && nome
+        ? (pi.fallback ? `→ lendo ${nome} (o do momento ainda não chegou)` : `→ lendo ${nome}`)
+        : "";
+    }
     errEl.textContent = (data.problems || []).join(" · ");
     infoEl.textContent = ` · ${data.rows_read} linhas lidas` +
       (data.decimated ? " (decimado p/ o gráfico)" : "") +

@@ -73,7 +73,9 @@ python run.py                          # http://localhost:8080
   valores em ms/µs/ns — a escala é deduzida pela ordem de grandeza.
 - **Arquivos que rotacionam pelo relógio**: marque *"O nome do arquivo muda com a
   data/hora"* no cadastro e escreva o caminho como padrão —
-  `incoming/profsfo/torre/%Y-%m-%d__02-29-52.sfo`. A cada leitura ele é resolvido com a
+  `incoming/profsfo/torre/%Y-%m-%d__*.sfo` (o `*` cobre a parte imprevisível: muitos
+  equipamentos nomeiam o arquivo com a hora em que o criaram; sozinho, `*.sfo` é "o
+  mais recente da pasta"). A cada leitura ele é resolvido com a
   data do servidor, então um cadastro só acompanha o arquivo do dia. Se o do momento
   ainda não chegou, lê o mais recente que casa com o padrão (avisando qual); se nenhum
   existe ainda, a tela diz que está aguardando, em tom neutro, e não plota nada.
