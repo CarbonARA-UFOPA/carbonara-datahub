@@ -56,6 +56,10 @@ python run.py                          # http://localhost:8080
   - ⚪ *Sem sinal* — nenhuma fonte encontrada.
 - **Faixa de "recepção pausada"** no topo de todas as páginas (visível também para quem
   não é admin, com motivo e horário) — é a explicação de por que os dados pararam.
+- **Velocidade por estação** (coluna *Velocidade*): taxa útil da última sessão e a
+  média das sessões medidas — payload entregue ÷ duração, do log do `rsync-hub`
+  (sessões abaixo de 64 kB são ignoradas, pois a latência domina). Serve para comparar
+  os enlaces: qual estação entrega melhor e qual é a pior.
 - **Velocidade de rede do servidor** no topo da aba Estações: taxa de download/upload
   da interface que tem a rota padrão (a "com internet"), com as demais interfaces numa
   lista recolhida. Lê os contadores do kernel (`/proc/net/dev`) — não gera tráfego nem

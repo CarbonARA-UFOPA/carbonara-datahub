@@ -167,6 +167,14 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   `/usr/local/bin/rsync-hub` (the forced-command path), active pauses, and per-station
   key vs stored `stations/<id>/*.pub`. `--reparar` re-authorizes stations whose public
   key is still stored on the hub — the station keeps its own key, nothing is reissued.
+- **Per-station speed**: `serve` measures the delivered payload (`dir_bytes` on
+  `incoming/<id>` before/after) and the session duration in ms, and appends
+  `bytes=<n> ms=<n>` to the DISCONNECT line — extra fields at the END, so every existing
+  parser (shell `awk '{print $2}'`, `status._last_events`) keeps working. Readers
+  (`load_speeds`/`station_speed` in the monitor table, `status.py` for the dashboard
+  column) ignore sessions under 64 kB, where latency dominates and the number would
+  describe the ping, not the link. It is the USEFUL rate (payload ÷ session), not a
+  bandwidth test — and it only exists for sessions logged by this version onward.
 - **Network block** (`print_network`, shown by `status` and by every `monitor` cycle):
   default-route interface (`/proc/net/route`) + live ↓/↑ rate from `/proc/net/dev`,
   totals since boot, whether 22 (and 873, only when password mode is in use) are

@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-25.1"
+RSYNC_HUB_VERSION="2026-08-25.2"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -141,9 +141,39 @@ serve() {
         exit 129
     fi
     echo "$ts CONNECT $station $ip" >>"$LOG" 2>/dev/null || true
+    # Velocidade POR ESTAÇÃO: o tamanho da pasta antes e depois da sessão dá os bytes
+    # que a estação realmente entregou, e a duração sai do próprio wrapper. É a medida
+    # que interessa (payload entregue por segundo), e não custa nada: incoming/<id> é
+    # pequena — a ingestão move os arquivos para archive/ continuamente.
+    t0="$(now_ms)"; b0="$(dir_bytes "$INCOMING/$station")"
     rc=0; "$RRSYNC" -wo "$INCOMING/$station" || rc=$?   # -wo = write-only, confinado à pasta
-    echo "$(date -u +%FT%TZ) DISCONNECT $station $ip" >>"$LOG" 2>/dev/null || true
+    t1="$(now_ms)"; b1="$(dir_bytes "$INCOMING/$station")"
+    # Delta negativo = a ingestão levou arquivos no meio da sessão: registra 0 em vez de
+    # inventar um número (o monitor ignora sessões sem bytes).
+    dur=$(( t1 - t0 )); [ "$dur" -ge 0 ] || dur=0
+    dbytes=$(( b1 - b0 )); [ "$dbytes" -ge 0 ] || dbytes=0
+    echo "$(date -u +%FT%TZ) DISCONNECT $station $ip bytes=$dbytes ms=$dur" \
+        >>"$LOG" 2>/dev/null || true
     exit "$rc"
+}
+
+now_ms() {   # relógio em milissegundos (a maioria das sessões dura menos de 1 s)
+    nm="$(date +%s%N 2>/dev/null || true)"
+    case "$nm" in
+        ''|*[!0-9]*) echo $(( $(date +%s) * 1000 )) ;;   # date sem %N (BSD): 1 s de resolução
+        *) echo $(( nm / 1000000 )) ;;
+    esac
+}
+
+dir_bytes() {   # $1=pasta → bytes ocupados (0 se não der para medir; nunca falha)
+    db_out="$(du -sb "$1" 2>/dev/null | awk '{print $1; exit}')" || db_out=""
+    case "$db_out" in
+        ''|*[!0-9]*)   # sem 'du -b' (BSD/macOS) ou pasta inacessível: soma os tamanhos
+            db_out="$(find "$1" -type f -exec ls -ln {} + 2>/dev/null \
+                      | awk '{s += $5} END {print s+0}')" || db_out="" ;;
+    esac
+    case "$db_out" in ''|*[!0-9]*) db_out=0 ;; esac
+    printf '%s\n' "$db_out"
 }
 
 # --- Papel 1: instalação -----------------------------------------------------------
@@ -1432,6 +1462,48 @@ net_conn_since() {   # $1=janela para 'date -d' (ex.: "1 hour ago") → nº de C
     awk -v c="$nc_cut" '$2=="CONNECT" && $1>=c {n++} END{print n+0}' "$LOG"
 }
 
+# --- Velocidade por estação --------------------------------------------------------
+# Fonte: as linhas DISCONNECT que o serve grava com bytes= e ms= (payload entregue e
+# duração da sessão). É a taxa ÚTIL da estação — o que ela consegue entregar de fato,
+# incluindo o custo do link e do handshake. Sessões com menos de 64 kB são ignoradas:
+# nelas a latência domina e a "velocidade" diria mais sobre o ping do que sobre a banda.
+SPEEDS=""
+SPEED_MIN_BYTES=65536
+
+load_speeds() {   # uma passada no fim do log por ciclo (não por estação)
+    SPEEDS=""
+    [ -s "$LOG" ] || return 0
+    SPEEDS="$(tail -n 4000 "$LOG" 2>/dev/null | awk -v min="$SPEED_MIN_BYTES" '
+        function fmt(v,   u, i) {
+            split("B kB MB GB", u, " "); i = 1
+            while (v >= 1000 && i < 4) { v /= 1000; i++ }
+            return sprintf("%.1f %s/s", v, u[i])
+        }
+        $2 == "DISCONNECT" {
+            b = -1; ms = -1
+            for (i = 5; i <= NF; i++) {
+                if ($i ~ /^bytes=/) b  = substr($i, 7) + 0
+                if ($i ~ /^ms=/)    ms = substr($i, 4) + 0
+            }
+            if (b >= min && ms > 0) {
+                taxa = b / (ms / 1000)
+                ult[$3] = taxa; n[$3]++; soma[$3] += taxa
+            }
+        }
+        END { for (id in ult) printf "%s\t%s\t%s\t%d\n", id, fmt(ult[id]),
+                                fmt(soma[id] / n[id]), n[id] }
+    ')" || SPEEDS=""
+    return 0
+}
+
+station_speed() {   # $1=id → "3.1 MB/s · méd 2.8 MB/s" ou "-"
+    [ -n "$SPEEDS" ] || { printf '%s' "-"; return 0; }
+    ss="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" \
+        '$1==id {printf "%s · méd %s", $2, $3; exit}')"
+    [ -n "$ss" ] && printf '%s' "$ss" || printf '%s' "-"
+    return 0
+}
+
 # $1/$2/$3 = rx, tx e epoch da leitura ANTERIOR (o monitor passa; o status não tem).
 print_network() {
     pn_if="$(net_default_iface || true)"
@@ -1512,7 +1584,9 @@ print_status() {
     fi
     print_network
     echo
-    printf '  %-16s %-18s %-22s %-8s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "PASTA"
+    load_speeds
+    printf '  %-16s %-18s %-22s %-8s %s\n' \
+        "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "VELOCIDADE (últ. sessão · média)"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
     found=0
     for d in "$INCOMING"/*/; do
@@ -1560,9 +1634,11 @@ print_status() {
         else
             dot="${C_OFF}●${C_0}"; txt="Offline"
         fi
-        printf '%s %-16s %-18s %-22s %-8s %s\n' "$dot" "$id" "$txt" "$when" "$cyc" "$INCOMING/$id"
+        printf '%s %-16s %-18s %-22s %-8s %s\n' "$dot" "$id" "$txt" "$when" "$cyc" "$(station_speed "$id")"
     done
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
+    echo "  (pastas em $INCOMING/<estação> · velocidade = payload entregue ÷ duração da"
+    echo "   sessão, ignorando sessões abaixo de 64 kB, onde a latência domina)"
 }
 
 # Converte, para EXIBIÇÃO, o 1º campo (carimbo UTC ISO gravado por serve()) de cada

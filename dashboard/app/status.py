@@ -29,6 +29,10 @@ except ImportError:  # pragma: no cover
 from . import config_store, hub, tailer
 
 _INTERVAL_RE = re.compile(r"^interval_min=(\d+)\s*$", re.M)
+# Velocidade por estação: o `serve` do rsync-hub anota, em cada DISCONNECT, o payload
+# entregue e a duração da sessão. Sessões pequenas ficam de fora — abaixo disso a
+# latência domina e o número diria mais sobre o ping do que sobre a banda.
+_SPEED_MIN_BYTES = 65536
 _LOG_TAIL = 500  # linhas do fim do connections.log a examinar
 
 
@@ -56,12 +60,14 @@ def _parse_log_ts(ts: str) -> float | None:
         return None
 
 
-def _last_events(log_path: Path, station_id: str) -> tuple[str | None, float | None]:
-    """(último tipo de evento SSH da estação, epoch do último CONNECT)."""
+def _last_events(log_path: Path, station_id: str) -> tuple[str | None, float | None, dict]:
+    """(último evento SSH da estação, epoch do último CONNECT, velocidades da sessão)."""
+    vazio: dict = {"last_bps": None, "avg_bps": None, "sessions": 0}
     if not log_path.is_file():
-        return None, None
+        return None, None, vazio
     lines, _ = tailer.tail_lines(log_path, _LOG_TAIL)
     last_event, last_connect = None, None
+    taxas: list[float] = []
     for line in lines:
         parts = line.split()
         if len(parts) < 3 or parts[2] != station_id:
@@ -71,7 +77,19 @@ def _last_events(log_path: Path, station_id: str) -> tuple[str | None, float | N
             last_event = event
         if event == "CONNECT" and ts is not None:
             last_connect = ts
-    return last_event, last_connect
+        if event == "DISCONNECT":
+            campos = {}
+            for p in parts[4:]:
+                chave, _, valor = p.partition("=")
+                if valor.isdigit():
+                    campos[chave] = int(valor)
+            b, ms = campos.get("bytes", 0), campos.get("ms", 0)
+            if b >= _SPEED_MIN_BYTES and ms > 0:
+                taxas.append(b / (ms / 1000))
+    speeds = {"last_bps": taxas[-1] if taxas else None,
+              "avg_bps": (sum(taxas) / len(taxas)) if taxas else None,
+              "sessions": len(taxas)}
+    return last_event, last_connect, speeds
 
 
 def _latest_data_mtime(incoming_dir: Path) -> float | None:
@@ -124,7 +142,7 @@ def station_status(cfg: dict, station: dict, pause: dict | None = None) -> dict:
         log_path = config_store.connections_log_path_for(cfg, station)
     except ValueError:
         log_path = Path("/nonexistent")
-    last_event, last_connect = _last_events(log_path, station["id"])
+    last_event, last_connect, speeds = _last_events(log_path, station["id"])
 
     candidates = [t for t in (hb_mtime, data_mtime, last_connect) if t is not None]
     act = max(candidates) if candidates else None
@@ -169,6 +187,10 @@ def station_status(cfg: dict, station: dict, pause: dict | None = None) -> dict:
         "last_signal": (_fmt_signal(act, cfg) if act else None),
         "seconds_since_signal": int(now - act) if act else None,
         "interval_min": interval_min,
+        # Velocidade útil da estação (payload ÷ duração da sessão), do log do rsync-hub.
+        "last_bps": speeds["last_bps"],
+        "avg_bps": speeds["avg_bps"],
+        "speed_sessions": speeds["sessions"],
         "limit_seconds": limit,
         "heartbeat_file": hb_display,
         "heartbeat_found": hb_found,

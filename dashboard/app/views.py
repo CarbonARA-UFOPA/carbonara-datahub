@@ -29,6 +29,18 @@ from . import config_store, hub, status
 pages = Blueprint("pages", __name__)
 
 
+@pages.app_template_filter("bps")
+def _fmt_bps(v):
+    """Bytes por segundo em unidade legível (mesma escala do monitor no terminal)."""
+    if not v:
+        return "—"
+    for unidade in ("B/s", "kB/s", "MB/s", "GB/s"):
+        if v < 1000 or unidade == "GB/s":
+            return f"{v:.0f} {unidade}" if unidade == "B/s" else f"{v:.1f} {unidade}"
+        v /= 1000
+    return f"{v:.1f} GB/s"
+
+
 # --- Autenticação de administração -------------------------------------------------
 def auth_enabled(cfg) -> bool:
     return bool(cfg.get("auth"))

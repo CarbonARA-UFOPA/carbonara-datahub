@@ -31,7 +31,8 @@
 {% else %}
 <table class="table">
   <thead>
-    <tr><th>Status</th><th>Estação</th><th>Último sinal</th><th>Janela</th><th>Arq. monitorados</th><th></th></tr>
+    <tr><th>Status</th><th>Estação</th><th>Último sinal</th><th>Velocidade</th>
+        <th>Janela</th><th>Arq. monitorados</th><th></th></tr>
   </thead>
   <tbody>
   {% for s in stations %}
@@ -48,6 +49,12 @@
       </td>
       <td><a href="{{ url_for('pages.station_detail', station_id=s.id) }}"><strong>{{ s.id }}</strong></a><br><small>{{ s.name }}</small></td>
       <td>{{ s.last_signal or '—' }}</td>
+      {# Velocidade útil: payload entregue ÷ duração da sessão (log do rsync-hub). #}
+      <td class="speed-cell" title="média de {{ s.speed_sessions }} sessão(ões) medidas">
+        {% if s.last_bps %}{{ s.last_bps | bps }}<br>
+          <small class="meta">méd {{ s.avg_bps | bps }}</small>
+        {% else %}<span class="meta">—</span>{% endif %}
+      </td>
       <td><small>{% if s.interval_min %}{{ s.interval_min }} min (limite {{ s.limit_seconds // 60 }} min){% else %}fallback {{ s.limit_seconds // 60 }} min{% endif %}</small></td>
       <td>{{ s.files }}</td>
       <td class="actions">

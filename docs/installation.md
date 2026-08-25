@@ -95,6 +95,11 @@ rsync-hub status       # uma leitura só
 rsync-hub              # menu interativo com todas as opções acima
 ```
 
+A coluna **VELOCIDADE** mostra a taxa útil da última sessão de cada estação e a média
+das medidas (payload entregue ÷ duração da sessão). Só aparece para sessões ocorridas a
+partir desta versão, e ignora sessões abaixo de 64 kB — nelas o tempo é quase todo
+handshake, e a "velocidade" falaria do ping, não do enlace.
+
 Antes da tabela vem o bloco de **rede do servidor**: a interface com a rota padrão (a
 que tem internet) com a taxa ↓/↑ ao vivo, o total desde o boot, as portas 22/873, quais
 estações estão **transferindo agora** e quantas conexões houve na última hora e em 24 h.
