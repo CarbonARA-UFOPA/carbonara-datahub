@@ -95,6 +95,12 @@ rsync-hub status       # uma leitura só
 rsync-hub              # menu interativo com todas as opções acima
 ```
 
+Antes da tabela vem o bloco de **rede do servidor**: a interface com a rota padrão (a
+que tem internet) com a taxa ↓/↑ ao vivo, o total desde o boot, as portas 22/873, quais
+estações estão **transferindo agora** e quantas conexões houve na última hora e em 24 h.
+No `monitor` a taxa sai de graça (a janela é o próprio intervalo de atualização); no
+`status`, que é uma leitura só, ele mede por 1 segundo.
+
 Status de cada estação (bolinha colorida): ● **roxo** = *Recebendo dados* (sessão aberta
 agora ou arquivos chegando); ● **verde** = *Online* (atividade na última hora — ajuste
 com `RSYNC_HUB_STALE`); ● **vermelho** = *Offline* (sem atividade além da janela);

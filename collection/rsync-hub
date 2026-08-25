@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-24.5"
+RSYNC_HUB_VERSION="2026-08-25.1"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -400,14 +400,18 @@ open_firewall_port() {  # tenta liberar a porta do rsyncd no firewall DO HOST
     fi
 }
 
-rsyncd_listening() {  # o daemon está escutando na porta?
+port_listening() {   # $1=porta — alguém escutando? rc 2 = não deu para verificar
     if command -v ss >/dev/null 2>&1; then
-        ss -ltn 2>/dev/null | grep -q ":$RSYNCD_PORT "
+        ss -ltn 2>/dev/null | grep -q ":$1 "
     elif command -v netstat >/dev/null 2>&1; then
-        netstat -ltn 2>/dev/null | grep -q ":$RSYNCD_PORT "
+        netstat -ltn 2>/dev/null | grep -q ":$1 "
     else
-        return 0    # sem como checar: não alarma
+        return 2
     fi
+}
+
+rsyncd_listening() {  # o daemon está escutando na porta?
+    port_listening "$RSYNCD_PORT" || [ $? = 2 ]   # sem como checar: não alarma
 }
 
 has_systemd() {  # systemd PRESENTE E RODANDO (PID 1) — só o binário não basta:
@@ -1391,6 +1395,96 @@ Envio manual (sem o script do cliente):
 EOF
 }
 
+# --- Rede do host ------------------------------------------------------------------
+# Tudo lido de /proc e de comandos já presentes: nenhum tráfego é gerado e não há teste
+# de banda — é a contagem do que JÁ passou pela interface. No hub, o "recebido" é
+# essencialmente o que as estações estão enviando.
+net_default_iface() {   # a interface com a ROTA PADRÃO (a que tem internet)
+    [ -r /proc/net/route ] || return 1
+    awk 'NR>1 && $2=="00000000" {print $1; exit}' /proc/net/route
+}
+
+net_counters() {   # $1=interface → "bytes_recebidos bytes_enviados" desde o boot
+    [ -r /proc/net/dev ] || return 1
+    # o ':' pode vir colado no número quando o contador é grande: separa antes
+    sed 's/:/ /' /proc/net/dev | awk -v i="$1" '$1==i {print $2, $10; exit}'
+}
+
+fmt_bytes() {   # $1=bytes [$2=sufixo, ex.: /s]
+    awk -v b="${1:-0}" -v s="${2:-}" 'BEGIN{
+        split("B kB MB GB TB PB", u, " "); i=1
+        while (b >= 1000 && i < 6) { b /= 1000; i++ }
+        if (i == 1) printf "%d %s%s", b, u[i], s; else printf "%.1f %s%s", b, u[i], s
+    }'
+}
+
+net_sessions() {   # ids das estações COM SESSÃO ABERTA agora (uma por linha)
+    # 'serv[e]' evita que o próprio sed apareça como um match no ps.
+    ps -eo args= 2>/dev/null | sed -n 's/.*rsync-hub serv[e] \([a-z0-9_]*\).*/\1/p' \
+        | sort -u | grep . || true
+}
+
+net_conn_since() {   # $1=janela para 'date -d' (ex.: "1 hour ago") → nº de CONNECTs
+    [ -s "$LOG" ] || { echo 0; return 0; }
+    nc_cut="$(date -u -d "$1" +%FT%TZ 2>/dev/null || true)"
+    [ -n "$nc_cut" ] || { echo "?"; return 0; }
+    # O carimbo do log é ISO UTC: comparar como TEXTO já ordena certo.
+    awk -v c="$nc_cut" '$2=="CONNECT" && $1>=c {n++} END{print n+0}' "$LOG"
+}
+
+# $1/$2/$3 = rx, tx e epoch da leitura ANTERIOR (o monitor passa; o status não tem).
+print_network() {
+    pn_if="$(net_default_iface || true)"
+    pn_ip="$(host_addr)"
+    if [ -z "$pn_if" ]; then
+        echo "  rede: $pn_ip (sem /proc/net/route — taxa indisponível neste sistema)"
+        return 0
+    fi
+    set -- $(net_counters "$pn_if" || echo "")
+    pn_rx="${1:-}"; pn_tx="${2:-}"
+    printf '  rede: %s (rota padrão) · ip %s' "$pn_if" "$pn_ip"
+    if [ -n "$pn_rx" ] && [ -n "${PREV_RX:-}" ] && [ -n "${PREV_T:-}" ]; then
+        pn_dt=$(( $(date +%s) - PREV_T ))
+        if [ "$pn_dt" -gt 0 ] && [ "$pn_rx" -ge "$PREV_RX" ] 2>/dev/null; then
+            printf ' · ↓ %s ↑ %s' \
+                "$(fmt_bytes $(( (pn_rx - PREV_RX) / pn_dt )) /s)" \
+                "$(fmt_bytes $(( (pn_tx - ${PREV_TX:-0}) / pn_dt )) /s)"
+        fi
+    fi
+    echo
+    [ -n "$pn_rx" ] && echo "        total desde o boot: ↓ $(fmt_bytes "$pn_rx") ↑ $(fmt_bytes "$pn_tx")"
+    # Portas: 22 é a coleta por chave; 873 só interessa se o modo senha estiver em uso.
+    pn_rc=0; port_listening 22 || pn_rc=$?
+    case "$pn_rc" in 0) pn_p22="aberta" ;; 2) pn_p22="?" ;; *) pn_p22="NÃO escutando" ;; esac
+    pn_p873=""
+    if [ -s "$RSYNCD_SECRETS" ]; then
+        if port_listening "$RSYNCD_PORT"; then pn_p873=" · $RSYNCD_PORT/rsyncd aberta"
+        else pn_p873=" · $RSYNCD_PORT/rsyncd NÃO escutando"; fi
+    fi
+    echo "        portas: 22/ssh $pn_p22$pn_p873"
+    pn_ses="$(net_sessions)"
+    if [ -n "$pn_ses" ]; then
+        echo "        transferindo agora: $(echo "$pn_ses" | tr '\n' ' ')"
+    else
+        echo "        transferindo agora: (nenhuma estação conectada)"
+    fi
+    echo "        conexões: $(net_conn_since '1 hour ago') na última hora · $(net_conn_since '24 hours ago') em 24 h"
+    # Fecha a janela para a PRÓXIMA chamada (é assim que o monitor tem taxa a cada ciclo).
+    if [ -n "$pn_rx" ]; then PREV_RX="$pn_rx"; PREV_TX="$pn_tx"; PREV_T="$(date +%s)"; fi
+    return 0
+}
+
+# Uma leitura só (status) não tem janela: amostra por 1 s para conseguir mostrar a taxa.
+net_prime_sample() {
+    np_if="$(net_default_iface || true)"
+    [ -n "$np_if" ] || return 0
+    set -- $(net_counters "$np_if" || echo "")
+    [ -n "${1:-}" ] || return 0
+    PREV_RX="$1"; PREV_TX="$2"; PREV_T="$(date +%s)"
+    sleep 1
+    return 0
+}
+
 # --- Papel 3: status / monitor -----------------------------------------------------
 # Estados (bolinha colorida por estação):
 #   ● amarelo "Pausada"         — recepção suspensa por 'rsync-hub pause' (tem prioridade)
@@ -1416,6 +1510,8 @@ print_status() {
         echo "  retomar com: sudo rsync-hub resume --todas"
         echo
     fi
+    print_network
+    echo
     printf '  %-16s %-18s %-22s %-8s %s\n' "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "PASTA"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
     found=0
@@ -1482,6 +1578,9 @@ fmt_log_local() {
 
 monitor() {
     trap 'echo; exit 0' INT
+    # Janela de medição da rede: a 1ª volta só registra os contadores; da 2ª em diante
+    # a taxa sai de graça, sem sleep extra — o próprio intervalo do monitor é a janela.
+    PREV_RX=""; PREV_TX=""; PREV_T=""
     while true; do
         clear 2>/dev/null || printf '\033[2J\033[H'
         echo "rsync-hub v$RSYNC_HUB_VERSION — monitor (atualiza a cada ${REFRESH}s · Ctrl-C sai)   $(date '+%F %T')"
@@ -1532,7 +1631,7 @@ menu() {
                    ( remove_station "$id" ) || true
                fi ;;
             4) list_stations ;;
-            5) print_status ;;
+            5) net_prime_sample; print_status ;;
             6) menu_pause ;;
             7) menu_resume ;;
             8) ( diagnose ) || true
@@ -1615,7 +1714,7 @@ case "${1:-}" in
     diagnostico|diagnostico-acesso|doctor|diagnose) shift; diagnose "${1:-}" ;;
     list)    list_stations ;;
     monitor) monitor ;;
-    status)  print_status ;;
+    status)  net_prime_sample; print_status ;;
     cliente|client|client-help) client_help ;;
     ""|menu) menu ;;
     -h|--help|help) usage ;;

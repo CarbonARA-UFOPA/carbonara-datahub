@@ -167,6 +167,15 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   `/usr/local/bin/rsync-hub` (the forced-command path), active pauses, and per-station
   key vs stored `stations/<id>/*.pub`. `--reparar` re-authorizes stations whose public
   key is still stored on the hub — the station keeps its own key, nothing is reissued.
+- **Network block** (`print_network`, shown by `status` and by every `monitor` cycle):
+  default-route interface (`/proc/net/route`) + live ↓/↑ rate from `/proc/net/dev`,
+  totals since boot, whether 22 (and 873, only when password mode is in use) are
+  listening, WHICH stations have a session open right now (`ps` → `rsync-hub serve
+  <id>`) and CONNECT counts for the last hour/24 h (ISO-UTC stamps compare as text).
+  The rate needs two samples: `monitor` uses its own refresh interval as the window
+  (free), one-shot `status` calls `net_prime_sample` (a 1 s sleep). `print_network`
+  updates `PREV_*` in the CALLER's shell — never call it through a pipe, or the window
+  never closes. No `/proc` → prints the IP and says the rate is unavailable.
 - **Monitor** — `rsync-hub monitor` (stays running, live table + recent connections),
   `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`. Each
   station gets a colored dot + state: purple "Recebendo dados" (last SSH log event is a
