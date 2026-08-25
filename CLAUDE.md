@@ -504,7 +504,14 @@ computes live station status. Viewing is open; edits require the admin login
   (`2026-08-25__07-13-05.sfo`), so only the date is predictable — `%Y-%m-%d__*.sfo`
   matches today's file whatever the time in the name (newest wins), and a glob with no
   time token at all (`*.sfo`) means "the newest file in this folder".
-  `time_path_glob(..., keep_wildcards=True)` stops escaping them for that case. Missing current file → falls back to the newest match of
+  `time_path_glob(..., keep_wildcards=True)` stops escaping them for that case.
+  **The card title must follow the file, not the registration**: a file added through
+  the browser gets an `id`/`alias` derived from the CONCRETE filename, so a dynamic
+  entry would keep showing yesterday's name forever. `station_detail` resolves the
+  current name server-side (`live_names`, never fatal) so the first paint is right, the
+  JS refreshes it each cycle, the id moves to the chip's tooltip, and an
+  auto-generated alias (one that CONTAINS the id) is hidden — a hand-written alias
+  still shows. Missing current file → falls back to the newest match of
   the pattern (`time_path_glob` turns `%Y` into `????`), reported in `path_info` and as
   a `problems` note. Nothing matches at all → `{"pending": True, ...}`, which the UI
   renders in a NEUTRAL tone and hides the charts (`.series-pending`) — a file that has

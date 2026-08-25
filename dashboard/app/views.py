@@ -290,10 +290,24 @@ def station_create():
 def station_detail(station_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
+    # Nome REAL do arquivo de cada cadastro com caminho dinâmico: o id e o apelido são
+    # congelados no cadastro (viraram o nome do arquivo daquele dia) e no dia seguinte
+    # passam a mentir. Resolvido aqui para a página já nascer com o nome certo — o JS
+    # reatualiza a cada ciclo. Nunca pode derrubar a página: erro vira "sem nome vivo".
+    live_names = {}
+    for f in station.get("files", []):
+        if not f.get("dynamic_path"):
+            continue
+        try:
+            caminho, _info = config_store.resolve_file_path(cfg, f)
+            live_names[f["id"]] = caminho.name
+        except (ValueError, OSError, KeyError):
+            pass
     return render_template(
         "station_detail.html",
         station=station,
         st=status.station_status(cfg, station),
+        live_names=live_names,
     )
 
 

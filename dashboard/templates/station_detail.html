@@ -63,11 +63,18 @@
 <section class="card file-block"
          data-series-url="{{ url_for('api.file_series', station_id=station.id, file_id=f.id) }}">
   <div class="page-head">
-    {# id e apelido são CONGELADOS no cadastro: num caminho dinâmico eles guardam o
-       nome do arquivo do dia em que a estação foi cadastrada e passam a mentir no dia
-       seguinte. Por isso o card mostra, ao vivo, qual arquivo está sendo lido agora. #}
-    <h2><span class="file-chip">{{ f.id }}</span>
-        {% if f.alias %}<span class="file-alias">{{ f.alias }}</span>{% endif %}
+    {# id e apelido são CONGELADOS no cadastro: num caminho dinâmico eles guardam o nome
+       do arquivo do dia do cadastro e passam a mentir no dia seguinte. Então o título
+       mostra o nome REAL do arquivo lido agora (resolvido no servidor, reatualizado
+       pelo JS a cada ciclo) e o id fica na dica do chip. Um apelido gerado
+       automaticamente — o que CONTÉM o id — some junto, porque repetiria a data velha;
+       um apelido escrito por você continua aparecendo. #}
+    {% set nome_vivo = live_names.get(f.id) if live_names else None %}
+    {% set alias_congelado = f.alias and f.id in f.alias %}
+    <h2><span class="file-chip" title="id do cadastro: {{ f.id }}">{{ nome_vivo or f.id }}</span>
+        {% if f.alias and not (nome_vivo and alias_congelado) %}
+          <span class="file-alias">{{ f.alias }}</span>
+        {% endif %}
         <small><code>{{ f.path }}</code></small>
         <small class="live-file meta"></small></h2>
     <div>

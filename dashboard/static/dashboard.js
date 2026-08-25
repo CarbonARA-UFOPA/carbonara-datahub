@@ -193,12 +193,18 @@ async function loadSeries(block) {
     /* Arquivo REALMENTE lido agora (caminho dinâmico muda de arquivo sozinho; o id e o
        apelido do cadastro ficaram congelados no dia em que ele foi criado). */
     const liveEl = block.querySelector(".live-file");
-    if (liveEl) {
-      const pi = data.path_info || {};
-      const nome = (data.path || "").split("/").pop();
-      liveEl.textContent = pi.dynamic && nome
-        ? (pi.fallback ? `→ lendo ${nome} (o do momento ainda não chegou)` : `→ lendo ${nome}`)
-        : "";
+    const pi = data.path_info || {};
+    const nomeArquivo = (data.path || "").split("/").pop();
+    if (pi.dynamic && nomeArquivo) {
+      /* O título do card acompanha o arquivo que rotacionou (o id do cadastro fica na
+         dica); sem isto ele continuaria exibindo o nome do dia do cadastro. */
+      const chip = block.querySelector(".file-chip");
+      if (chip && chip.textContent.trim() !== nomeArquivo) chip.textContent = nomeArquivo;
+      if (liveEl) {
+        liveEl.textContent = pi.fallback ? "(o arquivo do momento ainda não chegou)" : "";
+      }
+    } else if (liveEl) {
+      liveEl.textContent = "";
     }
     errEl.textContent = (data.problems || []).join(" · ");
     infoEl.textContent = ` · ${data.rows_read} linhas lidas` +
