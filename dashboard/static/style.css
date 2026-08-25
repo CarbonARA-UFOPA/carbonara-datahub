@@ -317,3 +317,11 @@ code { background: #eef2f0; padding: .05rem .3rem; border-radius: 4px; font-size
             padding: .6rem .9rem; }
 .text-label { color: var(--muted); font-size: .85rem; }
 .text-value { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Mostrador de rede do servidor (aba Estações) */
+.netspeed { font-size: .85rem; color: var(--ink); text-align: right; }
+.netspeed .net-iface { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                       color: var(--muted); }
+.netspeed-all > summary { cursor: pointer; color: var(--muted); font-size: .8rem; }
+.netspeed-list { list-style: none; margin: .3rem 0 0; padding: 0; }
+.netspeed-list li { white-space: nowrap; }

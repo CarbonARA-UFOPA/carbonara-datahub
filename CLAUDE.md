@@ -443,6 +443,13 @@ computes live station status. Viewing is open; edits require the admin login
   command. `hub_info["can_pause"]` probes that rule separately so installs whose
   `setup-hub-access.sh` predates the feature get a "re-run it" hint instead of a
   failing click.
+- **Server network rate** (`app/netspeed.py` + `/api/netspeed`, shown on the Estações
+  page): reads the kernel counters in `/proc/net/dev` between two calls — it never
+  generates traffic and never runs a speed test. "The interface with internet" is the
+  one holding the default route in `/proc/net/route`; the others are listed as
+  secondary. No `/proc` (non-Linux) → `available: false` and the widget hides. This is
+  the HOST's throughput, not per-station bandwidth: real per-station accounting would
+  need conntrack/nftables per IP or rsyncd log parsing — deliberately out of scope.
 - **Config-driven** (`dashboard/config.yaml`, gitignored; example versioned): the UI
   itself edits it via `ConfigStore` (atomic write: tempfile + `os.replace`, under a
   lock). Relative `data_root` resolves against the **config file's directory**, not cwd.

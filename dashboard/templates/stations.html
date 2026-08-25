@@ -3,6 +3,14 @@
 {% block content %}
 <div class="page-head">
   <h1>Estações</h1>
+  {# Rede do SERVIDOR: preenchido por JS e escondido quando não há /proc (não-Linux). #}
+  <div id="netspeed" class="netspeed" hidden>
+    <span class="netspeed-main"></span>
+    <details class="netspeed-all" hidden>
+      <summary>outras interfaces</summary>
+      <ul class="netspeed-list"></ul>
+    </details>
+  </div>
 </div>
 
 {% if is_admin and new_count %}

@@ -147,7 +147,53 @@ function makeOrUpdateChart(canvas, labels, v, color, opts = {}) {
   if (opts.height) canvas.parentElement.style.height = opts.height;
 }
 
+/* --- Velocidade das interfaces de rede do servidor ---------------------------- */
+/* Contadores do kernel (/proc/net/dev) lidos pelo backend; a primeira resposta só
+   inicia a janela de medição, por isso a tela começa em "medindo…". */
+function fmtBps(bps) {
+  if (bps == null || !Number.isFinite(bps)) return "—";
+  const u = ["B/s", "kB/s", "MB/s", "GB/s"];
+  let v = bps, i = 0;
+  while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+  return `${v >= 100 || i === 0 ? Math.round(v) : (Math.round(v * 10) / 10).toLocaleString("pt-BR")} ${u[i]}`;
+}
+
+function initNetSpeed() {
+  const box = document.getElementById("netspeed");
+  if (!box) return;
+  const main = box.querySelector(".netspeed-main");
+  const det = box.querySelector(".netspeed-all");
+  const list = box.querySelector(".netspeed-list");
+
+  const render = (d) => {
+    if (!d || !d.available || !d.interfaces.length) { box.hidden = true; return; }
+    box.hidden = false;
+    const p = d.interfaces.find((i) => i.primary) || d.interfaces[0];
+    const medindo = d.measuring || p.rx_bps == null;
+    main.innerHTML = `<span class="net-iface">${esc(p.name)}</span>` +
+      (p.primary ? "" : ' <span class="meta">(sem rota padrão)</span>') +
+      (medindo ? ' <span class="meta">medindo…</span>'
+               : ` ↓ <strong>${esc(fmtBps(p.rx_bps))}</strong> ↑ ${esc(fmtBps(p.tx_bps))}`);
+    const outras = d.interfaces.filter((i) => i !== p);
+    det.hidden = !outras.length;
+    list.innerHTML = outras.map((i) =>
+      `<li><span class="net-iface">${esc(i.name)}</span> ↓ ${esc(fmtBps(i.rx_bps))}` +
+      ` ↑ ${esc(fmtBps(i.tx_bps))}</li>`).join("");
+  };
+
+  const tick = async () => {
+    try { render(await (await fetch("/api/netspeed")).json()); }
+    catch (e) { box.hidden = true; }
+  };
+  tick();
+  /* Segunda leitura logo depois fecha a primeira janela de medição sem esperar o
+     ciclo inteiro de atualização da página. */
+  setTimeout(tick, 2000);
+  setInterval(tick, Math.max(2, window.REFRESH_SECONDS || 60) * 1000);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  initNetSpeed();
   initCharts();
   initCompare();
   initFileForm();

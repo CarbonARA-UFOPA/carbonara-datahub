@@ -56,6 +56,10 @@ python run.py                          # http://localhost:8080
   - ⚪ *Sem sinal* — nenhuma fonte encontrada.
 - **Faixa de "recepção pausada"** no topo de todas as páginas (visível também para quem
   não é admin, com motivo e horário) — é a explicação de por que os dados pararam.
+- **Velocidade de rede do servidor** no topo da aba Estações: taxa de download/upload
+  da interface que tem a rota padrão (a "com internet"), com as demais interfaces numa
+  lista recolhida. Lê os contadores do kernel (`/proc/net/dev`) — não gera tráfego nem
+  faz teste de banda. Em sistemas sem `/proc`, o indicador simplesmente não aparece.
 - **Gráficos por variável** das últimas N linhas de cada arquivo monitorado (tail
   eficiente — o arquivo nunca é lido inteiro), com auto-atualização.
 - **Tipo por coluna** (no cadastro de cada variável): *Número* (padrão), *Inteiro*,
