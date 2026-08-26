@@ -189,6 +189,29 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   own period — don't put `últ · méd` pairs back in the table. `ÚLTIMO SINAL` is
   `HH:MM:SS (há quanto tempo)`, with `dd/mm HH:MM` when it is not today. The network
   block is 2 lines, not 5.
+- **The monitor reads each source ONCE per cycle, never once per station** — this is a
+  hard performance invariant, not a style choice. The previous shape (two `grep`s over
+  the whole never-rotated `connections.log` + a recursive `find` + several `date`/`awk`
+  forks, PER STATION) cost ~2.8 s per refresh with 9 stations and an 8 MB log, and the
+  table visibly drew itself row by row. Now: `load_log` (one `tail -n
+  $RSYNC_HUB_LOG_TAIL` + one awk → last event, last CONNECT, last speed, last ping AND
+  the 1 h/24 h connection counts that `print_network` used to compute with two more
+  full-log scans), `scan_heartbeats` (one `find -printf` + one awk over the
+  `.carbonara-status` files), `load_volumes` (60 s cache), and `scan_data` — the deep
+  walk of `incoming/`, which is the expensive one and therefore runs **only when some
+  station has no heartbeat** (with a heartbeat, it is a newer-or-equal signal, so the
+  walk would change nothing on screen) and is cached for `RSYNC_HUB_SCAN_TTL` (30 s).
+  Each pass emits `eval`-able assignments (`LG_<id>_*`, `HB_<id>_*`, `DT_<id>`,
+  `VL_<id>`) looked up per station by indirect expansion — zero processes in the loop.
+  Ids are sanitized (`sane_id`) on both sides so a stray directory name cannot become
+  code in the `eval`. Log timestamps are converted to epoch **inside awk**
+  (`dias()`/`epoch()`, the days-from-civil algorithm) because `mktime` is a gawk
+  extension and a `date -d` fork per station was part of the cost; verified against
+  Python on 208 stamps from 1990–2115. `print_status` must keep running BEFORE
+  `print_network` (it is `load_log` that counts the connections).
+- **The table is built in a buffer and printed once** (`col_pad` → `COL_OUT`, appended
+  to `tb`): printing row by row is what made the refresh look like it "came up from the
+  bottom" on a slow cycle.
 - **Column alignment must go through `col`/`colr`** (never a bare `printf %-16s` with
   accented text): the shell's printf pads by BYTES under locale C and by CHARACTERS
   under UTF-8, so `ESTAÇÃO` (7 chars, 9 bytes) lined up on one machine and skewed the

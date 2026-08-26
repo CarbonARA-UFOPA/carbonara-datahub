@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-26.2"
+RSYNC_HUB_VERSION="2026-08-26.3"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -89,16 +89,18 @@ col_width() {   # $1=texto → nº de colunas em COL_N
     if [ -n "$cw_set" ]; then LC_ALL="$cw_old"; else unset LC_ALL; fi
     return 0
 }
-col()  {   # $1=texto $2=colunas → imprime alinhado à esquerda (sem quebra de linha)
-    col_width "$1"; printf '%s' "$1"
-    col_p=$(( $2 - COL_N )); [ "$col_p" -gt 0 ] && printf '%*s' "$col_p" ''
+col_pad() {   # $1=texto $2=colunas [$3=r → à direita] → resultado em COL_OUT
+    col_width "$1"
+    col_p=$(( $2 - COL_N )); col_sp=""
+    [ "$col_p" -gt 0 ] && printf -v col_sp '%*s' "$col_p" ''
+    if [ "${3:-}" = r ]; then COL_OUT="$col_sp$1"; else COL_OUT="$1$col_sp"; fi
     return 0
 }
+col()  {   # $1=texto $2=colunas → imprime alinhado à esquerda (sem quebra de linha)
+    col_pad "$1" "$2"; printf '%s' "$COL_OUT"
+}
 colr() {   # $1=texto $2=colunas → imprime alinhado à direita
-    col_width "$1"
-    col_p=$(( $2 - COL_N )); [ "$col_p" -gt 0 ] && printf '%*s' "$col_p" ''
-    printf '%s' "$1"
-    return 0
+    col_pad "$1" "$2" r; printf '%s' "$COL_OUT"
 }
 human_age() {   # $1=segundos → "12 s" / "6 min" / "3 h" / "2 d"
     if   [ "$1" -lt 60 ];    then echo "$1 s"
@@ -1533,25 +1535,73 @@ net_conn_since() {   # $1=janela para 'date -d' (ex.: "1 hour ago") → nº de C
     awk -v c="$nc_cut" '$2=="CONNECT" && $1>=c {n++} END{print n+0}' "$LOG"
 }
 
-# --- Velocidade e ping por estação -------------------------------------------------
-# Fonte: as linhas DISCONNECT que o serve grava com bytes=, ms= e rtt= (payload
-# entregue, duração da sessão e RTT medido pelo kernel). A velocidade é a taxa ÚTIL da
-# estação — o que ela consegue entregar de fato, incluindo o custo do link e do
-# handshake. Sessões com menos de 64 kB são ignoradas NA VELOCIDADE: nelas a latência
-# domina e o número diria mais sobre o ping do que sobre a banda. O PING não tem esse
-# piso — ele não depende do tamanho do envio, e ignorar sessões pequenas jogaria fora
-# justamente os ciclos sem dado novo (só heartbeat), que são a maioria.
-SPEEDS=""
+# --- Dados do monitor: UMA varredura por ciclo, nunca uma por estação --------------
+# Custo é o que decide a usabilidade aqui: a versão anterior fazia, PARA CADA ESTAÇÃO,
+# dois greps no connections.log INTEIRO (que nunca rotaciona) mais um find recursivo e
+# vários forks de date/awk. Com 9 estações e um log de 8 MB isso dava ~3 s por
+# atualização, desenhando a tabela linha a linha na tela. Agora cada fonte é lida UMA
+# vez por ciclo e o resultado vira variáveis de shell (LG_<id>_*, HB_<id>_*, DT_<id>,
+# VL_<id>), consultadas depois sem abrir nenhum processo.
+#
+# Velocidade e ping saem das linhas DISCONNECT que o serve grava (bytes=, ms=, rtt=).
+# A velocidade ignora sessões abaixo de 64 kB — nelas a latência domina e o número
+# diria mais sobre o ping do que sobre a banda. O ping NÃO tem esse piso: não depende
+# do tamanho do envio, e descartar sessões pequenas jogaria fora justamente os ciclos
+# sem dado novo (só heartbeat), que são a maioria.
 SPEED_MIN_BYTES=65536
+LOG_TAIL_LINES="${RSYNC_HUB_LOG_TAIL:-20000}"   # ~1 semana de log num hub movimentado
 
-load_speeds() {   # uma passada no fim do log por ciclo (não por estação)
-    SPEEDS=""
+# Nome de variável derivado do id. Ids válidos ([a-z0-9_]) já passam intactos; a
+# limpeza existe para uma pasta estranha em incoming/ não virar código no eval.
+sane_id() { SANE="${1//[!a-zA-Z0-9_]/_}"; }
+
+# find com -printf é GNU. Sem ele (BSD/macOS) as varreduras caem para o caminho antigo,
+# por estação — o hub é Linux, isto é só para não quebrar em outro sistema.
+find_printf_ok() {
+    if [ -z "${FIND_PRINTF:-}" ]; then
+        FIND_PRINTF=n
+        find "$BASE" -maxdepth 0 -printf '' >/dev/null 2>&1 && FIND_PRINTF=y
+    fi
+    [ "$FIND_PRINTF" = y ]
+}
+
+load_log() {   # último evento, último CONNECT, última velocidade, ping e conexões
+    LG_C1=""; LG_C24=""
     [ -s "$LOG" ] || return 0
-    SPEEDS="$(tail -n 4000 "$LOG" 2>/dev/null | awk -v min="$SPEED_MIN_BYTES" '
+    # Cortes de 1 h / 24 h para o bloco de rede: contar aqui sai de graça (a passada já
+    # existe) e evita as DUAS varreduras do log inteiro que o net_conn_since fazia por
+    # ciclo — eram elas o que sobrava de lentidão depois de acabar com os greps.
+    lg_c1="$(date -u -d '1 hour ago' +%FT%TZ 2>/dev/null || echo '')"
+    lg_c24="$(date -u -d '24 hours ago' +%FT%TZ 2>/dev/null || echo '')"
+    lg_out="$(tail -n "$LOG_TAIL_LINES" "$LOG" 2>/dev/null | LC_ALL=C awk \
+        -v min="$SPEED_MIN_BYTES" -v c1="$lg_c1" -v c24="$lg_c24" '
+        # ISO UTC → epoch na unha: mktime() é extensão do gawk (o mawk não tem) e um
+        # fork de "date -d" por estação era justamente parte da lentidão.
+        function dias(y, m, d,   era, yoe, doy, doe) {
+            if (m <= 2) y--
+            era = int((y >= 0 ? y : y - 399) / 400)
+            yoe = y - era * 400
+            doy = int((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1
+            doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+            return era * 146097 + doe - 719468
+        }
+        function epoch(ts,   d, hms) {
+            d = dias(substr(ts,1,4)+0, substr(ts,6,2)+0, substr(ts,9,2)+0)
+            hms = substr(ts,12,2) * 3600 + substr(ts,15,2) * 60 + substr(ts,18,2)
+            return d * 86400 + hms
+        }
         function fmt(v,   u, i) {
             split("B kB MB GB", u, " "); i = 1
             while (v >= 1000 && i < 4) { v /= 1000; i++ }
             return sprintf("%.1f %s/s", v, u[i])
+        }
+        function q(v) { return "'"'"'" (v == "" ? "-" : v) "'"'"'" }
+        NR == 1 { primeiro = $1 }
+        $2 == "CONNECT" || $2 == "DISCONNECT" { vis[$3] = 1; ev[$3] = $2 }
+        $2 == "CONNECT" {
+            cn[$3] = epoch($1)
+            if (c1  != "" && $1 >= c1)  n1++
+            if (c24 != "" && $1 >= c24) n24++
         }
         $2 == "DISCONNECT" {
             b = -1; ms = -1; rtt = -1
@@ -1560,36 +1610,81 @@ load_speeds() {   # uma passada no fim do log por ciclo (não por estação)
                 if ($i ~ /^ms=/)    ms  = substr($i, 4) + 0
                 if ($i ~ /^rtt=/)   rtt = substr($i, 5) + 0
             }
-            vis[$3] = 1
-            if (b >= min && ms > 0) {
-                taxa = b / (ms / 1000)
-                ult[$3] = taxa; n[$3]++; soma[$3] += taxa
-            }
-            if (rtt > 0) { pult[$3] = rtt; pn[$3]++; psoma[$3] += rtt }
+            if (b >= min && ms > 0) spd[$3] = fmt(b / (ms / 1000))
+            if (rtt > 0) png[$3] = sprintf("%.0f ms", rtt)
         }
         END {
             for (id in vis) {
-                v = (id in ult) ? fmt(ult[id]) "\t" fmt(soma[id] / n[id]) "\t" n[id] \
-                                : "-\t-\t0"
-                p = (id in pult) ? sprintf("%.0f ms\t%.0f ms\t%d", pult[id],
-                                           psoma[id] / pn[id], pn[id]) : "-\t-\t0"
-                printf "%s\t%s\t%s\n", id, v, p
+                gid = id; gsub(/[^a-zA-Z0-9_]/, "_", gid)
+                printf "LG_%s_ev=%s; LG_%s_conn=%d; LG_%s_spd=%s; LG_%s_png=%s\n",
+                    gid, q(ev[id]), gid, cn[id] + 0, gid, q(spd[id]), gid, q(png[id])
             }
-        }
-    ')" || SPEEDS=""
+            # Só publica a contagem se o pedaço lido ALCANÇA o corte de 24 h; senão o
+            # número seria menor que a verdade e o bloco de rede mentiria.
+            if (c24 != "" && primeiro <= c24) printf "LG_C1=%d; LG_C24=%d\n", n1 + 0, n24 + 0
+        }')" || lg_out=""
+    [ -n "$lg_out" ] && eval "$lg_out"
     return 0
 }
 
-# Consumo de 30 dias + nº de sessões, para as colunas do monitor. Recalculado no
-# máximo 1×/min: a varredura é de 30 dias de log, enquanto a velocidade sai do fim do
-# arquivo a cada ciclo. Com 'tac' a leitura vai do fim para o começo e PARA no corte —
-# o custo passa a ser proporcional ao período, não ao tamanho do log (que nunca rotaciona).
+scan_heartbeats() {   # mtime (sinal de vida) + interval_min de TODAS as estações
+    if find_printf_ok; then
+        hb_out="$(find "$INCOMING" -mindepth 2 -maxdepth 2 -name '.carbonara-status' \
+            -printf '%T@ %h\n' 2>/dev/null | awk '
+            { n = split($2, p, "/"); id = p[n]
+              gsub(/[^a-zA-Z0-9_]/, "_", id)
+              printf "HB_%s_t=%d\n", id, $1 }')" || hb_out=""
+        [ -n "$hb_out" ] && eval "$hb_out"
+    fi
+    # Conteúdo (a cadência declarada). tr -d "\r": cliente Windows grava CRLF, e o \r
+    # reprovava a validação, jogando a estação na janela global de 1 h.
+    hi_out="$(awk '
+        FNR == 1 { n = split(FILENAME, a, "/"); id = a[n - 1]
+                   gsub(/[^a-zA-Z0-9_]/, "_", id) }
+        /^interval_min=/ { v = $0; sub(/^interval_min=/, "", v); gsub(/\r/, "", v)
+                           if (v ~ /^[0-9]+$/) printf "HB_%s_iv=%s\n", id, v }
+        ' "$INCOMING"/*/.carbonara-status 2>/dev/null)" || hi_out=""
+    [ -n "$hi_out" ] && eval "$hi_out"
+    return 0
+}
+
+# Varredura PROFUNDA (mtime do arquivo de dados mais novo de cada estação). É a fonte
+# mais cara — anda por toda a árvore de incoming/ — e a menos decisiva: quem manda no
+# "está viva?" é o heartbeat (chega a cada ciclo) e o CONNECT no log. Por isso vale por
+# DATA_SCAN_TTL segundos; só um cliente antigo, sem heartbeat, depende dela.
+DATA_SCAN=""; DATA_SCAN_T=0
+DATA_SCAN_TTL="${RSYNC_HUB_SCAN_TTL:-30}"
+
+scan_data() {
+    ds_now="$1"
+    if [ -n "$DATA_SCAN" ] && [ "$(( ds_now - DATA_SCAN_T ))" -lt "$DATA_SCAN_TTL" ]; then
+        eval "$DATA_SCAN"; return 0
+    fi
+    find_printf_ok || return 0
+    DATA_SCAN_T="$ds_now"
+    DATA_SCAN="$(find "$INCOMING" -mindepth 2 -type f -printf '%T@ %P\n' 2>/dev/null | awk '
+        { n = split($2, p, "/")
+          for (i = 2; i <= n; i++) if (substr(p[i], 1, 1) == ".") next   # ocultos fora
+          id = p[1]; t = int($1)
+          if (t > mx[id]) mx[id] = t }
+        END { for (id in mx) { gid = id; gsub(/[^a-zA-Z0-9_]/, "_", gid)
+                               printf "DT_%s=%d\n", gid, mx[id] } }')" || DATA_SCAN=""
+    [ -n "$DATA_SCAN" ] && eval "$DATA_SCAN"
+    return 0
+}
+
+# Consumo de 30 dias para a coluna da tabela. Recalculado no máximo 1x/min: a
+# varredura cobre 30 dias de log, enquanto o resto do monitor lê só o fim do arquivo.
+# Com 'tac' a leitura vai do fim para o começo e PARA no corte — o custo passa a ser
+# proporcional ao período, não ao tamanho do log (que nunca rotaciona).
 VOL30=""; VOL30_T=0
 VOL30_TTL=60
 
 load_volumes() {
-    lv_now="$(date +%s)"
-    [ -n "$VOL30" ] && [ "$(( lv_now - VOL30_T ))" -lt "$VOL30_TTL" ] && return 0
+    lv_now="$1"
+    if [ -n "$VOL30" ] && [ "$(( lv_now - VOL30_T ))" -lt "$VOL30_TTL" ]; then
+        eval "$VOL30"; return 0
+    fi
     VOL30=""; VOL30_T="$lv_now"
     [ -s "$LOG" ] || return 0
     lv_corte="$(date -d '30 days ago' -u +%FT%TZ 2>/dev/null || true)"
@@ -1606,38 +1701,16 @@ load_volumes() {
             if (!rev && $1 < corte) next
             b = -1
             for (i = 5; i <= NF; i++) if ($i ~ /^bytes=/) b = substr($i, 7) + 0
-            if (b >= 0) { vol[$3] += b; ses[$3]++ }
+            if (b >= 0) vol[$3] += b
         }
-        END { for (id in vol) printf "%s|%s|%d\n", id, fmt(vol[id]), ses[id] }'
+        END { for (id in vol) { gid = id; gsub(/[^a-zA-Z0-9_]/, "_", gid)
+                                printf "VL_%s=\x27%s\x27\n", gid, fmt(vol[id]) } }'
     if command -v tac >/dev/null 2>&1; then
-        VOL30="$(tac "$LOG" 2>/dev/null | awk -v corte="$lv_corte" -v rev=1 "$lv_awk")" || VOL30=""
+        VOL30="$(tac "$LOG" 2>/dev/null | LC_ALL=C awk -v corte="$lv_corte" -v rev=1 "$lv_awk")" || VOL30=""
     else
-        VOL30="$(tail -n 200000 "$LOG" 2>/dev/null | awk -v corte="$lv_corte" -v rev=0 "$lv_awk")" || VOL30=""
+        VOL30="$(tail -n 200000 "$LOG" 2>/dev/null | LC_ALL=C awk -v corte="$lv_corte" -v rev=0 "$lv_awk")" || VOL30=""
     fi
-    return 0
-}
-
-station_volume() {   # $1=id → "7.2 GB|4320" (volume 30 d e nº de sessões medidas)
-    [ -n "$VOL30" ] || { printf '%s' "-|0"; return 0; }
-    sv="$(printf '%s\n' "$VOL30" | awk -F'|' -v id="$1" '$1==id {printf "%s|%s", $2, $3; exit}')"
-    [ -n "$sv" ] && printf '%s' "$sv" || printf '%s' "-|0"
-    return 0
-}
-
-# A tabela mostra só o ÚLTIMO valor medido: é o que responde "como está o enlace
-# agora". As médias continuam calculadas (campos 3 e 6) e aparecem no `volume`, onde
-# há espaço e o recorte de período é explícito.
-station_speed() {   # $1=id → "3.1 MB/s" ou "-"
-    [ -n "$SPEEDS" ] || { printf '%s' "-"; return 0; }
-    ss="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" '$1==id {printf "%s", $2; exit}')"
-    [ -n "$ss" ] && printf '%s' "$ss" || printf '%s' "-"
-    return 0
-}
-
-station_ping() {   # $1=id → "38 ms" ou "-"  (RTT medido pelo kernel)
-    [ -n "$SPEEDS" ] || { printf '%s' "-"; return 0; }
-    sp="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" '$1==id {printf "%s", $5; exit}')"
-    [ -n "$sp" ] && printf '%s' "$sp" || printf '%s' "-"
+    [ -n "$VOL30" ] && eval "$VOL30"
     return 0
 }
 
@@ -1755,8 +1828,15 @@ print_network() {
     pn_ses="${pn_ses% }"
     if [ -n "$pn_ses" ]; then pn_ses="recebendo: ${pn_ses// /, }"
     else pn_ses="nenhuma transferência no momento"; fi
+    # Contagem vinda do load_log (mesma passada da tabela); só varre o log de novo
+    # quando o pedaço lido não cobria 24 h.
+    if [ -n "${LG_C1:-}" ]; then
+        pn_c1="$LG_C1"; pn_c24="$LG_C24"
+    else
+        pn_c1="$(net_conn_since '1 hour ago')"; pn_c24="$(net_conn_since '24 hours ago')"
+    fi
     printf '        %s · %s conexões na última hora, %s em 24 h · %s\n' \
-        "$pn_p22" "$(net_conn_since '1 hour ago')" "$(net_conn_since '24 hours ago')" "$pn_ses"
+        "$pn_p22" "$pn_c1" "$pn_c24" "$pn_ses"
     # Fecha a janela para a PRÓXIMA chamada (é assim que o monitor tem taxa a cada ciclo).
     if [ -n "$pn_rx" ]; then PREV_RX="$pn_rx"; PREV_TX="$pn_tx"; PREV_T="$(date +%s)"; fi
     return 0
@@ -1798,37 +1878,61 @@ print_status() {
         echo "  retomar com: sudo rsync-hub resume --todas"
         echo
     fi
+    # As quatro fontes, uma passada cada — antes eram duas leituras do log inteiro e um
+    # find recursivo POR ESTAÇÃO (ver o comentário do bloco de varreduras). Vem ANTES
+    # do print_network porque é o load_log que conta as conexões da última hora/24 h.
+    load_log; scan_heartbeats; load_volumes "$now"
     print_network
     echo
-    load_speeds
-    load_volumes
     # Larguras da tabela (em colunas). Uma única lista para cabeçalho e linhas.
     W_ID=15; W_ST=17; W_SIG=19; W_CYC=8; W_SPD=12; W_PING=8; W_VOL=9
-    printf '  '; col "ESTAÇÃO" "$W_ID"; col "ESTADO" "$W_ST"; col "ÚLTIMO SINAL" "$W_SIG"
-    col "CICLO" "$W_CYC"; col "VELOCIDADE" "$W_SPD"; col "PING" "$W_PING"
-    colr "30 DIAS" "$W_VOL"; echo
-    if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
+    # A tabela inteira é montada em memória e impressa de uma vez: linha a linha, com
+    # o terminal rolando, a atualização "aparecia de baixo para cima".
+    col_pad "ESTAÇÃO" "$W_ID";      tb="  $COL_OUT"
+    col_pad "ESTADO" "$W_ST";       tb="$tb$COL_OUT"
+    col_pad "ÚLTIMO SINAL" "$W_SIG"; tb="$tb$COL_OUT"
+    col_pad "CICLO" "$W_CYC";       tb="$tb$COL_OUT"
+    col_pad "VELOCIDADE" "$W_SPD";  tb="$tb$COL_OUT"
+    col_pad "PING" "$W_PING";       tb="$tb$COL_OUT"
+    col_pad "30 DIAS" "$W_VOL" r;   tb="$tb$COL_OUT"$'\n'
+    if [ ! -d "$INCOMING" ]; then
+        printf '%s' "$tb"; echo "(sem pasta $INCOMING — rode 'install')"; return
+    fi
     hoje_dm="$(date '+%d/%m')"      # fora do laço: uma vez por ciclo, não por estação
+    # A varredura profunda (mtime dos arquivos de dados) só é necessária para estação
+    # SEM heartbeat: com heartbeat, ele chega a cada ciclo e é sinal de vida mais novo
+    # ou igual ao do dado — andar por toda a árvore de incoming/ a cada atualização
+    # seria pagar o pedágio mais caro do monitor para não mudar nada na tela.
+    ps_falta_hb=0
+    for d in "$INCOMING"/*/; do
+        [ -d "$d" ] || continue
+        ps_id="${d%/}"; sane_id "${ps_id##*/}"
+        ps_vn="HB_${SANE}_t"
+        [ -n "${!ps_vn:-}" ] || { ps_falta_hb=1; break; }
+    done
+    [ "$ps_falta_hb" = 1 ] && scan_data "$now"
     found=0
     for d in "$INCOMING"/*/; do
         [ -d "$d" ] || continue
         found=1
-        id="$(basename "$d")"
-        lastfile="$(find "$d" -type f ! -name '.*' -not -path '*/.*' -printf '%T@\n' 2>/dev/null | sort -nr | head -1)"
-        lastfile="${lastfile%.*}"
-        lastconn="$(grep " CONNECT $id " "$LOG" 2>/dev/null | tail -1 | awk '{print $1}')"
-        lastconn_epoch=""
-        [ -n "$lastconn" ] && lastconn_epoch="$(date -u -d "$lastconn" +%s 2>/dev/null || echo '')"
-        # Sinal de vida da estação: chegada do .carbonara-status + ciclo declarado.
-        hb="$d/.carbonara-status"
-        hb_epoch=""; interval=""
-        if [ -f "$hb" ]; then
-            hb_epoch="$(stat -c %Y "$hb" 2>/dev/null || stat -f %m "$hb" 2>/dev/null || echo '')"
-            # tr -d '\r': clientes Windows gravam o heartbeat com CRLF; sem isto o '\r'
-            # no fim de "interval_min=15" reprova a validação e a estação cai na janela
-            # global de 1h (CICLO some) em vez de 2×ciclo+2min.
-            interval="$(sed -n 's/^interval_min=//p' "$hb" 2>/dev/null | tr -d '\r' | head -1)"
-            echo "$interval" | grep -Eq '^[0-9]+$' || interval=""
+        id="${d%/}"; id="${id##*/}"          # basename sem fork
+        sane_id "$id"; sv="$SANE"
+        # Consultas às varreduras: expansão indireta, zero processos.
+        vn="HB_${sv}_t";    hb_epoch="${!vn:-}"
+        vn="HB_${sv}_iv";   interval="${!vn:-}"
+        vn="DT_${sv}";      lastfile="${!vn:-}"
+        vn="LG_${sv}_conn"; lastconn_epoch="${!vn:-}"
+        vn="LG_${sv}_ev";   lastev="${!vn:-}"
+        vn="LG_${sv}_spd";  spd="${!vn:--}"
+        vn="LG_${sv}_png";  png="${!vn:--}"
+        vn="VL_${sv}";      vol="${!vn:--}"
+        [ "${lastconn_epoch:-0}" = 0 ] && lastconn_epoch=""
+        # Sem find -printf (BSD/macOS) as varreduras não rodam: cai no caminho antigo,
+        # por estação, que é lento mas funciona.
+        if ! find_printf_ok; then
+            lastfile="$(find "$d" -type f ! -name '.*' -not -path '*/.*' -exec stat -f %m {} + 2>/dev/null | sort -nr | head -1)"
+            hb_epoch="$(stat -c %Y "$d/.carbonara-status" 2>/dev/null \
+                        || stat -f %m "$d/.carbonara-status" 2>/dev/null || echo '')"
         fi
         act="0"
         [ -n "$lastfile" ] && [ "$lastfile" -gt "$act" ] 2>/dev/null && act="$lastfile"
@@ -1838,7 +1942,6 @@ print_status() {
         if [ -n "$interval" ]; then limit=$(( interval * 120 + 120 )); else limit="$STALE_AFTER"; fi
         # Recebendo agora? último evento SSH é um CONNECT sem DISCONNECT depois,
         # ou houve atividade (arquivo/conexão/sinal) nos últimos 60s.
-        lastev="$(grep -E " (CONNECT|DISCONNECT) $id " "$LOG" 2>/dev/null | tail -1 | awk '{print $2}')"
         receiving=0
         [ "$lastev" = "CONNECT" ] && receiving=1
         [ "$act" != 0 ] && [ "$((now - act))" -le 60 ] && receiving=1
@@ -1848,11 +1951,11 @@ print_status() {
         if [ "$act" = 0 ]; then
             when="-"
         else
-            when_h="$(date -d "@$act" '+%H:%M:%S' 2>/dev/null || echo "$act")"
-            when_d="$(date -d "@$act" '+%d/%m' 2>/dev/null || echo '')"
+            when_f="$(date -d "@$act" '+%d/%m %H:%M:%S' 2>/dev/null || echo "$act")"
+            when_d="${when_f%% *}"; when_h="${when_f#* }"
             # Fora de hoje a hora sozinha engana ("10:18" de ontem parece recente):
             # troca por dia/mês + hora e minuto, que cabe na mesma coluna.
-            if [ -n "$when_d" ] && [ "$when_d" != "$hoje_dm" ]; then
+            if [ "$when_f" != "$act" ] && [ "$when_d" != "$hoje_dm" ]; then
                 when_h="$when_d ${when_h%:*}"
             fi
             when="$when_h ($(human_age $(( now - act ))))"
@@ -1869,20 +1972,24 @@ print_status() {
         else
             dot="${C_OFF}●${C_0}"; txt="Offline"
         fi
-        vs="$(station_volume "$id")"
-        printf '%s ' "$dot"; col "$id" "$W_ID"; col "$txt" "$W_ST"; col "$when" "$W_SIG"
-        col "$cyc" "$W_CYC"; col "$(station_speed "$id")" "$W_SPD"
-        col "$(station_ping "$id")" "$W_PING"; colr "${vs%%|*}" "$W_VOL"; echo
+        tb="$tb$dot "
+        col_pad "$id" "$W_ID";   tb="$tb$COL_OUT"
+        col_pad "$txt" "$W_ST";  tb="$tb$COL_OUT"
+        col_pad "$when" "$W_SIG"; tb="$tb$COL_OUT"
+        col_pad "$cyc" "$W_CYC"; tb="$tb$COL_OUT"
+        col_pad "$spd" "$W_SPD"; tb="$tb$COL_OUT"
+        col_pad "$png" "$W_PING"; tb="$tb$COL_OUT"
+        col_pad "$vol" "$W_VOL" r; tb="$tb$COL_OUT"$'\n'
     done
     if [ "$found" = 1 ]; then
         # Legenda curta: sem ela as colunas viram sopa de números — em especial
         # "velocidade" e "ping", que são da ÚLTIMA sessão, não médias.
-        echo
-        echo "  ciclo = cadência declarada pela estação · velocidade/ping = última sessão medida"
-        echo "  (velocidade só conta envios ≥ 64 kB) · médias e outros períodos: rsync-hub volume"
+        tb="$tb"$'\n'"  ciclo = cadência declarada pela estação · velocidade/ping = última sessão medida"$'\n'
+        tb="$tb  (velocidade só conta envios ≥ 64 kB) · médias e outros períodos: rsync-hub volume"$'\n'
     else
-        echo "(nenhuma estação com pasta ainda)"
+        tb="$tb(nenhuma estação com pasta ainda)"$'\n'
     fi
+    printf '%s' "$tb"
 }
 
 # Converte, para EXIBIÇÃO, o 1º campo (carimbo UTC ISO gravado por serve()) de cada
