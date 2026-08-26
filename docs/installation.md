@@ -90,10 +90,23 @@ modo write-only (não baixa nem alcança as outras). Para revogar: `sudo rsync-h
 ### A3. Acompanhar as conexões
 
 ```bash
-rsync-hub monitor      # tabela ao vivo com status colorido por estação + últimas conexões; Ctrl-C sai
+rsync-hub              # TELA PADRÃO: monitor ao vivo (Ctrl+O abre o menu, q sai)
+rsync-hub monitor      # o mesmo monitor, chamado explicitamente
 rsync-hub status       # uma leitura só
-rsync-hub              # menu interativo com todas as opções acima
+rsync-hub menu         # vai direto ao menu interativo
 ```
+
+Rodar `rsync-hub` sem argumentos abre o **monitor**, que é a tela em que se fica: tabela
+ao vivo por estação e últimas conexões. Dentro dele, **Ctrl+O** abre o menu com todas as
+opções (instalar, autorizar estação, pausar…) e a opção `0` volta ao monitor; **q** sai e
+qualquer outra tecla força uma atualização imediata. Sem terminal interativo (num pipe ou
+no cron), `rsync-hub` sem argumentos faz uma leitura só, em vez de ficar em laço.
+
+> Por que Ctrl+O e não outra tecla: é o atalho pedido, mas ^O é por padrão o caractere
+> `discard` do terminal (`stty -a` mostra `discard = ^O`) — o driver o intercepta antes de
+> qualquer programa. O monitor desliga esse caractere enquanto roda e devolve o terminal
+> exatamente como estava ao sair (inclusive por Ctrl-C). Se algum terminal ainda assim
+> engolir o ^O, **m** abre o mesmo menu.
 
 A tabela tem uma linha por estação e sete colunas:
 

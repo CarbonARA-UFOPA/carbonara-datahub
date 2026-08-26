@@ -182,8 +182,10 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   backwards and stops at the first line older than the cutoff (the ISO-UTC stamp orders
   as text), which matters because `connections.log` is never rotated.
 - **Monitor/status layout** (deliberate, after the table became unreadable): seven
-  columns — `ESTAÇÃO ESTADO ÚLTIMO SINAL CICLO VELOCIDADE PING 30 DIAS` — plus a
-  two-line legend under the table. Speed and ping show the **last** measured session
+  columns — `ESTAÇÃO ESTADO ÚLTIMO SINAL CICLO VELOCIDADE PING 30 DIAS` — and
+  deliberately **no legend under the table** (it was tried and removed at the user's
+  request; the meaning of the columns lives in `docs/installation.md`, the averages in
+  `rsync-hub volume` — don't re-add it). Speed and ping show the **last** measured session
   only (that is what answers "how is the link right now"); the AVERAGES moved to
   `rsync-hub volume`, which gained `VELOC. MÉD` / `PING MÉD` columns over the report's
   own period — don't put `últ · méd` pairs back in the table. `ÚLTIMO SINAL` is
@@ -265,6 +267,16 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   (free), one-shot `status` calls `net_prime_sample` (a 1 s sleep). `print_network`
   updates `PREV_*` in the CALLER's shell — never call it through a pipe, or the window
   never closes. No `/proc` → prints the IP and says the rate is unavailable.
+- **The monitor is the DEFAULT screen** (user request): `rsync-hub` with no args opens
+  it, and **Ctrl+O** (`$'\017'`) opens the menu, from which `0` returns to the monitor
+  (`MENU_FROM_MONITOR` switches the label and makes `0`/option 10 `return` instead of
+  `exit`, so laços never stack). `q` exits, any other key forces an immediate refresh.
+  Two things are load-bearing here: (a) **^O is the terminal's `discard` character**
+  (`stty -a` → `discard = ^O`), so the tty driver would eat it AND blank the output —
+  `mon_term_setup` undefines it and restores the saved `stty -g` on INT and on EXIT
+  (`m` stays as an alias for terminals that still swallow it); (b) with **no interactive
+  TTY** (pipe, cron) the no-arg form must NOT loop — it falls back to a one-shot
+  `status`. `rsync-hub menu` still opens the menu directly.
 - **Monitor** — `rsync-hub monitor` (stays running, live table + recent connections),
   `rsync-hub status` (one-shot). Reads `incoming/` mtimes + `log/connections.log`. Each
   station gets a colored dot + state: purple "Recebendo dados" (last SSH log event is a

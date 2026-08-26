@@ -36,10 +36,11 @@
 #   sudo ./rsync-hub move-root <novo>    # MIGRA a raiz inteira (dados+chaves+conf) para
 #                                        #   outra pasta; a antiga fica como cópia de segurança
 #        ./rsync-hub list                # lista estações autorizadas
-#        ./rsync-hub monitor             # fica rodando, mostrando as conexões (Ctrl-C sai)
+#        ./rsync-hub monitor             # fica rodando, mostrando as conexões
 #        ./rsync-hub status              # mostra o status uma vez
 #        ./rsync-hub cliente             # como configurar uma estação (cliente)
-#        ./rsync-hub                     # abre o menu interativo
+#        ./rsync-hub menu                # menu interativo
+#        ./rsync-hub                     # TELA PADRÃO: o monitor (Ctrl+O = menu, q = sai)
 #
 # Configuração: o `install` grava as escolhas em /etc/rsync-hub.conf; variáveis de
 # ambiente (CARBONARA_ROOT, HUB_USER, RRSYNC) têm precedência sobre o arquivo.
@@ -47,7 +48,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-26.3"
+RSYNC_HUB_VERSION="2026-08-26.5"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -1981,14 +1982,9 @@ print_status() {
         col_pad "$png" "$W_PING"; tb="$tb$COL_OUT"
         col_pad "$vol" "$W_VOL" r; tb="$tb$COL_OUT"$'\n'
     done
-    if [ "$found" = 1 ]; then
-        # Legenda curta: sem ela as colunas viram sopa de números — em especial
-        # "velocidade" e "ping", que são da ÚLTIMA sessão, não médias.
-        tb="$tb"$'\n'"  ciclo = cadência declarada pela estação · velocidade/ping = última sessão medida"$'\n'
-        tb="$tb  (velocidade só conta envios ≥ 64 kB) · médias e outros períodos: rsync-hub volume"$'\n'
-    else
-        tb="$tb(nenhuma estação com pasta ainda)"$'\n'
-    fi
+    # Sem legenda embaixo da tabela (pedido do usuário): o significado das colunas está
+    # em docs/installation.md e as médias, em `rsync-hub volume` — não recolocar aqui.
+    [ "$found" = 1 ] || tb="$tb(nenhuma estação com pasta ainda)"$'\n'
     printf '%s' "$tb"
 }
 
@@ -2045,14 +2041,39 @@ fmt_log_local() {
     done
 }
 
+# Terminal do monitor: ^O é, por padrão, o caractere "discard" do tty (stty -a mostra
+# `discard = ^O`). O driver o INTERCEPTA — ele nunca chegaria ao script e ainda faria o
+# terminal engolir a própria saída até ser apertado de novo. Enquanto o monitor roda
+# desligamos esse caractere e devolvemos o terminal exatamente como estava na saída.
+mon_term_setup() {
+    MON_STTY=""
+    [ -t 0 ] || return 0
+    MON_STTY="$(stty -g 2>/dev/null || true)"
+    stty discard undef 2>/dev/null || stty discard '^-' 2>/dev/null || true
+    # Rede de segurança: qualquer saída (inclusive SIGTERM ou erro) devolve o terminal.
+    trap 'mon_term_restore' EXIT
+    return 0
+}
+mon_term_restore() {
+    [ -n "${MON_STTY:-}" ] && stty "$MON_STTY" 2>/dev/null
+    return 0
+}
+
 monitor() {
-    trap 'echo; exit 0' INT
+    mon_term_setup
+    trap 'mon_term_restore; echo; exit 0' INT
     # Janela de medição da rede: a 1ª volta só registra os contadores; da 2ª em diante
     # a taxa sai de graça, sem sleep extra — o próprio intervalo do monitor é a janela.
     PREV_RX=""; PREV_TX=""; PREV_T=""
     while true; do
         clear 2>/dev/null || printf '\033[2J\033[H'
-        echo "rsync-hub v$RSYNC_HUB_VERSION — monitor (atualiza a cada ${REFRESH}s · Ctrl-C sai)   $(date '+%F %T')"
+        printf 'rsync-hub v%s — monitor (%ss)   %s\n' \
+            "$RSYNC_HUB_VERSION" "$REFRESH" "$(date '+%F %T')"
+        if [ -t 0 ]; then
+            echo "Ctrl+O = menu · q = sair · qualquer outra tecla atualiza agora"
+        else
+            echo "(Ctrl-C sai)"
+        fi
         echo
         print_status
         echo
@@ -2066,7 +2087,21 @@ monitor() {
             echo "últimas conexões por senha (rsync daemon)"
             tail -n 4 "$RSYNCD_LOG" 2>/dev/null | sed 's/^/  /'
         fi
-        sleep "$REFRESH"
+        # Sem terminal na entrada (pipe, cron, tmux em modo não interativo) não há tecla
+        # para ler: dorme e segue, como antes.
+        if [ ! -t 0 ]; then sleep "$REFRESH"; continue; fi
+        mon_key=""
+        read -rsn1 -t "$REFRESH" mon_key 2>/dev/null || true
+        case "$mon_key" in
+            $'\017'|m|M)      # Ctrl+O (ou 'm', para terminal que insista em comer o ^O)
+                mon_term_restore
+                MENU_FROM_MONITOR=1
+                menu || true
+                MENU_FROM_MONITOR=""
+                mon_term_setup ;;
+            q|Q) mon_term_restore; echo; return 0 ;;
+            *) : ;;           # qualquer outra tecla (ou o timeout) só redesenha
+        esac
     done
 }
 
@@ -2086,9 +2121,13 @@ menu() {
         echo " 9) Diagnosticar acesso das estações"
         echo "10) Monitorar conexões (ao vivo)"
         echo "11) Como configurar um cliente (estação)"
-        echo " 0) Sair"
+        if [ -n "${MENU_FROM_MONITOR:-}" ]; then
+            echo " 0) Voltar ao monitor"
+        else
+            echo " 0) Sair"
+        fi
         printf "opção> "
-        read -r op || exit 0
+        read -r op || { [ -n "${MENU_FROM_MONITOR:-}" ] && return 0; exit 0; }
         case "$op" in
             1|2|3|6|7) if ! is_root; then echo "requer root — rode: sudo $(self_path)"; continue; fi ;;
         esac
@@ -2109,9 +2148,10 @@ menu() {
                if is_root && ask_yn "tentar reparar as chaves perdidas agora?" n; then
                    ( diagnose --reparar ) || true
                fi ;;
-            10) monitor ;;
+            # Vindo do monitor, "monitor" é só voltar — chamar de novo empilharia laços.
+            10) if [ -n "${MENU_FROM_MONITOR:-}" ]; then return 0; else monitor; fi ;;
             11) client_help ;;
-            0|q|"") exit 0 ;;
+            0|q|"") if [ -n "${MENU_FROM_MONITOR:-}" ]; then return 0; else exit 0; fi ;;
             *) echo "opção inválida" ;;
         esac
     done
@@ -2149,10 +2189,12 @@ uso:
        rsync-hub volume [dias]       consumo de dados por estação (hoje, 7 dias e o
                                      período pedido; padrão 30 dias)
        rsync-hub list                lista as estações autorizadas
-       rsync-hub monitor             modo ao vivo: quem conectou e o que chegou (Ctrl-C sai)
+       rsync-hub monitor             modo ao vivo: quem conectou e o que chegou
        rsync-hub status              uma leitura do status
        rsync-hub cliente             como configurar uma estação (Linux e Windows)
-       rsync-hub                     menu interativo com tudo acima
+       rsync-hub menu                menu interativo com tudo acima
+       rsync-hub                     abre o MONITOR (tela padrão) — de lá, Ctrl+O abre
+                                     o menu, q sai
 
 configuração: gravada pelo install em $CONF_FILE (raiz atual: $BASE);
 CARBONARA_ROOT, HUB_USER e RRSYNC no ambiente têm precedência.
@@ -2190,7 +2232,11 @@ case "${1:-}" in
     monitor) monitor ;;
     status)  net_prime_sample; print_status ;;
     cliente|client|client-help) client_help ;;
-    ""|menu) menu ;;
+    menu)    menu ;;
+    # Sem argumentos: o monitor É a tela padrão (Ctrl+O abre o menu). Sem terminal
+    # interativo — pipe, cron, `rsync-hub | tee` — um laço infinito seria uma armadilha:
+    # nesse caso vale uma leitura só, que é o que um script espera.
+    "")      if is_tty; then monitor; else net_prime_sample; print_status; fi ;;
     -h|--help|help) usage ;;
     *) usage; exit 1 ;;
 esac

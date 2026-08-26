@@ -295,8 +295,9 @@ Running `carbonara-station.cmd` with no arguments opens an interactive menu (`te
 ### 4 · Back on the hub: confirm the data is arriving
 
 ```console
-$ rsync-hub monitor
-rsync-hub v2026-08-26.2 — monitor (atualiza a cada 3s · Ctrl-C sai)   2026-08-26 14:32:07
+$ rsync-hub                     # no args: the monitor IS the default screen
+rsync-hub v2026-08-26.4 — monitor (3s)   2026-08-26 14:32:07
+Ctrl+O = menu · q = sair · qualquer outra tecla atualiza agora
 
   rede: eno1 (rota padrão) 10.1.90.246 · ↓ 1.2 MB/s ↑ 23.2 kB/s · boot ↓ 289.7 GB ↑ 14.5 GB
         22/ssh aberta · 56 conexões na última hora, 1391 em 24 h · recebendo: flona01
@@ -314,7 +315,8 @@ rsync-hub v2026-08-26.2 — monitor (atualiza a cada 3s · Ctrl-C sai)   2026-08
 ```
 
 Green ● = a live signal within the station's window · purple ● = receiving right now ·
-red ● = offline · yellow ● = reception paused. The **ping** is measured in reverse: the
+red ● = offline · yellow ● = reception paused. **Ctrl+O** opens the full menu (install,
+authorize a station, pause reception…) and `0` returns to the monitor. The **ping** is measured in reverse: the
 hub never sends a packet to the station — it reads the RTT the kernel already keeps for
 the station's own TCP connection. Then watch the files become measurements:
 `docker compose logs -f ingestion`.
