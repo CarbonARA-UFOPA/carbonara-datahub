@@ -56,9 +56,12 @@ python run.py                          # http://localhost:8080
   - ⚪ *Sem sinal* — nenhuma fonte encontrada.
 - **Faixa de "recepção pausada"** no topo de todas as páginas (visível também para quem
   não é admin, com motivo e horário) — é a explicação de por que os dados pararam.
-- **Consumo (30 d)** por estação: total de payload recebido no período, somado do log
-  do `rsync-hub` (uma varredura só para todas as estações, em cache de 1 min). O mesmo
-  número que `rsync-hub volume` mostra no terminal.
+- **Consumo** por estação (coluna *Consumo*, mesmo formato da *Velocidade*): em
+  destaque, o volume da **última transmissão**; abaixo, o total dos **últimos 30 dias**.
+  Ambos saem do log do `rsync-hub` — a última transmissão é a sessão mais recente que
+  entregou algo (o heartbeat sai com `bytes=0` e não conta), e o total de 30 dias é o
+  mesmo número que `rsync-hub volume` mostra no terminal (uma varredura só para todas
+  as estações, em cache de 1 min).
 - **Velocidade por estação** (coluna *Velocidade*): taxa útil da última sessão e a
   média das sessões medidas — payload entregue ÷ duração, do log do `rsync-hub`
   (sessões abaixo de 64 kB são ignoradas, pois a latência domina). Serve para comparar

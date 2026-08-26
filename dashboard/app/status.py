@@ -93,13 +93,14 @@ def _parse_log_ts(ts: str) -> float | None:
 
 
 def _last_events(log_path: Path, station_id: str) -> tuple[str | None, float | None, dict]:
-    """(último evento SSH da estação, epoch do último CONNECT, velocidades da sessão)."""
-    vazio: dict = {"last_bps": None, "avg_bps": None, "sessions": 0}
+    """(último evento SSH da estação, epoch do último CONNECT, medidas das sessões)."""
+    vazio: dict = {"last_bps": None, "avg_bps": None, "sessions": 0, "last_bytes": None}
     if not log_path.is_file():
         return None, None, vazio
     lines, _ = tailer.tail_lines(log_path, _LOG_TAIL)
     last_event, last_connect = None, None
     taxas: list[float] = []
+    ultimo_volume: int | None = None
     for line in lines:
         parts = line.split()
         if len(parts) < 3 or parts[2] != station_id:
@@ -118,9 +119,16 @@ def _last_events(log_path: Path, station_id: str) -> tuple[str | None, float | N
             b, ms = campos.get("bytes", 0), campos.get("ms", 0)
             if b >= _SPEED_MIN_BYTES and ms > 0:
                 taxas.append(b / (ms / 1000))
+            # Volume da última transmissão: SEM o piso das velocidades (ali um envio
+            # pequeno mediria o ping, não a banda; aqui o tamanho é o próprio dado).
+            # Só sessões que entregaram algo — o heartbeat reescreve um arquivo do
+            # mesmo tamanho e sai com bytes=0, e contá-lo zeraria a coluna a cada ciclo.
+            if b > 0:
+                ultimo_volume = b
     speeds = {"last_bps": taxas[-1] if taxas else None,
               "avg_bps": (sum(taxas) / len(taxas)) if taxas else None,
-              "sessions": len(taxas)}
+              "sessions": len(taxas),
+              "last_bytes": ultimo_volume}
     return last_event, last_connect, speeds
 
 
@@ -223,7 +231,9 @@ def station_status(cfg: dict, station: dict, pause: dict | None = None) -> dict:
         "last_bps": speeds["last_bps"],
         "avg_bps": speeds["avg_bps"],
         "speed_sessions": speeds["sessions"],
-        # Consumo acumulado no período (varredura única, em cache — ver volumes()).
+        # Consumo: volume da última transmissão + acumulado no período (varredura
+        # única, em cache — ver volumes()).
+        "last_bytes": speeds["last_bytes"],
         "bytes_30d": volumes(cfg).get(station["id"], 0),
         "limit_seconds": limit,
         "heartbeat_file": hb_display,

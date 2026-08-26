@@ -167,9 +167,15 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   `/usr/local/bin/rsync-hub` (the forced-command path), active pauses, and per-station
   key vs stored `stations/<id>/*.pub`. `--reparar` re-authorizes stations whose public
   key is still stored on the hub — the station keeps its own key, nothing is reissued.
-- **Per-station data volume in the dashboard** (`status.volumes`, column *Consumo
-  (30 d)*): ONE scan serves every station and the result is cached for 60 s — summing
-  the period per station on every refresh would be pure waste. The scan itself is
+- **Per-station data volume in the dashboard** (column *Consumo*): the headline value is
+  the LAST transmission (`status._last_events` → `last_bytes`: the most recent DISCONNECT
+  with `bytes>0`, no 64 kB floor — that floor exists for the speed, where a tiny session
+  would measure the ping; here the size IS the datum, and skipping `bytes=0` keeps the
+  heartbeat from zeroing the column every cycle), with the 30-day total underneath — the
+  same two-line shape as the *Velocidade* column (last session on top, aggregate below).
+  The 30-day figure comes from `status.volumes`: ONE scan serves every station and the
+  result is cached for 60 s — summing the period per station on every refresh would be
+  pure waste. The scan itself is
   bounded by the PERIOD, not by the log size: `tailer.tail_lines_since` walks the file
   backwards and stops at the first line older than the cutoff (the ISO-UTC stamp orders
   as text), which matters because `connections.log` is never rotated.
