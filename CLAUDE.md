@@ -173,6 +173,8 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   would measure the ping; here the size IS the datum, and skipping `bytes=0` keeps the
   heartbeat from zeroing the column every cycle), with the 30-day total underneath — the
   same two-line shape as the *Velocidade* column (last session on top, aggregate below).
+  The *Ping* column beside it follows the same shape (`last_rtt_ms` / `avg_rtt_ms`, from
+  the `rtt=` field — see the reverse-ping bullet in the collection layer; no 64 kB floor).
   The 30-day figure comes from `status.volumes`: ONE scan serves every station and the
   result is cached for 60 s — summing the period per station on every refresh would be
   pure waste. The scan itself is
@@ -180,7 +182,7 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   backwards and stops at the first line older than the cutoff (the ISO-UTC stamp orders
   as text), which matters because `connections.log` is never rotated.
 - **Monitor columns** `30 DIAS` / `SESSÕES` come from `load_volumes`, refreshed at most
-  once a minute (`VOL30_TTL`) while the speed columns refresh every cycle — the volume
+  once a minute (`VOL30_TTL`) while the speed/ping columns refresh every cycle — the volume
   scan covers 30 days of log, the speed only its tail. With `tac` the scan reads
   backwards and EXITS at the cutoff, so its cost follows the period, not the (never
   rotated) log size; without `tac` it falls back to `tail -n 200000`.
@@ -198,6 +200,22 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   column) ignore sessions under 64 kB, where latency dominates and the number would
   describe the ping, not the link. It is the USEFUL rate (payload ÷ session), not a
   bandwidth test — and it only exists for sessions logged by this version onward.
+- **Per-station ping — measured in REVERSE** (`tcp_rtt_ms` in `serve` → field `rtt=`,
+  after `ms=`): the hub never sends a packet to the station (it is behind NAT, with no
+  fixed address). The station is the one who connects, and the kernel already keeps the
+  RTT of that TCP connection — `SSH_CLIENT` ("<ip> <porta> <porta>") pins the exact
+  socket for `ss -tin "dst <ip>:<porta>"`, preferring `minrtt` (the observed floor,
+  immune to queueing) over the smoothed `rtt`. Sampled BEFORE `t0` so the `ss` fork does
+  not inflate the session duration (which would corrupt the speed). The formatter runs
+  under `LC_ALL=C`: in a pt_BR locale awk would write `rtt=36,9` and the comma breaks
+  every reader (the monitor's awk reads 36, Python's `float()` raises). No `ss`, no
+  inet_diag, no field → the value is simply absent and readers show `-`; never a
+  fabricated zero. Unlike the speed, the ping has NO 64 kB floor — latency does not
+  depend on how much was sent, and dropping small sessions would discard exactly the
+  heartbeat-only cycles, which are the majority. It measures the RTT to the station's
+  PUBLIC endpoint (with NAT, the last LAN hop is missing — irrelevant; on 4G/satellite
+  the measured leg is the one that dominates). Key mode only: password-mode sessions
+  never reach `serve` (rsyncd has its own log).
 - **Network block** (`print_network`, shown by `status` and by every `monitor` cycle):
   default-route interface (`/proc/net/route`) + live ↓/↑ rate from `/proc/net/dev`,
   totals since boot, whether 22 (and 873, only when password mode is in use) are

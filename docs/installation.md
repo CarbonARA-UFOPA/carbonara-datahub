@@ -95,13 +95,25 @@ rsync-hub status       # uma leitura só
 rsync-hub              # menu interativo com todas as opções acima
 ```
 
-As colunas **VELOCIDADE**, **30 DIAS** e **SESSÕES** mostram, por estação, a taxa útil
-(última sessão · média das medidas), o total recebido em 30 dias e quantas sessões
-entraram na conta. A velocidade acompanha cada ciclo do monitor; o consumo é recalculado
-no máximo uma vez por minuto (a varredura é de 30 dias de log).
+As colunas **VELOCIDADE**, **PING**, **30 DIAS** e **SESSÕES** mostram, por estação, a
+taxa útil (última sessão · média das medidas), a latência do enlace, o total recebido em
+30 dias e quantas sessões entraram na conta. Velocidade e ping acompanham cada ciclo do
+monitor; o consumo é recalculado no máximo uma vez por minuto (a varredura é de 30 dias
+de log).
 A taxa é payload entregue ÷ duração da sessão. Só aparece para sessões ocorridas a
 partir desta versão, e ignora sessões abaixo de 64 kB — nelas o tempo é quase todo
 handshake, e a "velocidade" falaria do ping, não do enlace.
+
+O **PING é medido ao contrário**: o hub não manda pacote nenhum para a estação (ela
+costuma estar atrás de NAT, sem endereço fixo). Quem conecta é a estação, e o kernel do
+servidor já mede o RTT dessa conexão TCP — o `serve` só lê esse valor (`ss -tin`) e o
+grava como `rtt=` na linha DISCONNECT. Custo zero de tráfego, funciona atrás de NAT e não
+depende de ICMP. Ao contrário da velocidade, o ping NÃO tem piso de tamanho: ele não
+depende do quanto foi enviado, então os ciclos que só mandam o heartbeat também contam.
+Havendo NAT, o que se mede é o RTT até o endereço público da estação — em 4G/satélite
+esse é justamente o trecho que domina; numa estação atrás de um roteador local falta só
+o último salto, irrelevante. Sem `ss` no servidor a coluna fica `-`, nunca um número
+inventado.
 
 Antes da tabela vem o bloco de **rede do servidor**: a interface com a rota padrão (a
 que tem internet) com a taxa ↓/↑ ao vivo, o total desde o boot, as portas 22/873, quais

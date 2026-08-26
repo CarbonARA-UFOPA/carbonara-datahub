@@ -53,6 +53,15 @@ def _fmt_bps(v):
     return f"{v:.1f} GB/s"
 
 
+@pages.app_template_filter("pingms")
+def _fmt_ping(v):
+    """RTT em ms. Abaixo de 10 ms mostra uma decimal — num enlace local a diferença
+    entre 0,4 ms e 3 ms é a informação toda, e arredondar para inteiro a apagaria."""
+    if not v:
+        return "—"
+    return f"{v:.1f} ms" if v < 10 else f"{v:.0f} ms"
+
+
 # --- Autenticação de administração -------------------------------------------------
 def auth_enabled(cfg) -> bool:
     return bool(cfg.get("auth"))

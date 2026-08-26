@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-25.4"
+RSYNC_HUB_VERSION="2026-08-26.1"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -141,6 +141,11 @@ serve() {
         exit 129
     fi
     echo "$ts CONNECT $station $ip" >>"$LOG" 2>/dev/null || true
+    # PING da estação, medido de forma REVERSA: o kernel já mede o RTT desta conexão
+    # TCP (a estação é quem conecta), então basta lê-lo — nada é enviado para a
+    # estação. Fica ANTES do t0 para que o custo do 'ss' não entre na duração da
+    # sessão (e portanto não estrague a velocidade).
+    rtt="$(tcp_rtt_ms)"
     # Velocidade POR ESTAÇÃO: o tamanho da pasta antes e depois da sessão dá os bytes
     # que a estação realmente entregou, e a duração sai do próprio wrapper. É a medida
     # que interessa (payload entregue por segundo), e não custa nada: incoming/<id> é
@@ -152,9 +157,43 @@ serve() {
     # inventar um número (o monitor ignora sessões sem bytes).
     dur=$(( t1 - t0 )); [ "$dur" -ge 0 ] || dur=0
     dbytes=$(( b1 - b0 )); [ "$dbytes" -ge 0 ] || dbytes=0
-    echo "$(date -u +%FT%TZ) DISCONNECT $station $ip bytes=$dbytes ms=$dur" \
+    # rtt= só entra quando foi possível medir: sem o campo o leitor mostra "-", que é
+    # honesto; um zero seria lido como "link instantâneo".
+    rtt_f=""; [ -n "$rtt" ] && rtt_f=" rtt=$rtt"
+    echo "$(date -u +%FT%TZ) DISCONNECT $station $ip bytes=$dbytes ms=$dur$rtt_f" \
         >>"$LOG" 2>/dev/null || true
     exit "$rc"
+}
+
+# PING sem mandar pacote: o kernel mantém o RTT de cada conexão TCP estabelecida, e
+# esta sessão É uma conexão da estação. SSH_CLIENT ("<ip> <porta_origem> <porta_local>")
+# identifica o socket exato. Prefere minrtt (o piso observado, imune a enfileiramento)
+# e cai para o rtt suavizado. Sem 'ss', sem inet_diag ou sem o campo → string vazia,
+# NUNCA um número inventado. Vale o RTT até o endereço público da estação: com NAT no
+# meio falta o último salto (LAN, irrelevante) — em 4G/satélite o trecho medido é
+# justamente o que domina.
+tcp_rtt_ms() {
+    [ -n "${SSH_CLIENT:-}" ] || return 0
+    # O 'ss' mora em /usr/sbin em várias distros (RHEL/Alma/Rocky) e o PATH do comando
+    # forçado — que roda como conta de serviço, sem shell de login — costuma não incluir
+    # sbin. Procurar só pelo PATH deixaria o ping permanentemente vazio nessas máquinas.
+    tr_ss=""
+    for tr_c in ss /usr/sbin/ss /sbin/ss /usr/bin/ss /bin/ss; do
+        if command -v "$tr_c" >/dev/null 2>&1; then tr_ss="$tr_c"; break; fi
+    done
+    [ -n "$tr_ss" ] || return 0
+    tr_ip="${SSH_CLIENT%% *}"; tr_rest="${SSH_CLIENT#* }"; tr_port="${tr_rest%% *}"
+    [ -n "$tr_ip" ] && [ -n "$tr_port" ] || return 0
+    case "$tr_ip" in *:*) tr_dst="[$tr_ip]:$tr_port" ;; *) tr_dst="$tr_ip:$tr_port" ;; esac
+    # LC_ALL=C no formatador: num locale pt_BR o awk gravaria "36,9" no log, e a
+    # vírgula quebraria todo leitor (o awk do monitor lê 36, o float() do Python
+    # levanta ValueError). O log é formato de máquina — ponto sempre.
+    "$tr_ss" -tin "dst $tr_dst" 2>/dev/null | LC_ALL=C awk '
+        { for (i = 1; i <= NF; i++) {
+            if ($i ~ /^minrtt:/)   m = substr($i, 8) + 0
+            else if ($i ~ /^rtt:/) { split(substr($i, 5), a, "/"); r = a[1] + 0 } } }
+        END { v = (m > 0 ? m : r); if (v > 0) printf "%.1f", v }' || true
+    return 0
 }
 
 now_ms() {   # relógio em milissegundos (a maioria das sessões dura menos de 1 s)
@@ -1462,11 +1501,14 @@ net_conn_since() {   # $1=janela para 'date -d' (ex.: "1 hour ago") → nº de C
     awk -v c="$nc_cut" '$2=="CONNECT" && $1>=c {n++} END{print n+0}' "$LOG"
 }
 
-# --- Velocidade por estação --------------------------------------------------------
-# Fonte: as linhas DISCONNECT que o serve grava com bytes= e ms= (payload entregue e
-# duração da sessão). É a taxa ÚTIL da estação — o que ela consegue entregar de fato,
-# incluindo o custo do link e do handshake. Sessões com menos de 64 kB são ignoradas:
-# nelas a latência domina e a "velocidade" diria mais sobre o ping do que sobre a banda.
+# --- Velocidade e ping por estação -------------------------------------------------
+# Fonte: as linhas DISCONNECT que o serve grava com bytes=, ms= e rtt= (payload
+# entregue, duração da sessão e RTT medido pelo kernel). A velocidade é a taxa ÚTIL da
+# estação — o que ela consegue entregar de fato, incluindo o custo do link e do
+# handshake. Sessões com menos de 64 kB são ignoradas NA VELOCIDADE: nelas a latência
+# domina e o número diria mais sobre o ping do que sobre a banda. O PING não tem esse
+# piso — ele não depende do tamanho do envio, e ignorar sessões pequenas jogaria fora
+# justamente os ciclos sem dado novo (só heartbeat), que são a maioria.
 SPEEDS=""
 SPEED_MIN_BYTES=65536
 
@@ -1480,18 +1522,28 @@ load_speeds() {   # uma passada no fim do log por ciclo (não por estação)
             return sprintf("%.1f %s/s", v, u[i])
         }
         $2 == "DISCONNECT" {
-            b = -1; ms = -1
+            b = -1; ms = -1; rtt = -1
             for (i = 5; i <= NF; i++) {
-                if ($i ~ /^bytes=/) b  = substr($i, 7) + 0
-                if ($i ~ /^ms=/)    ms = substr($i, 4) + 0
+                if ($i ~ /^bytes=/) b   = substr($i, 7) + 0
+                if ($i ~ /^ms=/)    ms  = substr($i, 4) + 0
+                if ($i ~ /^rtt=/)   rtt = substr($i, 5) + 0
             }
+            vis[$3] = 1
             if (b >= min && ms > 0) {
                 taxa = b / (ms / 1000)
                 ult[$3] = taxa; n[$3]++; soma[$3] += taxa
             }
+            if (rtt > 0) { pult[$3] = rtt; pn[$3]++; psoma[$3] += rtt }
         }
-        END { for (id in ult) printf "%s\t%s\t%s\t%d\n", id, fmt(ult[id]),
-                                fmt(soma[id] / n[id]), n[id] }
+        END {
+            for (id in vis) {
+                v = (id in ult) ? fmt(ult[id]) "\t" fmt(soma[id] / n[id]) "\t" n[id] \
+                                : "-\t-\t0"
+                p = (id in pult) ? sprintf("%.0f ms\t%.0f ms\t%d", pult[id],
+                                           psoma[id] / pn[id], pn[id]) : "-\t-\t0"
+                printf "%s\t%s\t%s\n", id, v, p
+            }
+        }
     ')" || SPEEDS=""
     return 0
 }
@@ -1543,8 +1595,16 @@ station_volume() {   # $1=id → "7.2 GB|4320" (volume 30 d e nº de sessões me
 station_speed() {   # $1=id → "3.1 MB/s · méd 2.8 MB/s" ou "-"
     [ -n "$SPEEDS" ] || { printf '%s' "-"; return 0; }
     ss="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" \
-        '$1==id {printf "%s · %s", $2, $3; exit}')"
+        '$1==id {if ($2 == "-") printf "-"; else printf "%s · %s", $2, $3; exit}')"
     [ -n "$ss" ] && printf '%s' "$ss" || printf '%s' "-"
+    return 0
+}
+
+station_ping() {   # $1=id → "38 ms · méd 41 ms" ou "-"  (RTT medido pelo kernel)
+    [ -n "$SPEEDS" ] || { printf '%s' "-"; return 0; }
+    sp="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" \
+        '$1==id {if ($5 == "-") printf "-"; else printf "%s · %s", $5, $6; exit}')"
+    [ -n "$sp" ] && printf '%s' "$sp" || printf '%s' "-"
     return 0
 }
 
@@ -1682,9 +1742,9 @@ print_status() {
     echo
     load_speeds
     load_volumes
-    printf '  %-16s %-18s %-21s %-7s %-24s %10s %8s\n' \
+    printf '  %-16s %-18s %-21s %-7s %-24s %-16s %10s %8s\n' \
         "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "VELOCIDADE (últ · méd)" \
-        "30 DIAS" "SESSÕES"
+        "PING (últ · méd)" "30 DIAS" "SESSÕES"
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
     found=0
     for d in "$INCOMING"/*/; do
@@ -1733,9 +1793,9 @@ print_status() {
             dot="${C_OFF}●${C_0}"; txt="Offline"
         fi
         vs="$(station_volume "$id")"
-        printf '%s %-16s %-18s %-21s %-7s %-24s %10s %8s\n' \
+        printf '%s %-16s %-18s %-21s %-7s %-24s %-16s %10s %8s\n' \
             "$dot" "$id" "$txt" "$when" "$cyc" "$(station_speed "$id")" \
-            "${vs%%|*}" "${vs##*|}"
+            "$(station_ping "$id")" "${vs%%|*}" "${vs##*|}"
     done
     [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
 }

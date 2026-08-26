@@ -33,7 +33,7 @@
 <table class="table">
   <thead>
     <tr><th>Status</th><th>Estação</th><th>Último sinal</th><th>Velocidade</th>
-        <th>Consumo</th><th>Janela</th><th>Arq. monitorados</th><th></th></tr>
+        <th>Consumo</th><th>Ping</th><th>Janela</th><th>Arqv. mon.</th><th></th></tr>
   </thead>
   <tbody>
   {% for s in stations %}
@@ -63,6 +63,13 @@
           <small class="meta">30 d {{ s.bytes_30d | hbytes }}</small>
         {% elif s.bytes_30d %}<span class="meta">—</span><br>
           <small class="meta">30 d {{ s.bytes_30d | hbytes }}</small>
+        {% else %}<span class="meta">—</span>{% endif %}
+      </td>
+      {# Ping medido ao contrário: é o RTT que o kernel do servidor já mantém para a
+         conexão TCP da própria estação (campo rtt= no log) — nada é enviado a ela. #}
+      <td class="speed-cell" title="ping da última transmissão medida; abaixo, a média de {{ s.rtt_sessions }} sessão(ões)">
+        {% if s.last_rtt_ms %}{{ s.last_rtt_ms | pingms }}<br>
+          <small class="meta">méd {{ s.avg_rtt_ms | pingms }}</small>
         {% else %}<span class="meta">—</span>{% endif %}
       </td>
       {# Só o tempo declarado pela estação: o limite de offline (2×+2) é regra interna,

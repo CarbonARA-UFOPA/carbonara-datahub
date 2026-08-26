@@ -94,13 +94,15 @@ def _parse_log_ts(ts: str) -> float | None:
 
 def _last_events(log_path: Path, station_id: str) -> tuple[str | None, float | None, dict]:
     """(último evento SSH da estação, epoch do último CONNECT, medidas das sessões)."""
-    vazio: dict = {"last_bps": None, "avg_bps": None, "sessions": 0, "last_bytes": None}
+    vazio: dict = {"last_bps": None, "avg_bps": None, "sessions": 0, "last_bytes": None,
+                   "last_rtt_ms": None, "avg_rtt_ms": None, "rtt_sessions": 0}
     if not log_path.is_file():
         return None, None, vazio
     lines, _ = tailer.tail_lines(log_path, _LOG_TAIL)
     last_event, last_connect = None, None
     taxas: list[float] = []
     ultimo_volume: int | None = None
+    rtts: list[float] = []
     for line in lines:
         parts = line.split()
         if len(parts) < 3 or parts[2] != station_id:
@@ -114,7 +116,17 @@ def _last_events(log_path: Path, station_id: str) -> tuple[str | None, float | N
             campos = {}
             for p in parts[4:]:
                 chave, _, valor = p.partition("=")
-                if valor.isdigit():
+                if chave == "rtt":
+                    # Ping da sessão (RTT do kernel, gravado pelo serve). Decimal, ao
+                    # contrário de bytes=/ms= — e a vírgula é aceita por precaução, caso
+                    # algum hub antigo tenha gravado sob locale pt_BR.
+                    try:
+                        rtt = float(valor.replace(",", "."))
+                    except ValueError:
+                        continue
+                    if rtt > 0:
+                        rtts.append(rtt)
+                elif valor.isdigit():
                     campos[chave] = int(valor)
             b, ms = campos.get("bytes", 0), campos.get("ms", 0)
             if b >= _SPEED_MIN_BYTES and ms > 0:
@@ -128,7 +140,13 @@ def _last_events(log_path: Path, station_id: str) -> tuple[str | None, float | N
     speeds = {"last_bps": taxas[-1] if taxas else None,
               "avg_bps": (sum(taxas) / len(taxas)) if taxas else None,
               "sessions": len(taxas),
-              "last_bytes": ultimo_volume}
+              "last_bytes": ultimo_volume,
+              # Ping: sem o piso de 64 kB da velocidade — a latência não depende do
+              # tamanho do envio, e descartar as sessões pequenas jogaria fora justo os
+              # ciclos sem dado novo (só heartbeat), que são a maioria.
+              "last_rtt_ms": rtts[-1] if rtts else None,
+              "avg_rtt_ms": (sum(rtts) / len(rtts)) if rtts else None,
+              "rtt_sessions": len(rtts)}
     return last_event, last_connect, speeds
 
 
@@ -234,6 +252,11 @@ def station_status(cfg: dict, station: dict, pause: dict | None = None) -> dict:
         # Consumo: volume da última transmissão + acumulado no período (varredura
         # única, em cache — ver volumes()).
         "last_bytes": speeds["last_bytes"],
+        # Ping medido de forma reversa: RTT que o kernel do hub já mantém para a conexão
+        # TCP da própria estação (o serve grava em rtt=). Nada é enviado à estação.
+        "last_rtt_ms": speeds["last_rtt_ms"],
+        "avg_rtt_ms": speeds["avg_rtt_ms"],
+        "rtt_sessions": speeds["rtt_sessions"],
         "bytes_30d": volumes(cfg).get(station["id"], 0),
         "limit_seconds": limit,
         "heartbeat_file": hb_display,

@@ -62,6 +62,14 @@ python run.py                          # http://localhost:8080
   entregou algo (o heartbeat sai com `bytes=0` e não conta), e o total de 30 dias é o
   mesmo número que `rsync-hub volume` mostra no terminal (uma varredura só para todas
   as estações, em cache de 1 min).
+- **Ping por estação** (coluna *Ping*, mesmo formato): latência da última transmissão e
+  a média das sessões medidas. É medido **ao contrário** — o servidor não manda pacote
+  nenhum para a estação (ela está atrás de NAT, sem endereço fixo): quem conecta é a
+  estação, e o kernel do servidor já mede o RTT dessa conexão TCP; o `rsync-hub` só lê
+  esse valor e o grava no log (`rtt=`). Não tem piso de tamanho como a velocidade — a
+  latência não depende do quanto foi enviado, então os ciclos que só mandam o heartbeat
+  também contam. Com NAT no caminho, é o RTT até o endereço público da estação (em
+  4G/satélite, justamente o trecho que domina). Servidor sem `ss` → coluna vazia.
 - **Velocidade por estação** (coluna *Velocidade*): taxa útil da última sessão e a
   média das sessões medidas — payload entregue ÷ duração, do log do `rsync-hub`
   (sessões abaixo de 64 kB são ignoradas, pois a latência domina). Serve para comparar
