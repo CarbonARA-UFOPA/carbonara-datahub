@@ -95,14 +95,25 @@ rsync-hub status       # uma leitura só
 rsync-hub              # menu interativo com todas as opções acima
 ```
 
-As colunas **VELOCIDADE**, **PING**, **30 DIAS** e **SESSÕES** mostram, por estação, a
-taxa útil (última sessão · média das medidas), a latência do enlace, o total recebido em
-30 dias e quantas sessões entraram na conta. Velocidade e ping acompanham cada ciclo do
-monitor; o consumo é recalculado no máximo uma vez por minuto (a varredura é de 30 dias
-de log).
-A taxa é payload entregue ÷ duração da sessão. Só aparece para sessões ocorridas a
-partir desta versão, e ignora sessões abaixo de 64 kB — nelas o tempo é quase todo
-handshake, e a "velocidade" falaria do ping, não do enlace.
+A tabela tem uma linha por estação e sete colunas:
+
+| coluna | o que é |
+| --- | --- |
+| **ESTAÇÃO** | id da estação (a pasta em `incoming/`) |
+| **ESTADO** | *Recebendo dados* · *Online* · *Offline* · *Pausada* (a bolinha repete em cor) |
+| **ÚLTIMO SINAL** | hora local do último sinal de vida e **há quanto tempo** (fora de hoje, dia/mês + hora) |
+| **CICLO** | de quanto em quanto tempo a estação declara que envia |
+| **VELOCIDADE** | taxa útil da **última** sessão medida (payload ÷ duração) |
+| **PING** | latência do enlace na **última** sessão medida |
+| **30 DIAS** | total recebido da estação nos últimos 30 dias |
+
+Velocidade e ping são sempre da ÚLTIMA sessão — é o que responde "como está o enlace
+agora"; as **médias** (e outros recortes de período) ficam em `rsync-hub volume`. Só
+entram sessões ocorridas a partir da versão que grava a medição no log. A velocidade
+ignora sessões abaixo de 64 kB — nelas o tempo é quase todo handshake, e o número
+falaria do ping, não do enlace. As colunas de velocidade e ping acompanham cada ciclo do
+monitor; o consumo de 30 dias é recalculado no máximo uma vez por minuto (a varredura é
+de 30 dias de log).
 
 O **PING é medido ao contrário**: o hub não manda pacote nenhum para a estação (ela
 costuma estar atrás de NAT, sem endereço fixo). Quem conecta é a estação, e o kernel do
@@ -115,9 +126,10 @@ esse é justamente o trecho que domina; numa estação atrás de um roteador loc
 o último salto, irrelevante. Sem `ss` no servidor a coluna fica `-`, nunca um número
 inventado.
 
-Antes da tabela vem o bloco de **rede do servidor**: a interface com a rota padrão (a
-que tem internet) com a taxa ↓/↑ ao vivo, o total desde o boot, as portas 22/873, quais
-estações estão **transferindo agora** e quantas conexões houve na última hora e em 24 h.
+Antes da tabela vêm **duas linhas de rede do servidor**: a interface com a rota padrão
+(a que tem internet) com a taxa ↓/↑ ao vivo e o total desde o boot; depois as portas
+22/873, quantas conexões houve na última hora e em 24 h, e quais estações estão
+**recebendo agora**.
 No `monitor` a taxa sai de graça (a janela é o próprio intervalo de atualização); no
 `status`, que é uma leitura só, ele mede por 1 segundo.
 
@@ -133,8 +145,10 @@ rsync-hub volume          # hoje, 7 dias e 30 dias, por estação, + TOTAL
 rsync-hub volume 90       # outra janela
 ```
 
-Soma o payload entregue por sessão (o mesmo `bytes=` que alimenta a coluna VELOCIDADE).
-Serve para dimensionar plano de dados/link: quem consome mais, quem consome menos. Só
+Soma o payload entregue por sessão (o mesmo `bytes=` que alimenta a coluna VELOCIDADE)
+e mostra, nas duas últimas colunas, a **velocidade média** e o **ping médio** do período
+escolhido — é aqui que ficam as médias que o monitor não mostra. Serve para dimensionar
+plano de dados/link: quem consome mais, quem consome menos, quem tem o pior enlace. Só
 conta sessões ocorridas a partir da versão que registra a medição.
 
 ### A5. Quando as estações param de enviar

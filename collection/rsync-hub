@@ -47,7 +47,7 @@ set -eu
 
 # Bump a cada mudança de comportamento — é como se detecta uma cópia instalada
 # defasada em /usr/local/bin (compare `rsync-hub help` com o script do repositório).
-RSYNC_HUB_VERSION="2026-08-26.1"
+RSYNC_HUB_VERSION="2026-08-26.2"
 
 # --- Configuração: defaults ← /etc/rsync-hub.conf ← ambiente ---------------------
 ENV_BASE="${CARBONARA_ROOT:-}"; ENV_HUB_USER="${HUB_USER:-}"; ENV_RRSYNC="${RRSYNC:-}"
@@ -74,6 +74,38 @@ derive_paths() {
     PAUSE_ALL="$PAUSE_DIR/_todas"            # pausa global (vale para todas as estações)
 }
 derive_paths
+
+# --- Colunas alinhadas mesmo com acento ---------------------------------------------
+# O printf do shell preenche %-16s por BYTES em locale C e por CARACTERES em locale
+# UTF-8, então "ESTAÇÃO" (7 caracteres, 9 bytes) alinha numa máquina e desalinha na
+# outra — foi o que deixou a tabela do monitor torta. col()/colr() medem a largura como
+# bytes MENOS os bytes de continuação UTF-8 (10xxxxxx), que dá o número de COLUNAS nos
+# dois casos, e completam com espaços. Só builtins: nenhum processo extra por célula.
+col_width() {   # $1=texto → nº de colunas em COL_N
+    cw_old="${LC_ALL-}"; cw_set="${LC_ALL+1}"
+    LC_ALL=C
+    cw_t="${1//[$'\200'-$'\277']/}"
+    COL_N=${#cw_t}
+    if [ -n "$cw_set" ]; then LC_ALL="$cw_old"; else unset LC_ALL; fi
+    return 0
+}
+col()  {   # $1=texto $2=colunas → imprime alinhado à esquerda (sem quebra de linha)
+    col_width "$1"; printf '%s' "$1"
+    col_p=$(( $2 - COL_N )); [ "$col_p" -gt 0 ] && printf '%*s' "$col_p" ''
+    return 0
+}
+colr() {   # $1=texto $2=colunas → imprime alinhado à direita
+    col_width "$1"
+    col_p=$(( $2 - COL_N )); [ "$col_p" -gt 0 ] && printf '%*s' "$col_p" ''
+    printf '%s' "$1"
+    return 0
+}
+human_age() {   # $1=segundos → "12 s" / "6 min" / "3 h" / "2 d"
+    if   [ "$1" -lt 60 ];    then echo "$1 s"
+    elif [ "$1" -lt 3600 ];  then echo "$(( $1 / 60 )) min"
+    elif [ "$1" -lt 86400 ]; then echo "$(( $1 / 3600 )) h"
+    else                          echo "$(( $1 / 86400 )) d"; fi
+}
 
 die()      { echo "erro: $*" >&2; exit 1; }
 need_root(){ [ "$(id -u)" = 0 ] || die "execute como root (sudo)"; }
@@ -1592,18 +1624,19 @@ station_volume() {   # $1=id → "7.2 GB|4320" (volume 30 d e nº de sessões me
     return 0
 }
 
-station_speed() {   # $1=id → "3.1 MB/s · méd 2.8 MB/s" ou "-"
+# A tabela mostra só o ÚLTIMO valor medido: é o que responde "como está o enlace
+# agora". As médias continuam calculadas (campos 3 e 6) e aparecem no `volume`, onde
+# há espaço e o recorte de período é explícito.
+station_speed() {   # $1=id → "3.1 MB/s" ou "-"
     [ -n "$SPEEDS" ] || { printf '%s' "-"; return 0; }
-    ss="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" \
-        '$1==id {if ($2 == "-") printf "-"; else printf "%s · %s", $2, $3; exit}')"
+    ss="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" '$1==id {printf "%s", $2; exit}')"
     [ -n "$ss" ] && printf '%s' "$ss" || printf '%s' "-"
     return 0
 }
 
-station_ping() {   # $1=id → "38 ms · méd 41 ms" ou "-"  (RTT medido pelo kernel)
+station_ping() {   # $1=id → "38 ms" ou "-"  (RTT medido pelo kernel)
     [ -n "$SPEEDS" ] || { printf '%s' "-"; return 0; }
-    sp="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" \
-        '$1==id {if ($5 == "-") printf "-"; else printf "%s · %s", $5, $6; exit}')"
+    sp="$(printf '%s\n' "$SPEEDS" | awk -F'\t' -v id="$1" '$1==id {printf "%s", $5; exit}')"
     [ -n "$sp" ] && printf '%s' "$sp" || printf '%s' "-"
     return 0
 }
@@ -1624,7 +1657,10 @@ volume_report() {   # volume [dias]  (padrão: 30)
         vr_hoje="9999"; vr_c7="9999"; vr_cn=""
     fi
     echo "consumo de dados por estação (payload recebido; fonte: $LOG)"
-    printf '  %-16s %12s %12s %12s %10s\n' "ESTAÇÃO" "HOJE" "7 DIAS" "${vr_dias} DIAS" "SESSÕES"
+    printf '  '; col "ESTAÇÃO" 16; printf ' '; colr "HOJE" 12; printf ' '
+    colr "7 DIAS" 12; printf ' '; colr "${vr_dias} DIAS" 12; printf ' '
+    colr "SESSÕES" 9; printf ' '; colr "VELOC. MÉD" 12; printf ' '
+    colr "PING MÉD" 9; echo
     awk -v hoje="$vr_hoje" -v c7="$vr_c7" -v cn="$vr_cn" '
         function fmt(v,   u, i) {
             if (v <= 0) return "-"
@@ -1632,12 +1668,31 @@ volume_report() {   # volume [dias]  (padrão: 30)
             while (v >= 1000 && i < 5) { v /= 1000; i++ }
             return sprintf("%.1f %s", v, u[i])
         }
+        function vel(soma, n,   v, u, i) {           # média de velocidade ou "-"
+            if (n <= 0) return "-"
+            v = soma / n; split("B kB MB GB", u, " "); i = 1
+            while (v >= 1000 && i < 4) { v /= 1000; i++ }
+            return sprintf("%.1f %s/s", v, u[i])
+        }
+        function png(soma, n) {                      # média de ping ou "-"
+            return (n > 0) ? sprintf("%.0f ms", soma / n) : "-"
+        }
         $2 == "DISCONNECT" {
-            b = -1
-            for (i = 5; i <= NF; i++) if ($i ~ /^bytes=/) b = substr($i, 7) + 0
+            b = -1; ms = -1; rtt = -1
+            for (i = 5; i <= NF; i++) {
+                if ($i ~ /^bytes=/) b   = substr($i, 7) + 0
+                if ($i ~ /^ms=/)    ms  = substr($i, 4) + 0
+                if ($i ~ /^rtt=/)   rtt = substr($i, 5) + 0
+            }
             if (b < 0) next                      # sessão anterior à medição: ignora
             id = $3; vistos[id] = 1
-            if (cn == "" || $1 >= cn) { tn[id] += b; sn[id]++ }
+            if (cn == "" || $1 >= cn) {
+                tn[id] += b; sn[id]++
+                # Médias do MESMO período da última coluna. A velocidade mantém o piso
+                # de 64 kB (abaixo disso o tempo é handshake); o ping não tem piso.
+                if (b >= 65536 && ms > 0) { vsoma[id] += b / (ms / 1000); vn[id]++ }
+                if (rtt > 0) { psoma[id] += rtt; pn[id]++ }
+            }
             if ($1 >= c7)   t7[id] += b
             if ($1 >= hoje) th[id] += b
         }
@@ -1648,13 +1703,16 @@ volume_report() {   # volume [dias]  (padrão: 30)
                 if (ids[i] > ids[j]) { t = ids[i]; ids[i] = ids[j]; ids[j] = t }
             for (i = 1; i <= n; i++) {
                 id = ids[i]
-                printf "  %-16s %12s %12s %12s %10d\n", id, fmt(th[id]), fmt(t7[id]),
-                       fmt(tn[id]), sn[id]
+                printf "  %-16s %12s %12s %12s %9d %12s %9s\n", id, fmt(th[id]),
+                       fmt(t7[id]), fmt(tn[id]), sn[id], vel(vsoma[id], vn[id]),
+                       png(psoma[id], pn[id])
                 gh += th[id]; g7 += t7[id]; gn += tn[id]; gs += sn[id]
+                gv += vsoma[id]; gvn += vn[id]; gp += psoma[id]; gpn += pn[id]
             }
             if (!n) { print "  (nenhuma sessão com medição ainda — só sessões a partir da"
                       print "   versão que grava bytes= no log entram na conta)"; exit }
-            printf "  %-16s %12s %12s %12s %10d\n", "TOTAL", fmt(gh), fmt(g7), fmt(gn), gs
+            printf "  %-16s %12s %12s %12s %9d %12s %9s\n", "TOTAL", fmt(gh), fmt(g7),
+                   fmt(gn), gs, vel(gv, gvn), png(gp, gpn)
         }
     ' "$LOG"
     return 0
@@ -1670,7 +1728,7 @@ print_network() {
     fi
     set -- $(net_counters "$pn_if" || echo "")
     pn_rx="${1:-}"; pn_tx="${2:-}"
-    printf '  rede: %s (rota padrão) · ip %s' "$pn_if" "$pn_ip"
+    printf '  rede: %s (rota padrão) %s' "$pn_if" "$pn_ip"
     if [ -n "$pn_rx" ] && [ -n "${PREV_RX:-}" ] && [ -n "${PREV_T:-}" ]; then
         pn_dt=$(( $(date +%s) - PREV_T ))
         if [ "$pn_dt" -gt 0 ] && [ "$pn_rx" -ge "$PREV_RX" ] 2>/dev/null; then
@@ -1679,24 +1737,26 @@ print_network() {
                 "$(fmt_bytes $(( (pn_tx - ${PREV_TX:-0}) / pn_dt )) /s)"
         fi
     fi
+    [ -n "$pn_rx" ] && printf ' · boot ↓ %s ↑ %s' \
+        "$(fmt_bytes "$pn_rx")" "$(fmt_bytes "$pn_tx")"
     echo
-    [ -n "$pn_rx" ] && echo "        total desde o boot: ↓ $(fmt_bytes "$pn_rx") ↑ $(fmt_bytes "$pn_tx")"
-    # Portas: 22 é a coleta por chave; 873 só interessa se o modo senha estiver em uso.
+    # Segunda (e última) linha: portas, conexões e quem está transferindo agora. Tudo
+    # junto de propósito — eram cinco linhas antes da tabela e o olho não achava mais
+    # o que importa, que é a tabela das estações.
     pn_rc=0; port_listening 22 || pn_rc=$?
-    case "$pn_rc" in 0) pn_p22="aberta" ;; 2) pn_p22="?" ;; *) pn_p22="NÃO escutando" ;; esac
-    pn_p873=""
+    case "$pn_rc" in 0) pn_p22="22/ssh aberta" ;; 2) pn_p22="22/ssh ?" ;;
+                     *) pn_p22="22/ssh NÃO escutando" ;; esac
+    # 873 só interessa quando o modo usuário+senha está em uso.
     if [ -s "$RSYNCD_SECRETS" ]; then
-        if port_listening "$RSYNCD_PORT"; then pn_p873=" · $RSYNCD_PORT/rsyncd aberta"
-        else pn_p873=" · $RSYNCD_PORT/rsyncd NÃO escutando"; fi
+        if port_listening "$RSYNCD_PORT"; then pn_p22="$pn_p22 · $RSYNCD_PORT/rsyncd aberta"
+        else pn_p22="$pn_p22 · $RSYNCD_PORT/rsyncd NÃO escutando"; fi
     fi
-    echo "        portas: 22/ssh $pn_p22$pn_p873"
-    pn_ses="$(net_sessions)"
-    if [ -n "$pn_ses" ]; then
-        echo "        transferindo agora: $(echo "$pn_ses" | tr '\n' ' ')"
-    else
-        echo "        transferindo agora: (nenhuma estação conectada)"
-    fi
-    echo "        conexões: $(net_conn_since '1 hour ago') na última hora · $(net_conn_since '24 hours ago') em 24 h"
+    pn_ses="$(net_sessions | tr '\n' ' ')"
+    pn_ses="${pn_ses% }"
+    if [ -n "$pn_ses" ]; then pn_ses="recebendo: ${pn_ses// /, }"
+    else pn_ses="nenhuma transferência no momento"; fi
+    printf '        %s · %s conexões na última hora, %s em 24 h · %s\n' \
+        "$pn_p22" "$(net_conn_since '1 hour ago')" "$(net_conn_since '24 hours ago')" "$pn_ses"
     # Fecha a janela para a PRÓXIMA chamada (é assim que o monitor tem taxa a cada ciclo).
     if [ -n "$pn_rx" ]; then PREV_RX="$pn_rx"; PREV_TX="$pn_tx"; PREV_T="$(date +%s)"; fi
     return 0
@@ -1742,10 +1802,13 @@ print_status() {
     echo
     load_speeds
     load_volumes
-    printf '  %-16s %-18s %-21s %-7s %-24s %-16s %10s %8s\n' \
-        "ESTAÇÃO" "STATUS" "ÚLTIMO SINAL (local)" "CICLO" "VELOCIDADE (últ · méd)" \
-        "PING (últ · méd)" "30 DIAS" "SESSÕES"
+    # Larguras da tabela (em colunas). Uma única lista para cabeçalho e linhas.
+    W_ID=15; W_ST=17; W_SIG=19; W_CYC=8; W_SPD=12; W_PING=8; W_VOL=9
+    printf '  '; col "ESTAÇÃO" "$W_ID"; col "ESTADO" "$W_ST"; col "ÚLTIMO SINAL" "$W_SIG"
+    col "CICLO" "$W_CYC"; col "VELOCIDADE" "$W_SPD"; col "PING" "$W_PING"
+    colr "30 DIAS" "$W_VOL"; echo
     if [ ! -d "$INCOMING" ]; then echo "(sem pasta $INCOMING — rode 'install')"; return; fi
+    hoje_dm="$(date '+%d/%m')"      # fora do laço: uma vez por ciclo, não por estação
     found=0
     for d in "$INCOMING"/*/; do
         [ -d "$d" ] || continue
@@ -1779,7 +1842,21 @@ print_status() {
         receiving=0
         [ "$lastev" = "CONNECT" ] && receiving=1
         [ "$act" != 0 ] && [ "$((now - act))" -le 60 ] && receiving=1
-        if [ "$act" = 0 ]; then when="-"; else when="$(date -d "@$act" '+%F %T' 2>/dev/null || echo "$act")"; fi
+        # ÚLTIMO SINAL: hora local + há quanto tempo. O relativo é o que responde
+        # "está viva agora?" sem o leitor precisar fazer a conta; a hora absoluta fica
+        # do lado para quem quer saber QUANDO parou. Data só quando não é hoje.
+        if [ "$act" = 0 ]; then
+            when="-"
+        else
+            when_h="$(date -d "@$act" '+%H:%M:%S' 2>/dev/null || echo "$act")"
+            when_d="$(date -d "@$act" '+%d/%m' 2>/dev/null || echo '')"
+            # Fora de hoje a hora sozinha engana ("10:18" de ontem parece recente):
+            # troca por dia/mês + hora e minuto, que cabe na mesma coluna.
+            if [ -n "$when_d" ] && [ "$when_d" != "$hoje_dm" ]; then
+                when_h="$when_d ${when_h%:*}"
+            fi
+            when="$when_h ($(human_age $(( now - act ))))"
+        fi
         if [ -n "$interval" ]; then cyc="${interval} min"; else cyc="-"; fi
         if is_paused "$id"; then
             # A pausa manda no display: sem recepção a estação não consegue nem mandar
@@ -1793,15 +1870,65 @@ print_status() {
             dot="${C_OFF}●${C_0}"; txt="Offline"
         fi
         vs="$(station_volume "$id")"
-        printf '%s %-16s %-18s %-21s %-7s %-24s %-16s %10s %8s\n' \
-            "$dot" "$id" "$txt" "$when" "$cyc" "$(station_speed "$id")" \
-            "$(station_ping "$id")" "${vs%%|*}" "${vs##*|}"
+        printf '%s ' "$dot"; col "$id" "$W_ID"; col "$txt" "$W_ST"; col "$when" "$W_SIG"
+        col "$cyc" "$W_CYC"; col "$(station_speed "$id")" "$W_SPD"
+        col "$(station_ping "$id")" "$W_PING"; colr "${vs%%|*}" "$W_VOL"; echo
     done
-    [ "$found" = 1 ] || echo "(nenhuma estação com pasta ainda)"
+    if [ "$found" = 1 ]; then
+        # Legenda curta: sem ela as colunas viram sopa de números — em especial
+        # "velocidade" e "ping", que são da ÚLTIMA sessão, não médias.
+        echo
+        echo "  ciclo = cadência declarada pela estação · velocidade/ping = última sessão medida"
+        echo "  (velocidade só conta envios ≥ 64 kB) · médias e outros períodos: rsync-hub volume"
+    else
+        echo "(nenhuma estação com pasta ainda)"
+    fi
 }
 
 # Converte, para EXIBIÇÃO, o 1º campo (carimbo UTC ISO gravado por serve()) de cada
 # linha do log para a hora LOCAL do host — o arquivo em si continua em UTC.
+# Últimas conexões em português, não em campos de log. A linha crua
+# ("DISCONNECT km67 170.238.113.113 bytes=0 ms=4187 rtt=104.8") é ótima para máquina e
+# péssima para quem só quer saber se a estação entregou algo — o `diagnostico` continua
+# mostrando a linha crua, que é o lugar certo para ela.
+fmt_log_pretty() {
+    while IFS= read -r ln; do
+        [ -n "$ln" ] || continue
+        # shellcheck disable=SC2086
+        set -- $ln
+        [ $# -ge 3 ] || continue
+        fp_ts="$1"; fp_ev="$2"; fp_id="$3"
+        fp_hora="$(date -d "$fp_ts" '+%H:%M:%S' 2>/dev/null || echo "$fp_ts")"
+        fp_b=""; fp_ms=""; fp_rtt=""
+        shift 3; [ $# -gt 0 ] && shift    # sai o IP; sobram os campos chave=valor
+        for fp_f in "$@"; do
+            case "$fp_f" in
+                bytes=*) fp_b="${fp_f#bytes=}" ;;
+                ms=*)    fp_ms="${fp_f#ms=}" ;;
+                rtt=*)   fp_rtt="${fp_f#rtt=}" ;;
+            esac
+        done
+        case "$fp_ev" in
+            CONNECT) fp_txt="conectou" ;;
+            DISCONNECT)
+                if [ -n "$fp_b" ] && [ "$fp_b" -gt 0 ] 2>/dev/null; then
+                    fp_txt="recebeu $(fmt_bytes "$fp_b")"
+                else
+                    fp_txt="encerrou sem dados novos"
+                fi
+                # Duração em segundos com uma casa: "4187 ms" é ruído para o leitor.
+                [ -n "$fp_ms" ] && [ "$fp_ms" -gt 0 ] 2>/dev/null \
+                    && fp_txt="$fp_txt · $(( fp_ms / 1000 )).$(( (fp_ms % 1000) / 100 )) s"
+                [ -n "$fp_rtt" ] && fp_txt="$fp_txt · ping ${fp_rtt%.*} ms"
+                ;;
+            PAUSED) fp_txt="recusada — recepção pausada" ;;
+            REJECT) fp_txt="RECUSADA — comando não permitido" ;;
+            *)      fp_txt="$fp_ev" ;;
+        esac
+        printf '  %s  ' "$fp_hora"; col "$fp_id" 16; printf '%s\n' "$fp_txt"
+    done
+}
+
 fmt_log_local() {
     while IFS= read -r ln; do
         [ -n "$ln" ] || continue
@@ -1822,14 +1949,14 @@ monitor() {
         echo
         print_status
         echo
-        echo "últimas conexões (chave SSH, hora local):"
+        echo "últimas conexões (hora local)"
         if [ -s "$LOG" ]; then
-            tail -n 6 "$LOG" 2>/dev/null | fmt_log_local
+            tail -n 6 "$LOG" 2>/dev/null | fmt_log_pretty
         else
             echo "  (sem registros)"
         fi
         if [ -f "$RSYNCD_LOG" ]; then
-            echo "últimas conexões (usuário+senha, rsync daemon):"
+            echo "últimas conexões por senha (rsync daemon)"
             tail -n 4 "$RSYNCD_LOG" 2>/dev/null | sed 's/^/  /'
         fi
         sleep "$REFRESH"

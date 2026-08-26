@@ -296,19 +296,27 @@ Running `carbonara-station.cmd` with no arguments opens an interactive menu (`te
 
 ```console
 $ rsync-hub monitor
-rsync-hub v2026-07-23.2 — monitor (atualiza a cada 3s · Ctrl-C sai)   2026-08-05 14:32:07
+rsync-hub v2026-08-26.2 — monitor (atualiza a cada 3s · Ctrl-C sai)   2026-08-26 14:32:07
 
-  ESTAÇÃO          STATUS             ÚLTIMO SINAL (local)   CICLO    PASTA
-● flona01          Online             2026-08-05 14:31:12    15 min   /srv/carbonara/incoming/flona01
-● flona02          Offline            2026-08-04 09:10:44    10 min   /srv/carbonara/incoming/flona02
+  rede: eno1 (rota padrão) 10.1.90.246 · ↓ 1.2 MB/s ↑ 23.2 kB/s · boot ↓ 289.7 GB ↑ 14.5 GB
+        22/ssh aberta · 56 conexões na última hora, 1391 em 24 h · recebendo: flona01
 
-últimas conexões (chave SSH, hora local):
-  2026-08-05 14:31:05 CONNECT flona01 200.139.13.90
-  2026-08-05 14:31:12 DISCONNECT flona01 200.139.13.90
+  ESTAÇÃO        ESTADO           ÚLTIMO SINAL       CICLO   VELOCIDADE  PING      30 DIAS
+● flona01        Recebendo dados  14:31:12 (55 s)    15 min  1.5 MB/s    38 ms     61.4 GB
+● flona02        Offline          04/08 09:10 (22 d) 10 min  -           -        812.2 kB
+
+  ciclo = cadência declarada pela estação · velocidade/ping = última sessão medida
+  (velocidade só conta envios ≥ 64 kB) · médias e outros períodos: rsync-hub volume
+
+últimas conexões (hora local)
+  14:31:05  flona01         conectou
+  14:31:12  flona01         recebeu 12.4 MB · 6.8 s · ping 38 ms
 ```
 
 Green ● = a live signal within the station's window · purple ● = receiving right now ·
-red ● = offline. Then watch the files become measurements:
+red ● = offline · yellow ● = reception paused. The **ping** is measured in reverse: the
+hub never sends a packet to the station — it reads the RTT the kernel already keeps for
+the station's own TCP connection. Then watch the files become measurements:
 `docker compose logs -f ingestion`.
 
 ### If something fails

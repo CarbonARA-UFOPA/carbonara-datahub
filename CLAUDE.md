@@ -181,7 +181,24 @@ All collection is **one bash script**, `collection/rsync-hub`, running natively 
   bounded by the PERIOD, not by the log size: `tailer.tail_lines_since` walks the file
   backwards and stops at the first line older than the cutoff (the ISO-UTC stamp orders
   as text), which matters because `connections.log` is never rotated.
-- **Monitor columns** `30 DIAS` / `SESSÕES` come from `load_volumes`, refreshed at most
+- **Monitor/status layout** (deliberate, after the table became unreadable): seven
+  columns — `ESTAÇÃO ESTADO ÚLTIMO SINAL CICLO VELOCIDADE PING 30 DIAS` — plus a
+  two-line legend under the table. Speed and ping show the **last** measured session
+  only (that is what answers "how is the link right now"); the AVERAGES moved to
+  `rsync-hub volume`, which gained `VELOC. MÉD` / `PING MÉD` columns over the report's
+  own period — don't put `últ · méd` pairs back in the table. `ÚLTIMO SINAL` is
+  `HH:MM:SS (há quanto tempo)`, with `dd/mm HH:MM` when it is not today. The network
+  block is 2 lines, not 5.
+- **Column alignment must go through `col`/`colr`** (never a bare `printf %-16s` with
+  accented text): the shell's printf pads by BYTES under locale C and by CHARACTERS
+  under UTF-8, so `ESTAÇÃO` (7 chars, 9 bytes) lined up on one machine and skewed the
+  whole table on another. `col_width` measures bytes minus UTF-8 continuation bytes
+  (`10xxxxxx`), which is the column count in both cases, using only builtins (no fork
+  per cell). Values printed in the table stay ASCII for the same reason.
+- **`fmt_log_pretty`** renders the monitor's recent connections in Portuguese
+  (`recebeu 12.4 MB · 6.8 s · ping 38 ms`) instead of raw log fields; `fmt_log_local`
+  keeps the raw line for `diagnostico`, where the raw form is the point.
+- **Monitor columns** `30 DIAS` come from `load_volumes`, refreshed at most
   once a minute (`VOL30_TTL`) while the speed/ping columns refresh every cycle — the volume
   scan covers 30 days of log, the speed only its tail. With `tac` the scan reads
   backwards and EXITS at the cutoff, so its cost follows the period, not the (never
