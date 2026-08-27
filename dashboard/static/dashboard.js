@@ -863,13 +863,13 @@ function initFileForm() {
     tr.innerHTML =
       '<td><input name="var_column" class="num-input" ' +
       'title="Índice da coluna (0 = primeira, -1 = última) ou o nome dela"></td>' +
+      '<td><input name="var_label"></td>' +
       '<td><select name="var_type">' +
       '<option value="numero">Número</option><option value="inteiro">Inteiro</option>' +
       '<option value="booleano">Booleano</option>' +
       '<option value="epoch">Data/hora (epoch)</option>' +
       '<option value="timestamp">Data/hora (texto)</option>' +
       '<option value="texto">Texto</option></select></td>' +
-      '<td><input name="var_label"></td>' +
       '<td><input name="var_unit"></td>' +
       '<td><input name="var_min" placeholder="—" class="num-input"></td>' +
       '<td><input name="var_max" placeholder="—" class="num-input"></td>' +

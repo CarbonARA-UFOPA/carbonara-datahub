@@ -137,6 +137,13 @@
           </td>
           <td class="actions">
             <a class="btn" href="{{ url_for('pages.file_edit', station_id=station['id'], file_id=f.id) }}">Editar</a>
+            <form method="post" style="display:inline"
+                  action="{{ url_for('pages.file_delete', station_id=station['id'], file_id=f.id) }}"
+                  onsubmit="return confirm('Remover o arquivo \'{{ f.id }}\' do monitoramento? O arquivo em disco não é apagado — só deixa de ser exibido no dashboard.');">
+              {# Mantém o admin nesta tela após excluir (o padrão da rota volta ao detalhe). #}
+              <input type="hidden" name="back" value="edit">
+              <button class="btn btn-danger" type="submit">Remover</button>
+            </form>
           </td>
         </tr>
       {% endfor %}

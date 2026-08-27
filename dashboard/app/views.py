@@ -508,4 +508,8 @@ def file_delete(station_id, file_id):
     station["files"] = [f for f in station.get("files", []) if f["id"] != file_id]
     _save(cfg)
     flash(f"Arquivo '{file_id}' removido do monitoramento (o arquivo em disco não foi tocado).", "ok")
+    # `back` é um RÓTULO mapeado via url_for (mesma regra dos botões do hub) — nunca
+    # uma URL vinda do cliente, para não abrir redirect arbitrário.
+    if request.form.get("back") == "edit":
+        return redirect(url_for("pages.station_edit", station_id=station_id))
     return redirect(url_for("pages.station_detail", station_id=station_id))
