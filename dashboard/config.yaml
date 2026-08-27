@@ -1494,7 +1494,7 @@ stations:
   - path: incoming/profsfo/torre/%Y-%m-%d__%H-29-52.sfo
     alias: torre/02-29-52
     dynamic_path: true
-    tail_lines: 100
+    tail_lines: 600
     window_hours: null
     separator: ' '
     quotechar: '"'
@@ -1507,6 +1507,36 @@ stations:
     variables:
     - column: 1
       label: V_10m
+      unit: m/s
+      min: null
+      max: null
+      type: numero
+    - column: 72
+      label: V_33m
+      unit: m/s
+      min: null
+      max: null
+      type: numero
+    - column: 13
+      label: V_28m
+      unit: m/s
+      min: null
+      max: null
+      type: numero
+    - column: 59
+      label: V_21m
+      unit: m/s
+      min: null
+      max: null
+      type: numero
+    - column: 76
+      label: V_15m
+      unit: m/s
+      min: null
+      max: null
+      type: numero
+    - column: 68
+      label: V_2m
       unit: m/s
       min: null
       max: null
