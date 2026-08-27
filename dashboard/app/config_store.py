@@ -12,7 +12,7 @@ import os
 import re
 import tempfile
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -253,7 +253,16 @@ def resolve_file_path(cfg: dict, fcfg: dict) -> tuple[Path, dict]:
     if not fcfg.get("dynamic_path") or not (has_time_tokens(raw) or has_glob(raw)):
         return resolve_data_path(cfg, raw), {}
     pattern = resolve_data_path(cfg, raw)
-    expanded = Path(datetime.now().strftime(str(pattern)))
+    # Deslocamento de horas (hour_offset, ±N): soma ao relógio do servidor ANTES de
+    # expandir o padrão — o timedelta cuida da virada (23h com +2 vira 01h do DIA
+    # SEGUINTE, mudando %d/%m/%Y junto; nunca existe "25h"). Se o arquivo do horário
+    # deslocado ainda não existir, o fallback lá embaixo pega o mais recente que casa
+    # com o padrão — o "último arquivo mais próximo existente".
+    agora = datetime.now()
+    offset = fcfg.get("hour_offset")
+    if fcfg.get("dynamic_path") and offset:
+        agora += timedelta(hours=int(offset))
+    expanded = Path(agora.strftime(str(pattern)))
     if not Path(raw).expanduser().is_absolute():
         # Campos de formato locais (%x, %c) podem expandir com '/': revalida que o
         # resultado continua sob a raiz de dados, como faz resolve_data_path.
@@ -263,6 +272,8 @@ def resolve_file_path(cfg: dict, fcfg: dict) -> tuple[Path, dict]:
     info = {"dynamic": True, "pattern": str(pattern), "expanded": str(expanded)}
     if trunc and fcfg.get("dynamic_path"):
         info["truncate_chars"] = int(trunc)
+    if offset and fcfg.get("dynamic_path"):
+        info["hour_offset"] = int(offset)
     curinga = has_glob(str(expanded))
     if curinga:
         # Curinga no padrão: o "arquivo do momento" é o mais recente que casa com a
@@ -676,6 +687,29 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
         errors.append("O truncamento do fim do nome só vale com \"O nome do arquivo "
                       "muda com a data/hora\" marcado — é ali que o padrão é resolvido "
                       "a cada leitura.")
+    # Deslocamento de horas: ±N somado ao relógio do servidor antes de expandir o
+    # padrão. Vazio ou 0 = sem deslocamento (None gravado — o merge {**f, **entry}
+    # remove um valor antigo ao limpar o campo).
+    hour_offset = None
+    off_raw = (form.get("hour_offset") or "").strip()
+    if off_raw:
+        try:
+            hour_offset = int(off_raw)          # int() aceita "+2" e "-3"
+            if not (-168 <= hour_offset <= 168):
+                raise ValueError
+        except ValueError:
+            errors.append(f"Deslocar horas: valor inválido ('{off_raw}') — use um "
+                          "inteiro entre -168 e +168 (ex.: +2 ou -3), ou deixe vazio.")
+            hour_offset = None
+        if hour_offset == 0:
+            hour_offset = None
+    if hour_offset and not dynamic_path:
+        errors.append("O deslocamento de horas só vale com \"O nome do arquivo muda "
+                      "com a data/hora\" marcado — ele desloca o relógio usado para "
+                      "expandir o padrão.")
+    if hour_offset and dynamic_path and path and not has_time_tokens(path):
+        errors.append("Deslocar horas exige campos de tempo no caminho (%Y, %m, %d, "
+                      "%H…) — num padrão só com curinga (*) não há relógio a deslocar.")
     if truncate_chars and path:
         nome = path.rpartition("/")[2]
         if truncate_chars >= len(nome):
@@ -797,9 +831,10 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
         "path": path,
         "alias": alias,
         "dynamic_path": dynamic_path,
-        # Sempre presente (None quando vazio): limpar o campo na edição precisa
-        # remover o truncamento de verdade (o merge {**f, **entry} sobrescreve).
+        # Sempre presentes (None quando vazios): limpar o campo na edição precisa
+        # remover o ajuste de verdade (o merge {**f, **entry} sobrescreve).
         "truncate_chars": truncate_chars,
+        "hour_offset": hour_offset,
         "tail_lines": tail_lines,
         "window_hours": window_hours,
         "separator": separator,

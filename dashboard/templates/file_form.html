@@ -49,6 +49,20 @@
       frouxo a ponto de casar vários.</small>
   </label>
 
+  <label id="off-label" hidden>Deslocar horas (opcional)
+    <input name="hour_offset" type="number" min="-168" max="168" step="1" id="off-hours"
+           value="{{ fcfg.hour_offset if fcfg and fcfg.get('hour_offset') else '' }}"
+           placeholder="vazio = hora atual do servidor">
+    <small>Soma (ou subtrai) horas ao relógio do servidor <em>antes</em> de expandir o
+      padrão — para equipamentos que nomeiam o arquivo adiantado ou atrasado em relação
+      ao servidor. Ex.: servidor às 10h com <code>+2</code> procura o arquivo das
+      <code>12</code>h. <strong>A virada é automática</strong>: às 23h com
+      <code>+2</code> vira <code>01</code>h <em>do dia seguinte</em> (o <code>%d</code>,
+      <code>%m</code> e <code>%Y</code> acompanham — nunca existe "25h"); valores
+      negativos voltam o dia do mesmo jeito. Se o arquivo do horário deslocado ainda
+      não existir, vale o <strong>mais recente que casa com o padrão</strong>.</small>
+  </label>
+
   <div class="form-row">
     <label>Formato do arquivo
       {# Sem `name`: não é campo do cadastro, só preenche os de baixo. O que vale para o
@@ -317,6 +331,8 @@
     var out = document.getElementById("dyn-preview");
     var truncLbl = document.getElementById("trunc-label");
     var truncInp = document.getElementById("trunc-chars");
+    var offLbl = document.getElementById("off-label");
+    var offInp = document.getElementById("off-hours");
     if (!chk || !pathInp || !out) return;
     /* Espelho de config_store.truncate_pattern: corta N do NOME (nunca do diretório),
        remove um '%' que ficaria partido no corte e completa com '*'. */
@@ -332,8 +348,10 @@
     var ALIAS = [[/%YYYY/g, "%Y"], [/%yyyy/g, "%Y"], [/%YY/g, "%y"], [/%mm/g, "%m"],
                  [/%DD/g, "%d"], [/%dd/g, "%d"], [/%HH/g, "%H"], [/%MM/g, "%M"], [/%SS/g, "%S"]];
     function pad(n, w) { return String(n).padStart(w || 2, "0"); }
-    function expande(p) {
-      var d = new Date(), map = {
+    function expande(p, offH) {
+      /* Deslocamento em milissegundos sobre o instante: o próprio Date resolve a
+         virada de dia/mês/ano — a mesma matemática do timedelta no servidor. */
+      var d = new Date(Date.now() + (offH || 0) * 3600e3), map = {
         Y: d.getFullYear(), y: pad(d.getFullYear() % 100), m: pad(d.getMonth() + 1),
         d: pad(d.getDate()), H: pad(d.getHours()), M: pad(d.getMinutes()), S: pad(d.getSeconds()),
         j: pad(Math.ceil((d - new Date(d.getFullYear(), 0, 0)) / 86400000), 3)
@@ -345,18 +363,23 @@
     }
     function render() {
       if (truncLbl) truncLbl.hidden = !chk.checked;
+      if (offLbl) offLbl.hidden = !chk.checked;
       var p = pathInp.value.trim();
       if (!chk.checked || !p) { out.textContent = ""; return; }
       var n = truncInp ? parseInt(truncInp.value, 10) : NaN;
       if (n > 0) p = truncar(p, n);       /* mesma ordem do servidor: trunca, depois expande */
-      var alvo = expande(p);
+      var off = offInp ? parseInt(offInp.value, 10) : NaN;
+      if (!Number.isFinite(off)) off = 0;
+      var alvo = expande(p, off);
       out.innerHTML = "<br>Agora isto aponta para: <code>" + alvo + "</code>" +
+        (off ? " <em>(relógio deslocado " + (off > 0 ? "+" : "") + off + "h)</em>" : "") +
         (alvo.indexOf("*") >= 0 || alvo.indexOf("?") >= 0
           ? " <em>(curinga: o mais recente que casar)</em>" : "");
     }
     chk.addEventListener("change", render);
     pathInp.addEventListener("input", render);
     if (truncInp) truncInp.addEventListener("input", render);
+    if (offInp) offInp.addEventListener("input", render);
     render();
   })();
 </script>

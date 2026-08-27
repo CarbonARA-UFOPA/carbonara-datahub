@@ -392,6 +392,8 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
         note = f"Caminho com data/hora: {pinfo['pattern']} → {pinfo['expanded']}"
         if pinfo.get("truncate_chars"):
             note += f" (truncado: {pinfo['truncate_chars']} caractere(s) do fim do nome)"
+        if pinfo.get("hour_offset"):
+            note += f" (relógio deslocado {pinfo['hour_offset']:+d}h)"
         if pinfo.get("matched"):
             note += f" (arquivo lido: {Path(pinfo['matched']).name})"
         if pinfo.get("fallback"):
