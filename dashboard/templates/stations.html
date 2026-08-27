@@ -80,8 +80,9 @@
       <td>{{ s.files }}</td>
       {# Saúde do DADO, não do transporte: a estação pode estar online (o rsync entrega
          em dia) e um sensor parado há dias — o arquivo chega, mas com carimbo velho.
-         Em dia mostra só o carimbo mais recente; o que atrasou aparece nomeado, que é
-         o que se precisa saber sem abrir a estação. O title= traz a lista completa. #}
+         Em dia a célula é só o carimbo mais recente — sem linha de "N em dia", que
+         ocupava altura sem dizer nada; o que atrasou aparece nomeado, que é o que se
+         precisa saber sem abrir a estação. O title= traz a lista completa. #}
       <td class="fresh-cell fresh-{{ s.freshness.level }}" title="{{ s.freshness.tooltip }}">
         {% if not s.freshness.total %}
           <span class="meta">—</span>
@@ -101,9 +102,6 @@
           {% endfor %}
           {% if s.freshness.unknown | length > 2 %}
             <span class="fresh-tag fresh-unknown">+{{ s.freshness.unknown | length - 2 }} sem leitura</span>
-          {% endif %}
-          {% if not s.freshness.problems and not s.freshness.unknown %}
-            <small class="meta">{{ s.freshness.total }} arquivo(s) em dia</small>
           {% endif %}
         {% endif %}
       </td>

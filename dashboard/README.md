@@ -81,8 +81,9 @@ python run.py                          # http://localhost:8080
   carimbo velho. Alerta por arquivo: **amarelo acima de 1 dia**, **vermelho acima de
   7 dias** (`series.FRESH_WARN_SECONDS` / `FRESH_ALERT_SECONDS`); o pontinho ao lado
   do carimbo resume o pior caso da estação, para varrer a coluna de cima a baixo.
-  Em dia, a célula mostra só o carimbo mais recente e "N arquivo(s) em dia" — quem
-  atrasou aparece **nomeado** ("qual arquivo?" é sempre a pergunta seguinte), no
+  Em dia, a célula é só o carimbo mais recente (uma linha, sem contagem de arquivos —
+  ocupava altura sem dizer nada); quem atrasou aparece **nomeado**
+  ("qual arquivo?" é sempre a pergunta seguinte), no
   máximo 3 etiquetas mais um "+N"; arquivos sem leitura (o do período ainda não
   chegou, carimbo não reconhecido) ficam em cinza, tom neutro, porque não são falha.
   Passar o mouse na célula lista **todos** os arquivos com seus carimbos. A leitura é
