@@ -1661,7 +1661,108 @@ stations:
   latitude: null
   longitude: null
   offline_window_min: null
-  files: []
+  files:
+  - path: incoming/profkm67/pc400/data/CR1000Profile_RawData.dat
+    alias: pc400/data/CR1000Profile_RawData
+    dynamic_path: false
+    tail_lines: 100
+    window_hours: null
+    separator: ','
+    quotechar: '"'
+    decimal: .
+    skip_header_lines: 4
+    header_line: 2
+    timestamp:
+      column: 0
+      format: '%Y-%m-%d %H:%M:%S'
+    variables:
+    - column: 1
+      label: RECORD
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 2
+      label: valve_number
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 3
+      label: smpl_counter
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 4
+      label: diag_AP200
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 5
+      label: CO2
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 6
+      label: H2O
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 7
+      label: cell_tmpr
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 8
+      label: cell_press
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 9
+      label: Td_cell
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 10
+      label: Td_ambient
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 11
+      label: sample_flow
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 12
+      label: pump_press
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 13
+      label: panel_tmpr
+      unit: null
+      min: null
+      max: null
+      type: numero
+    - column: 14
+      label: batt_volt
+      unit: null
+      min: null
+      max: null
+      type: numero
+    id: cr1000profile_rawdata
+    truncate_chars: null
+    hour_offset: null
 - id: ftir_farm
   name: ftir_farm
   heartbeat_file: null
