@@ -1508,10 +1508,12 @@ stations:
     - column: 1
       label: V_10m
       unit: m/s
-      min: 0.0
-      max: 5.0
+      min: null
+      max: null
       type: numero
     id: 2026-08-24__02-29-52
+    truncate_chars: 10
+    hour_offset: 3
 - id: km67
   name: km67
   heartbeat_file: null
