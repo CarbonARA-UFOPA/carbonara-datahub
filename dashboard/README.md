@@ -74,6 +74,21 @@ python run.py                          # http://localhost:8080
   média das sessões medidas — payload entregue ÷ duração, do log do `rsync-hub`
   (sessões abaixo de 64 kB são ignoradas, pois a latência domina). Serve para comparar
   os enlaces: qual estação entrega melhor e qual é a pior.
+- **Frescor do dado por estação** (coluna *Últ. dado*, ao lado de *Arqv. mon.*):
+  último carimbo de tempo lido de **cada arquivo monitorado**. É uma coluna de saúde
+  do DADO, não do transporte — uma estação pode estar *Online* (o rsync entrega em
+  dia) e um sensor estar parado há dias: o arquivo continua chegando, só que com
+  carimbo velho. Alerta por arquivo: **amarelo acima de 1 dia**, **vermelho acima de
+  7 dias** (`series.FRESH_WARN_SECONDS` / `FRESH_ALERT_SECONDS`); o pontinho ao lado
+  do carimbo resume o pior caso da estação, para varrer a coluna de cima a baixo.
+  Em dia, a célula mostra só o carimbo mais recente e "N arquivo(s) em dia" — quem
+  atrasou aparece **nomeado** ("qual arquivo?" é sempre a pergunta seguinte), no
+  máximo 3 etiquetas mais um "+N"; arquivos sem leitura (o do período ainda não
+  chegou, carimbo não reconhecido) ficam em cinza, tom neutro, porque não são falha.
+  Passar o mouse na célula lista **todos** os arquivos com seus carimbos. A leitura é
+  barata de propósito: só as últimas linhas de cada arquivo (`FRESH_TAIL_LINES`), com
+  cache de 30 s por estação invalidado quando o cadastro muda — e roda na view da
+  página, nunca em `/api/status`, que outras telas consultam a cada ciclo.
 - **Velocidade de rede do servidor** no topo da aba Estações: taxa de download/upload
   da interface que tem a rota padrão (a "com internet"), com as demais interfaces numa
   lista recolhida. Lê os contadores do kernel (`/proc/net/dev`) — não gera tráfego nem

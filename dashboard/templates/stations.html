@@ -33,7 +33,8 @@
 <table class="table">
   <thead>
     <tr><th>Status</th><th>Estação</th><th>Último sinal</th><th>Velocidade</th>
-        <th>Consumo</th><th>Ping</th><th>Janela</th><th>Arqv. mon.</th><th></th></tr>
+        <th>Consumo</th><th>Ping</th><th>Janela</th><th>Arqv. mon.</th>
+        <th title="Último carimbo de tempo lido de cada arquivo monitorado. Amarelo: parado há mais de 1 dia. Vermelho: mais de 7 dias.">Últ. dado</th><th></th></tr>
   </thead>
   <tbody>
   {% for s in stations %}
@@ -77,6 +78,35 @@
       <td><small>{% if s.interval_min %}{{ s.interval_min }} min
         {%- else %}fallback {{ s.limit_seconds // 60 }} min{% endif %}</small></td>
       <td>{{ s.files }}</td>
+      {# Saúde do DADO, não do transporte: a estação pode estar online (o rsync entrega
+         em dia) e um sensor parado há dias — o arquivo chega, mas com carimbo velho.
+         Em dia mostra só o carimbo mais recente; o que atrasou aparece nomeado, que é
+         o que se precisa saber sem abrir a estação. O title= traz a lista completa. #}
+      <td class="fresh-cell fresh-{{ s.freshness.level }}" title="{{ s.freshness.tooltip }}">
+        {% if not s.freshness.total %}
+          <span class="meta">—</span>
+        {% else %}
+          <span class="fresh-top">
+            <span class="fresh-dot fresh-dot-{{ s.freshness.level }}"></span>
+            {{ s.freshness.newest or 'sem leitura' }}
+          </span>
+          {% for f in s.freshness.problems[:3] %}
+            <span class="fresh-tag fresh-{{ f.level }}">{{ f.label }} · há {{ f.age_display }}</span>
+          {% endfor %}
+          {% if s.freshness.problems | length > 3 %}
+            <span class="fresh-tag fresh-alert">+{{ s.freshness.problems | length - 3 }} atrasado(s)</span>
+          {% endif %}
+          {% for f in s.freshness.unknown[:2] %}
+            <span class="fresh-tag fresh-unknown">{{ f.label }} · {{ f.note or 'sem leitura' }}</span>
+          {% endfor %}
+          {% if s.freshness.unknown | length > 2 %}
+            <span class="fresh-tag fresh-unknown">+{{ s.freshness.unknown | length - 2 }} sem leitura</span>
+          {% endif %}
+          {% if not s.freshness.problems and not s.freshness.unknown %}
+            <small class="meta">{{ s.freshness.total }} arquivo(s) em dia</small>
+          {% endif %}
+        {% endif %}
+      </td>
       <td class="actions">
         <a class="btn" href="{{ url_for('pages.station_detail', station_id=s.id) }}">Ver</a>
         {% if is_admin %}

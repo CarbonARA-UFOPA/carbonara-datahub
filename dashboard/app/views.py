@@ -24,7 +24,7 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
-from . import config_store, hub, status
+from . import config_store, hub, series, status
 
 pages = Blueprint("pages", __name__)
 
@@ -135,7 +135,21 @@ def _station_or_404(cfg, station_id):
 def index():
     cfg = _load()
     pause = hub.pause_state(cfg)
-    stations = [status.station_status(cfg, s, pause) for s in cfg["stations"]]
+    stations = []
+    for s in cfg["stations"]:
+        st = status.station_status(cfg, s, pause)
+        # Frescor dos arquivos monitorados (coluna de alerta). Calculado AQUI, e não
+        # dentro de station_status, porque abre os arquivos de dados: /api/status é
+        # consumido por outras telas a cada ciclo e não precisa desse custo.
+        # Erro de leitura nunca pode derrubar a lista de estações.
+        try:
+            st["freshness"] = series.file_freshness(cfg, s)
+        except Exception:  # noqa: BLE001
+            st["freshness"] = {"files": [], "level": "none", "total": 0,
+                               "ok_count": 0, "problems": [], "unknown": [],
+                               "newest": None, "newest_age": None,
+                               "tooltip": "falha ao ler os arquivos monitorados"}
+        stations.append(st)
     # Quantas estações do rsync-hub ainda não estão na dashboard (banner de importação).
     # Só varre para quem pode editar, e nunca deixa uma raiz mal configurada quebrar a página.
     new_count = 0

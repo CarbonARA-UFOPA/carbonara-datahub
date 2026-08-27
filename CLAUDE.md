@@ -553,6 +553,19 @@ computes live station status. Viewing is open; edits require the admin login
   command. `hub_info["can_pause"]` probes that rule separately so installs whose
   `setup-hub-access.sh` predates the feature get a "re-run it" hint instead of a
   failing click.
+- **Freshness column on the stations tab** (*Últ. dado*, next to *Arqv. mon.*):
+  `series.file_freshness` reads only the LAST timestamp of each monitored file
+  (`FRESH_TAIL_LINES` lines from the end, 30 s per-station cache keyed by a
+  signature of the file entries so an edit shows up immediately). It answers a
+  question the status dot cannot: a station can be *Online* — rsync delivering on
+  schedule — while a sensor has been dead for days, because the file still arrives,
+  just with an old stamp. Thresholds `FRESH_WARN_SECONDS` (1 d, amber) /
+  `FRESH_ALERT_SECONDS` (7 d, red); a file that has not arrived yet or whose stamp
+  did not parse is `unknown` and rendered NEUTRAL grey, never as a failure (same
+  rule as the pending chart). Only the late files are named in the cell (3 max,
+  then "+N"); the full per-file list lives in the cell's `title`. It is computed in
+  `pages.index`, NOT in `status.station_status` — `/api/status` is polled by other
+  screens and must not pay for opening data files.
 - **Server network rate** (`app/netspeed.py` + `/api/netspeed`, shown on the Estações
   page): reads the kernel counters in `/proc/net/dev` between two calls — it never
   generates traffic and never runs a speed test. "The interface with internet" is the

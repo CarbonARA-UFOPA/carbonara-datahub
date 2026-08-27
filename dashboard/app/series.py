@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -335,6 +336,142 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         "problems": problems,
         "generated_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
     }
+
+
+# --- Frescor dos arquivos monitorados (coluna de alerta da aba Estações) ----------
+# A aba Estações é a tela de saúde da rede: aqui interessa APENAS o último carimbo de
+# cada arquivo, não a série. Por isso lê-se um punhado de linhas do fim e para —
+# montar a série inteira de cada cadastro a cada refresh sairia caro (um arquivo de
+# datalogger tem dezenas de variáveis) e nada disso apareceria na tela.
+#
+# Uma estação pode estar ONLINE (rsync entregando em dia) e mesmo assim com um sensor
+# parado há dias: o arquivo continua chegando, mas com carimbo velho. É justamente
+# esse buraco entre "a estação transmite" e "o sensor mede" que esta coluna cobre.
+FRESH_TAIL_LINES = 5
+FRESH_WARN_SECONDS = 86400          # > 1 dia  → amarelo
+FRESH_ALERT_SECONDS = 7 * 86400     # > 7 dias → vermelho
+# Ordem de gravidade: um arquivo que ainda não chegou (dynamic_path do período) é
+# NEUTRO, não falha — mesma regra do gráfico, que mostra 'aguardando' em tom neutro.
+FRESH_RANK = {"ok": 0, "unknown": 1, "warn": 2, "alert": 3}
+_FRESH_TTL = 30.0
+_fresh_cache: dict = {}
+
+
+def _human_age(seconds: float) -> str:
+    """Idade curta para caber na célula da tabela ('há 3 d', 'há 5 h', 'há 12 min')."""
+    seconds = int(max(0, seconds))
+    if seconds < 60:
+        return f"{seconds} s"
+    if seconds < 3600:
+        return f"{seconds // 60} min"
+    if seconds < 86400:
+        return f"{seconds // 3600} h"
+    return f"{seconds // 86400} d"
+
+
+def _file_last_dt(cfg: dict, fcfg: dict):
+    """(datetime|None, Path|None, nota) do último registro reconhecido do arquivo."""
+    try:
+        path, pinfo = config_store.resolve_file_path(cfg, fcfg)
+    except (ValueError, KeyError, OSError) as exc:
+        return None, None, str(exc)
+    if not path.is_file():
+        if pinfo.get("dynamic"):
+            return None, None, "aguardando o arquivo do período"
+        return None, None, "arquivo não encontrado"
+    try:
+        lines = tailer.tail_data_lines(path, FRESH_TAIL_LINES,
+                                       fcfg.get("skip_header_lines", 0))
+        rows = tailer.parse_rows(lines, fcfg.get("separator", ","),
+                                 fcfg.get("quotechar", '"'))
+    except OSError as exc:
+        return None, path, f"falha ao ler: {exc}"
+    if not rows:
+        return None, path, "sem linhas de dados"
+    ts_cfg = fcfg.get("timestamp") or {}
+    ts_idx = _column_index(ts_cfg.get("column", 0), _read_header(path, fcfg),
+                           max(len(r) for r in rows))
+    ts_format = ts_cfg.get("format") or "%Y-%m-%d %H:%M:%S"
+    # De trás para frente: a última linha pode estar sendo escrita neste instante.
+    for row in reversed(rows):
+        raw = row[ts_idx].strip().strip('"') if ts_idx is not None and ts_idx < len(row) else ""
+        dt = parse_timestamp(raw, ts_format)
+        if dt is not None:
+            return dt, path, None
+    return None, path, "carimbo não reconhecido"
+
+
+def _file_label(fcfg: dict, path: Path | None) -> str:
+    """Nome curto do arquivo na coluna. Apelido AUTOMÁTICO (o que contém o id) não
+    serve: em cadastro com caminho rotativo ele congela o nome do dia em que foi
+    criado. Nesse caso vale o nome REAL do arquivo lido agora."""
+    alias = (fcfg.get("alias") or "").strip()
+    fid = fcfg.get("id", "?")
+    if alias and fid not in alias:
+        return alias
+    return path.name if path is not None else fid
+
+
+def file_freshness(cfg: dict, station: dict) -> dict:
+    """Último carimbo de cada arquivo monitorado da estação, com nível de alerta.
+
+    ``level`` da estação = o PIOR entre os arquivos (ver FRESH_RANK). O resultado
+    fica em cache por estação: a aba Estações se recarrega sozinha e reabrir todos
+    os arquivos de todas as estações a cada ciclo é trabalho jogado fora.
+    """
+    files = station.get("files") or []
+    # Assinatura do cadastro no cache: adicionar/remover/reapontar um arquivo tem de
+    # aparecer na hora, sem esperar o TTL vencer.
+    sig = tuple((f.get("id"), f.get("path"), f.get("alias")) for f in files)
+    agora = time.time()
+    hit = _fresh_cache.get(station.get("id"))
+    if hit and hit["sig"] == sig and agora - hit["t"] < _FRESH_TTL:
+        return hit["data"]
+
+    out = []
+    for fcfg in files:
+        dt, path, nota = _file_last_dt(cfg, fcfg)
+        idade = None if dt is None else max(0.0, agora - dt.timestamp())
+        if idade is None:
+            nivel = "unknown"
+        elif idade >= FRESH_ALERT_SECONDS:
+            nivel = "alert"
+        elif idade >= FRESH_WARN_SECONDS:
+            nivel = "warn"
+        else:
+            nivel = "ok"
+        out.append({
+            "id": fcfg.get("id"),
+            "label": _file_label(fcfg, path),
+            "level": nivel,
+            "note": nota,
+            "age_seconds": None if idade is None else int(idade),
+            "age_display": None if idade is None else _human_age(idade),
+            "display": fmt_ts(dt, TS_DISPLAY) if dt is not None else None,
+        })
+
+    pior = max((f["level"] for f in out), key=lambda n: FRESH_RANK[n], default="ok")
+    lidos = [f for f in out if f["display"]]
+    recente = min(lidos, key=lambda f: f["age_seconds"]) if lidos else None
+    data = {
+        "files": out,
+        "level": pior if out else "none",
+        "total": len(out),
+        "ok_count": sum(1 for f in out if f["level"] == "ok"),
+        "problems": [f for f in out if f["level"] in ("warn", "alert")],
+        "unknown": [f for f in out if f["level"] == "unknown"],
+        # Carimbo mais recente entre todos os arquivos: o "último dado" da estação.
+        "newest": recente["display"] if recente else None,
+        "newest_age": recente["age_display"] if recente else None,
+        # Uma linha por arquivo, para o title= da célula (o detalhe completo sem
+        # ocupar a tabela).
+        "tooltip": "\n".join(
+            f"{f['label']}: " + (f"{f['display']} (há {f['age_display']})"
+                                 if f["display"] else (f["note"] or "sem leitura"))
+            for f in out) or "nenhum arquivo monitorado",
+    }
+    _fresh_cache[station.get("id")] = {"t": agora, "sig": sig, "data": data}
+    return data
 
 
 def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
