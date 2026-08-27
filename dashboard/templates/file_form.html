@@ -18,21 +18,11 @@
   <label class="check-row">
     <input type="checkbox" name="dynamic_path" value="1" id="dyn-path"
            {{ 'checked' if fcfg and fcfg.get('dynamic_path') else '' }}>
-    <span><strong>O nome do arquivo muda com a data/hora</strong> — escreva o padrão no
-      caminho e o dashboard resolve a cada leitura pelo relógio do servidor:
-      <code>%Y</code> ano · <code>%m</code> mês · <code>%d</code> dia ·
-      <code>%H</code> hora · <code>%M</code> min · <code>%S</code> seg.
-      Ex.: <code>incoming/profsfo/torre/%Y-%m-%d__02-29-52.sfo</code> lê sempre o
-      arquivo do dia. (<code>%YYYY</code>, <code>%mm</code> e <code>%DD</code> também
-      são aceitos e convertidos.)
-      <br><strong>Use <code>*</code> na parte que varia sem regra</strong> — quando o
-      equipamento nomeia o arquivo com a hora em que o criou, só a data é previsível:
-      <code>%Y-%m-%d__*.sfo</code> pega o arquivo de hoje seja qual for a hora no nome
-      (o mais recente, se houver vários). Sozinho, <code>*.sfo</code> significa "o
-      arquivo mais recente desta pasta".
-      Se o arquivo de hoje ainda não chegou, o gráfico usa o mais recente que casa com
-      o padrão — normalmente o de ontem, que é onde a estação ainda está gravando.
-      <span id="dyn-preview" class="meta"></span></span>
+    <span><strong>O nome do arquivo muda com a data/hora</strong> — o caminho vira um
+      padrão resolvido a cada leitura: <code>%Y</code> ano · <code>%m</code> mês ·
+      <code>%d</code> dia · <code>%H</code> hora · <code>*</code> = parte livre.
+      Sem o arquivo do momento, vale o mais recente que casa.
+      <span id="dyn-preview"></span></span>
   </label>
 
   <details class="adv" id="path-adv" {{ '' if fcfg and (fcfg.get('truncate_chars') or fcfg.get('hour_offset')) else 'hidden' }}
