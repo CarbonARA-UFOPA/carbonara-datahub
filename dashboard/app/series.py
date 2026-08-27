@@ -308,6 +308,11 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         problems.append(
             f"o arquivo do momento ({Path(pinfo['expanded']).name}) ainda não existe — "
             f"lendo o mais recente que casa com o padrão ({path.name})")
+    if pinfo.get("matches", 0) > 1:
+        problems.append(
+            f"{pinfo['matches']} arquivos casam com o padrão do período — lendo só o "
+            f"mais recente ({path.name}); se não é o esperado, o truncamento/curinga "
+            "está frouxo demais")
     return {
         "file": fcfg["id"],
         "path": str(path),
@@ -385,11 +390,16 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
         # No preview o usuário PRECISA ver o padrão virando arquivo — é como ele
         # confere se os campos %Y/%m/%d/%H estão certos antes de salvar.
         note = f"Caminho com data/hora: {pinfo['pattern']} → {pinfo['expanded']}"
+        if pinfo.get("truncate_chars"):
+            note += f" (truncado: {pinfo['truncate_chars']} caractere(s) do fim do nome)"
         if pinfo.get("matched"):
             note += f" (arquivo lido: {Path(pinfo['matched']).name})"
         if pinfo.get("fallback"):
             note += (" (ainda não existe — lendo o mais recente que casa com o padrão: "
                      f"{pinfo['fallback']})")
+        if pinfo.get("matches", 0) > 1:
+            note += (f" — ATENÇÃO: {pinfo['matches']} arquivos casam com o padrão; "
+                     "só o mais recente é lido. Truncamento/curinga frouxo demais?")
         diagnostics.insert(0, note)
 
     # Carimbo convertido por linha: o preview mostra o valor CRU (é a conferência do

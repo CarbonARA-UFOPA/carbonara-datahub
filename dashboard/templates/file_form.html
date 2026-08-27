@@ -35,6 +35,20 @@
       <span id="dyn-preview" class="meta"></span></span>
   </label>
 
+  <label id="trunc-label" hidden>Truncar o fim do nome (opcional)
+    <input name="truncate_chars" type="number" min="1" max="200" id="trunc-chars"
+           value="{{ fcfg.truncate_chars if fcfg and fcfg.get('truncate_chars') else '' }}"
+           placeholder="vazio = padrão fixo, sem truncar">
+    <small>Ignora os <strong>N últimos caracteres do nome</strong> do arquivo e completa
+      com <code>*</code> <em>na hora de localizar</em> — o padrão gravado acima fica
+      <strong>intacto</strong> (apague o número para voltar ao padrão fixo).
+      Ex.: com <code>%Y-%m-%d__%H-29-52.sfo</code> e <code>10</code>, a busca vira
+      <code>%Y-%m-%d__%H*</code>: a parte de tempo continua mandando, só o fim varia.
+      Se mais de um arquivo casar, vale <strong>somente o mais recente</strong> — a
+      entrada nunca monitora dois arquivos, e a tela avisa quando o padrão ficou
+      frouxo a ponto de casar vários.</small>
+  </label>
+
   <div class="form-row">
     <label>Formato do arquivo
       {# Sem `name`: não é campo do cadastro, só preenche os de baixo. O que vale para o
@@ -301,7 +315,20 @@
     var chk = document.getElementById("dyn-path");
     var pathInp = document.querySelector('#file-form [name="path"]');
     var out = document.getElementById("dyn-preview");
+    var truncLbl = document.getElementById("trunc-label");
+    var truncInp = document.getElementById("trunc-chars");
     if (!chk || !pathInp || !out) return;
+    /* Espelho de config_store.truncate_pattern: corta N do NOME (nunca do diretório),
+       remove um '%' que ficaria partido no corte e completa com '*'. */
+    function truncar(p, n) {
+      var i = p.lastIndexOf("/");
+      var dir = p.slice(0, i + 1), nome = p.slice(i + 1);
+      nome = (n > 0 && n < nome.length) ? nome.slice(0, -n) : "";
+      var pct = nome.match(/%+$/);
+      if (pct && pct[0].length % 2 === 1) nome = nome.slice(0, -1);
+      if (nome.slice(-1) !== "*") nome += "*";
+      return dir + nome;
+    }
     var ALIAS = [[/%YYYY/g, "%Y"], [/%yyyy/g, "%Y"], [/%YY/g, "%y"], [/%mm/g, "%m"],
                  [/%DD/g, "%d"], [/%dd/g, "%d"], [/%HH/g, "%H"], [/%MM/g, "%M"], [/%SS/g, "%S"]];
     function pad(n, w) { return String(n).padStart(w || 2, "0"); }
@@ -317,8 +344,11 @@
       });
     }
     function render() {
+      if (truncLbl) truncLbl.hidden = !chk.checked;
       var p = pathInp.value.trim();
       if (!chk.checked || !p) { out.textContent = ""; return; }
+      var n = truncInp ? parseInt(truncInp.value, 10) : NaN;
+      if (n > 0) p = truncar(p, n);       /* mesma ordem do servidor: trunca, depois expande */
       var alvo = expande(p);
       out.innerHTML = "<br>Agora isto aponta para: <code>" + alvo + "</code>" +
         (alvo.indexOf("*") >= 0 || alvo.indexOf("?") >= 0
@@ -326,6 +356,7 @@
     }
     chk.addEventListener("change", render);
     pathInp.addEventListener("input", render);
+    if (truncInp) truncInp.addEventListener("input", render);
     render();
   })();
 </script>

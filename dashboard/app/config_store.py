@@ -187,13 +187,34 @@ def time_path_glob(pattern: str, keep_wildcards: bool = False) -> str:
     return "".join(out)
 
 
-def _newest_glob(padrao: str) -> Path | None:
-    """Arquivo mais recente (mtime) que casa com um glob já pronto."""
+def truncate_pattern(path: str, n: int) -> str:
+    """Truncamento do fim do nome: corta os ``n`` últimos caracteres do NOME do
+    arquivo (nunca do diretório) e completa com ``*``. Roda a cada leitura em cima
+    do padrão ORIGINAL — o caminho gravado nunca muda, então desligar o truncamento
+    devolve o padrão fixo intacto. Um corte que cai no meio de um campo strftime
+    deixaria um ``%`` pendurado (strftime inválido na expansão): a paridade dos
+    ``%`` finais detecta isso e o ``%`` partido é removido junto."""
+    dirpart, sep, nome = (path or "").rpartition("/")
+    nome = nome[:-n] if 0 < n < len(nome) else ""
+    if (len(nome) - len(nome.rstrip("%"))) % 2 == 1:
+        nome = nome[:-1]
+    if not nome.endswith("*"):
+        nome += "*"
+    return f"{dirpart}{sep}{nome}"
+
+
+def _glob_files(padrao: str) -> list[Path]:
+    """Arquivos (só arquivos) que casam com um glob já pronto."""
     try:
         hits = [Path(p) for p in glob.glob(padrao)]
     except OSError:
-        return None
-    files = [p for p in hits if p.is_file()]
+        return []
+    return [p for p in hits if p.is_file()]
+
+
+def _newest_glob(padrao: str) -> Path | None:
+    """Arquivo mais recente (mtime) que casa com um glob já pronto."""
+    files = _glob_files(padrao)
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
@@ -219,6 +240,14 @@ def resolve_file_path(cfg: dict, fcfg: dict) -> tuple[Path, dict]:
     (``pattern``/``expanded``/``fallback``) é o que a UI mostra para o usuário saber
     exatamente qual arquivo foi lido."""
     raw = (fcfg.get("path") or "").strip()
+    # Truncamento do fim do nome (truncate_chars): aplicado AQUI, a cada resolução,
+    # sobre o padrão original — o path gravado fica intacto (padrão fixo preservado).
+    # O '*' que ele acrescenta torna o caminho um glob, então cai no fluxo de curinga
+    # normal: quando mais de um arquivo casa, vale o mais recente (mtime) — nunca
+    # dois arquivos para a mesma entrada.
+    trunc = fcfg.get("truncate_chars")
+    if fcfg.get("dynamic_path") and trunc:
+        raw = truncate_pattern(raw, int(trunc))
     # Curinga sozinho (sem campo de tempo) também é caminho dinâmico: "o arquivo mais
     # recente desta pasta" é um pedido legítimo.
     if not fcfg.get("dynamic_path") or not (has_time_tokens(raw) or has_glob(raw)):
@@ -232,14 +261,22 @@ def resolve_file_path(cfg: dict, fcfg: dict) -> tuple[Path, dict]:
         if root not in expanded.resolve().parents and expanded.resolve() != root:
             raise ValueError(f"caminho com data/hora escapa de data_root: {expanded}")
     info = {"dynamic": True, "pattern": str(pattern), "expanded": str(expanded)}
+    if trunc and fcfg.get("dynamic_path"):
+        info["truncate_chars"] = int(trunc)
     curinga = has_glob(str(expanded))
     if curinga:
         # Curinga no padrão: o "arquivo do momento" é o mais recente que casa com a
         # data de HOJE — o equipamento nomeia o arquivo com o instante em que o criou
         # (2026-08-25__07-13-05.sfo), então exigir a hora exata nunca acertaria.
-        hoje = _newest_glob(str(expanded))
-        if hoje is not None:
+        candidatos = _glob_files(str(expanded))
+        if candidatos:
+            hoje = max(candidatos, key=lambda p: p.stat().st_mtime)
             info["matched"] = str(hoje)
+            if len(candidatos) > 1:
+                # Mais de um arquivo casa com o padrão do período: só o mais recente
+                # é lido, mas a UI avisa — normalmente é sinal de truncamento curto
+                # demais (padrão frouxo), não de rotação legítima.
+                info["matches"] = len(candidatos)
             return hoje, info
     elif expanded.is_file():
         return expanded, info
@@ -622,7 +659,32 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
     dynamic_path = bool(form.get("dynamic_path"))
     if dynamic_path:
         path = normalize_time_tokens(path)
-    if dynamic_path and path and not (has_time_tokens(path) or has_glob(path)):
+    # Truncamento do fim do nome: N últimos caracteres do NOME viram '*' na hora de
+    # resolver (o path gravado fica intacto). Vazio/None = padrão fixo, sem truncar.
+    truncate_chars = None
+    trunc_raw = (form.get("truncate_chars") or "").strip()
+    if trunc_raw:
+        try:
+            truncate_chars = int(trunc_raw)
+            if truncate_chars < 1:
+                raise ValueError
+        except ValueError:
+            errors.append(f"Truncar do fim do nome: valor inválido ('{trunc_raw}') — "
+                          "use um número de caracteres ≥ 1, ou deixe vazio.")
+            truncate_chars = None
+    if truncate_chars and not dynamic_path:
+        errors.append("O truncamento do fim do nome só vale com \"O nome do arquivo "
+                      "muda com a data/hora\" marcado — é ali que o padrão é resolvido "
+                      "a cada leitura.")
+    if truncate_chars and path:
+        nome = path.rpartition("/")[2]
+        if truncate_chars >= len(nome):
+            errors.append(f"Truncar {truncate_chars} caractere(s) consome o nome inteiro "
+                          f"('{nome}', {len(nome)} caracteres) — sobraria só '*', que casa "
+                          "qualquer arquivo da pasta. Diminua o valor (ou use um padrão "
+                          "com * escrito, se é isso mesmo que você quer).")
+    if dynamic_path and path and not (has_time_tokens(path) or has_glob(path)) \
+            and not truncate_chars:
         errors.append("Caminho com data/hora marcado, mas o caminho não tem campo de "
                       "tempo (%Y, %m, %d, %H…) nem curinga (*). "
                       "Ex.: incoming/est/dados_%Y%m%d.dat ou incoming/est/%Y-%m-%d__*.sfo")
@@ -735,6 +797,9 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
         "path": path,
         "alias": alias,
         "dynamic_path": dynamic_path,
+        # Sempre presente (None quando vazio): limpar o campo na edição precisa
+        # remover o truncamento de verdade (o merge {**f, **entry} sobrescreve).
+        "truncate_chars": truncate_chars,
         "tail_lines": tail_lines,
         "window_hours": window_hours,
         "separator": separator,
