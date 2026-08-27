@@ -140,6 +140,7 @@ main.wide { max-width: 97vw; }
 .cmp-block .chart-box { height: 180px; }
 .cmp-block .series-error:empty { display: none; }
 .num-input { max-width: 90px; }
+.num-short { max-width: 5.5em; }
 .path-cell { min-width: 320px; }
 
 /* Filtro da listagem de arquivos da estação (client-side, tela Editar estação). */
