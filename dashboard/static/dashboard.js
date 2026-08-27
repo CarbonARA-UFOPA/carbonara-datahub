@@ -298,30 +298,35 @@ function initCompare() {
     }));
 
     const problems = [], series = [];
+    // Mesmo arquivo escolhido em várias variáveis ⇒ o mesmo aviso vinha 6x na tela.
+    const seenProblem = new Set();
+    const addProblem = (msg) => {
+      if (seenProblem.has(msg)) return;
+      seenProblem.add(msg);
+      problems.push(msg);
+    };
     let generatedAt = null;
     items.forEach((it) => {
       const src = `${it.sname} · ${it.fid}`;
       const data = byUrl.get(it.series_url);
-      if (!data || data.error) { problems.push(`${src}: ${data ? data.error : "sem resposta"}`); return; }
-      (data.problems || []).forEach((p) => problems.push(`${src}: ${p}`));
+      if (!data || data.error) { addProblem(`${src}: ${data ? data.error : "sem resposta"}`); return; }
+      (data.problems || []).forEach((p) => addProblem(`${src}: ${p}`));
       generatedAt = data.generated_at || generatedAt;
       const v = data.variables[it.idx];
-      if (!v) { problems.push(`${src}: variável não encontrada na série`); return; }
-      if (!data.epochs) { problems.push(`${src}: recarregue a dashboard no servidor (API sem eixo de tempo comum)`); return; }
-      // Alinha no MINUTO (a resolução exibida): dataloggers gravam com segundos
-      // diferentes entre si (09:00:15 vs 09:00:47) e, com o epoch exato, o mesmo
-      // minuto virava dois instantes — linhas "duplicadas" na tabela, com valor de
-      // um lado e "—" do outro. Se uma série tiver mais de um ponto no mesmo
-      // minuto, prevalece o último (a ordem do forEach é cronológica).
-      const pts = new Map();
+      if (!v) { addProblem(`${src}: variável não encontrada na série`); return; }
+      if (!data.epochs) { addProblem(`${src}: recarregue a dashboard no servidor (API sem eixo de tempo comum)`); return; }
+      // Instantes EXATOS, em milissegundos (inteiros — float acumularia ruído e o
+      // mesmo instante viraria chaves diferentes entre séries). O agrupamento vem
+      // depois, com um passo medido nos próprios dados (cmpAxisStep).
+      const raw = [];
       data.epochs.forEach((e, j) => {
-        if (e != null) pts.set(Math.floor(e / 60) * 60, v.values[j]);
+        if (e != null) raw.push([Math.round(e * 1000), v.values[j]]);
       });
-      if (!pts.size) { problems.push(`${src}: nenhum timestamp reconhecido`); return; }
+      if (!raw.length) { addProblem(`${src}: nenhum timestamp reconhecido`); return; }
+      raw.sort((a, b) => a[0] - b[0]);
       const unit = v.unit ? ` (${v.unit})` : "";
       series.push({
-        it, v, pts,
-        keys: [...pts.keys()].sort((a, b) => a - b),  // p/ busca binária no cursor
+        it, v, raw,
         color: PALETTE[it.color % PALETTE.length],
         fullLabel: `${it.sname} · ${it.fid} · ${v.label}${unit}`,
         unit: v.unit || "",
@@ -330,28 +335,35 @@ function initCompare() {
     errEl.textContent = problems.join(" · ");
     if (!series.length) return;
 
+    // Passo do eixo comum MEDIDO NOS DADOS (antes era fixo em 1 minuto, o que
+    // descartava tudo menos o último ponto de cada minuto: um arquivo de 1 s com
+    // 600 linhas virava 3 instantes na tabela). Cada série é reamostrada nesse
+    // passo — dentro de um mesmo intervalo prevalece o último valor.
+    const step = cmpAxisStep(series);
+    series.forEach((s) => {
+      const pts = new Map();
+      s.raw.forEach(([t, val]) => pts.set(Math.floor(t / step) * step, val));
+      s.pts = pts;
+      s.keys = [...pts.keys()].sort((a, b) => a - b);  // p/ busca binária no cursor
+    });
+
     // Eixo comum: união de todos os instantes, ordenada.
     const all = new Set();
     series.forEach((s) => s.pts.forEach((_, e) => all.add(e)));
     const epochs = [...all].sort((a, b) => a - b);
-    const p2 = (n) => String(n).padStart(2, "0");
-    const labels = epochs.map((e) => {
-      const d = new Date(e * 1000);
-      /* mesma convenção do resto da dashboard: data completa, hora e minuto, sem segundos */
-      return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} ` +
-             `${p2(d.getHours())}:${p2(d.getMinutes())}`;
-    });
+    const labels = epochs.map((e) => cmpFmtEpoch(e, true, step));
     const datasets = series.map((s) => ({
       label: s.fullLabel,
       data: epochs.map((e) => (s.pts.has(e) ? s.pts.get(e) : null)),
       borderColor: s.color, backgroundColor: s.color + "22",
       borderWidth: 1.5, pointRadius: 0, spanGaps: true, fill: false, tension: 0.15,
     }));
-    infoEl.textContent = `${series.length} série(s) · ${epochs.length} instantes no eixo comum` +
+    infoEl.textContent = `${series.length} série(s) · ${epochs.length} instantes no eixo comum ` +
+      `· passo de ${cmpFmtStep(step)}` +
       (generatedAt ? ` · atualizado ${generatedAt}` : "");
 
-    canvas.$cmp = { epochs, series };  // lido pelo cursor (linha vertical) e handlers
-    renderCmpTable(epochs, series);
+    canvas.$cmp = { epochs, series, step };  // lido pelo cursor (linha vertical) e handlers
+    renderCmpTable(epochs, series, step);
 
     if (canvas._chart) {
       const ch = canvas._chart;
@@ -398,11 +410,45 @@ function cmpFmtNum(v) {
   if (v == null || !Number.isFinite(v)) return "—";
   return (Math.round(v * 100) / 100).toLocaleString("pt-BR");
 }
-function cmpFmtEpoch(e, withYear) {
-  const d = new Date(e * 1000);
+/* Instante do eixo comum (em MILISSEGUNDOS). A resolução do relógio segue o passo
+   do eixo: dado de minuto para em HH:MM (segundos seriam ruído), dado de 1 s mostra
+   os segundos e dado sub-segundo mostra os milésimos — sem isso, linhas distintas
+   da tabela ficariam com o mesmo rótulo. */
+function cmpFmtEpoch(ms, withYear, step) {
+  const d = new Date(ms);
   const p = (n) => String(n).padStart(2, "0");
   const dia = `${p(d.getDate())}/${p(d.getMonth() + 1)}${withYear ? "/" + d.getFullYear() : ""}`;
-  return `${dia} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  let hora = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (step != null && step < 60000) hora += `:${p(d.getSeconds())}`;
+  if (step != null && step < 1000) hora += `,${String(d.getMilliseconds()).padStart(3, "0")}`;
+  return `${dia} ${hora}`;
+}
+/* Passo do eixo comum, em ms, DEDUZIDO dos dados: mediana dos intervalos de cada
+   série (robusta a falhas isoladas), e a MENOR entre as séries — quem tem a maior
+   resolução manda, para não jogar fora os pontos dela. Teto de 60 s: acima disso
+   o alinhamento no minuto é o que faz dois dataloggers que gravam o mesmo minuto
+   em segundos diferentes (09:00:15 vs 09:00:47) caírem no mesmo instante em vez de
+   virarem duas linhas com "—" de um lado. Piso de 1 ms. */
+function cmpAxisStep(series) {
+  let best = Infinity;
+  series.forEach((s) => {
+    const gaps = [];
+    for (let i = 1; i < s.raw.length; i++) {
+      const d = s.raw[i][0] - s.raw[i - 1][0];
+      if (d > 0) gaps.push(d);
+    }
+    if (!gaps.length) return;  // série de ponto único não define resolução
+    gaps.sort((a, b) => a - b);
+    best = Math.min(best, gaps[gaps.length >> 1]);
+  });
+  if (!Number.isFinite(best)) return 60000;
+  return Math.max(1, Math.min(60000, Math.round(best)));
+}
+function cmpFmtStep(ms) {
+  if (ms < 1000) return `${ms} ms`;
+  const seg = ms / 1000;
+  if (seg >= 60) return `${Math.round(seg / 60)} min`;
+  return `${(Math.round(seg * 10) / 10).toLocaleString("pt-BR")} s`;
 }
 /* Último ponto da série em t OU ANTES (busca binária) — o "valor vigente". */
 function cmpLastAtOrBefore(s, t) {
@@ -454,13 +500,13 @@ function installCmpCursor(canvas) {
     ch.$crossX = ch.scales.x.getPixelForValue(idx);
     ch.draw();
 
-    let html = `<div class="cmp-tip-title">${esc(cmpFmtEpoch(t, true))}</div>`;
+    let html = `<div class="cmp-tip-title">${esc(cmpFmtEpoch(t, true, cmp.step))}</div>`;
     cmp.series.forEach((s) => {
       const hit = s.pts.has(t) ? { e: t, v: s.pts.get(t) } : cmpLastAtOrBefore(s, t);
       const val = hit ? cmpFmtNum(hit.v) : "—";
       const unit = s.unit ? ` ${esc(s.unit)}` : "";
       const carried = hit && hit.e !== t
-        ? ` <span class="carried">(${esc(cmpFmtEpoch(hit.e, false))})</span>` : "";
+        ? ` <span class="carried">(${esc(cmpFmtEpoch(hit.e, false, cmp.step))})</span>` : "";
       html += `<div class="cmp-tip-row">` +
         `<span class="cmp-dot" style="background:${s.color}"></span>` +
         `<span>${esc(s.it.sname)} · ${esc(s.v.label)}</span>` +
@@ -486,11 +532,13 @@ function hideCmpCursor(canvas) {
 
 /* Tabela "Valores comparados": um instante do eixo comum por linha (recente
    primeiro), uma coluna por série; célula vazia = série sem ponto no instante. */
-function renderCmpTable(epochs, series) {
+function renderCmpTable(epochs, series, step) {
   const table = document.getElementById("cmp-table");
   if (!table) return;
   const note = document.getElementById("cmp-table-note");
-  const MAX_ROWS = 200;
+  // Alinhado com a decimação da API (MAX_POINTS=500): com resolução de 1 s a
+  // tabela precisa acompanhar o gráfico, não mostrar um recorte dele.
+  const MAX_ROWS = 500;
   const total = epochs.length;
   const n = Math.min(total, MAX_ROWS);
 
@@ -502,7 +550,7 @@ function renderCmpTable(epochs, series) {
   html += "</tr></thead><tbody>";
   for (let i = total - 1; i >= total - n; i--) {
     const t = epochs[i];
-    html += `<tr><td><small>${esc(cmpFmtEpoch(t, true))}</small></td>`;
+    html += `<tr><td><small>${esc(cmpFmtEpoch(t, true, step))}</small></td>`;
     series.forEach((s) => {
       html += `<td class="num">${s.pts.has(t) ? cmpFmtNum(s.pts.get(t)) : "—"}</td>`;
     });

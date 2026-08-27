@@ -107,15 +107,22 @@ python run.py                          # http://localhost:8080
   variável, com unidade) e clicar nela oculta/mostra a série. O eixo de tempo é a
   **união dos instantes** de todos os arquivos (campo `epochs` da API de séries) —
   séries com amostragens diferentes se alinham pelo tempo real, com `spanGaps` ligando
-  os pontos de cada uma. O alinhamento é na **resolução do minuto** (a mesma exibida):
-  dataloggers gravam com segundos diferentes entre si (09:00:15 vs 09:00:47) e, sem
-  isso, o mesmo minuto viraria dois instantes — linhas "duplicadas" na tabela. Se uma
-  série tiver mais de um ponto no mesmo minuto, prevalece o último. Passar o mouse mostra uma **linha vertical** travada no
+  os pontos de cada uma. O passo do eixo é **medido nos próprios dados**
+  (`cmpAxisStep`): a mediana dos intervalos de cada série, e a **menor** entre as
+  séries selecionadas — quem tem a maior resolução manda, então um arquivo de 1 s
+  aparece com todos os seus pontos. O teto é 60 s, e é ele que faz dataloggers que
+  gravam o mesmo minuto em segundos diferentes (09:00:15 vs 09:00:47) caírem no mesmo
+  instante em vez de virarem duas linhas com "—" de um lado. Havendo mais de um ponto
+  no mesmo intervalo, prevalece o último. O relógio exibido acompanha o passo (HH:MM,
+  com segundos abaixo de 1 min e milésimos abaixo de 1 s) e o passo em uso aparece na
+  linha de informação do gráfico. Limites de quanto se vê: **Linhas do final a
+  plotar** (`tail_lines`) de cada arquivo e a decimação da API em 500 pontos
+  (`series.MAX_POINTS`). Passar o mouse mostra uma **linha vertical** travada no
   instante mais próximo com a leitura de **todas** as séries (tooltip próprio — o
   nativo omitiria séries sem ponto exato no instante): valor exato quando a série tem
   ponto ali, senão o último valor anterior com o horário dele ao lado. Abaixo do
   gráfico, a tabela **Valores comparados** lista um instante do eixo comum por linha
-  (mais recente primeiro, teto de 200 linhas), uma coluna por série; "—" = sem ponto
+  (mais recente primeiro, teto de 500 linhas), uma coluna por série; "—" = sem ponto
   naquele instante. Todas dividem o mesmo eixo y (grandezas de escalas muito
   diferentes ficam achatadas — compare o comparável); os limites físicos/trechos
   vermelhos são das telas por estação, não desta. A seleção fica na querystring

@@ -599,8 +599,13 @@ computes live station status. Viewing is open; edits require the admin login
   (`.sfo`) gets `…:47` / `…:47.833`, otherwise different records collapse into the same
   label. All stamps equal → max resolution, which is exactly what exposes "the chosen
   time column does not advance per record". Drives the chart axis, `last_reading` and
-  the preview; the compare page builds its own labels in JS (full date + HH:MM — it
-  buckets by minute on purpose). A file's timestamp is NEVER shown raw: the preview
+  the preview; the compare page builds its own labels in JS (full date + a clock whose
+  resolution follows `cmpAxisStep` — the common axis is bucketed at the FINEST
+  median gap among the selected series, capped at 60 s and floored at 1 ms; the
+  60 s cap is what still aligns two dataloggers writing the same minute at
+  different seconds, and the fine end is what keeps a 1 s `.sfo` from collapsing
+  into three points. `series.build_series` therefore emits `epochs` with
+  milliseconds — never re-truncate it to `int`). A file's timestamp is NEVER shown raw: the preview
   prints the raw cell (that is the point of a parse check) with the converted value
   underneath, or "não convertido". `parse_epoch` also REJECTS stamps outside
   1990–2100: pointing the time axis at a non-epoch column (an angle `359`, a temp

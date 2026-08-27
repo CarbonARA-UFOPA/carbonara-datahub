@@ -324,8 +324,11 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
         "timestamps": [timestamps[i] for i in keep],
         # Instante real de cada ponto (epoch, s) — permite ao cliente juntar séries de
         # ARQUIVOS DIFERENTES num eixo de tempo comum (tela Comparar). None = linha
-        # cujo timestamp não casou o formato.
-        "epochs": [int(dts[i].timestamp()) if dts[i] is not None else None for i in keep],
+        # cujo timestamp não casou o formato. Vai com MILÉSIMOS (era int): arquivos
+        # sub-segundo (.sfo) truncavam todas as linhas do mesmo segundo para o mesmo
+        # instante e o eixo comum perdia a resolução real do dado.
+        "epochs": [round(dts[i].timestamp(), 3) if dts[i] is not None else None
+                   for i in keep],
         "variables": [
             {**v, "values": [v["values"][i] for i in keep]} for v in variables
         ],
