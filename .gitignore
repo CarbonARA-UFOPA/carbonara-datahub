@@ -16,3 +16,5 @@ dashboard/dashboard.log
 
 # Dados locais de desenvolvimento
 data/
+dashboard/ftp-publish.state.json
+dashboard/ftp-publish.log

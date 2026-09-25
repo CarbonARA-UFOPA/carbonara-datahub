@@ -37,6 +37,10 @@ AREAS = {
     "archive": ("archive", "Arquivados (archive)"),
     "quarantine": ("quarantine", "Quarentena"),
     "stations": ("stations", "Credenciais (stations)"),
+    # A raiz do FTP de distribuição NÃO é necessariamente <BASE>/ftp: area_root a
+    # resolve por ftp.ftp_root (local_root do vsftpd.conf). O rótulo é o que aparece
+    # nas abas do navegador de arquivos.
+    "ftp": ("ftp", "FTP (publicado)"),
 }
 
 MAX_LIST_ENTRIES = 2000  # teto de entradas por listagem (pastas gigantes de archive)
@@ -568,6 +572,9 @@ def _kit_readme(sid: str, listed: list[str]) -> str:
 
 # --- Navegador de arquivos (read-only) --------------------------------------------
 def area_root(cfg: dict, area: str) -> Path | None:
+    if area == "ftp":
+        from . import ftp  # import tardio: ftp importa hub
+        return ftp.ftp_root(cfg)
     sub = AREAS.get(area)
     return (hub_base(cfg) / sub[0]) if sub else None
 

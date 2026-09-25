@@ -728,6 +728,65 @@ computes live station status. Viewing is open; edits require the admin login
   hands control to systemctl (start/stop refuse while the unit is active).
 - This is the admin slice of a future full dashboard that will read from TimescaleDB.
 
+## FTP de distribuição (`ftp/ftp-hub` + página `/ftp` da dashboard)
+
+In production the FTP is **native vsftpd on the host** (not the compose `pure-ftpd`;
+install log in `docs/ftp-native-install.md`): local system users authenticated by PAM,
+`chroot_local_user`, per-user profile files in `user_config_dir`
+(`/etc/vsftpd/user_conf/<user>`), `local_root` = the served root (`<BASE>/ftp` on the
+server). The FTP only DISTRIBUTES; nothing arrives through it. Two pieces, same
+privilege model as the collection layer:
+
+- **`ftp/ftp-hub`** (bash, root, self-installs to `/usr/local/bin/ftp-hub` via
+  `install [dash-user]`, which also writes `/etc/sudoers.d/carbonara-dashboard-ftp`
+  validated with `visudo -cf`, restricted to `add remove senha perfil pasta desativar
+  ativar`). It is the ONLY place that runs `useradd`/`chpasswd`/`usermod`/`userdel`
+  and writes `user_conf`. Bump `FTP_HUB_VERSION` on behavior changes. Invariants:
+  - **Passwords never on the command line** (`ps` leak): `--senha-stdin` (first stdin
+    line) or `--gerar` (prints `SENHA=…` once; the dashboard strips that line from any
+    displayed/logged output and shows it a single time via the session).
+  - **`is_ftp_account` gate**: `remove/senha/perfil/pasta/desativar/ativar` only act
+    on uid ≥ 1000 + nologin shell + (profile file exists OR home under the FTP root or
+    `/srv/ftp`); `root`, `HUB_USER`, `SUDO_USER`, `ftp`, `nobody` are always refused —
+    the dashboard can never `userdel` a real user. `add` refuses existing users.
+  - **Never deletes data**: `remove` is `userdel` WITHOUT `-r`; folders are created
+    (`2775`, group = owner group of the FTP root) but never removed.
+  - Profiles: `leitura` (`write_enable=NO` + full `cmds_denied`), `escrita`
+    (`write_enable=YES`, `local_umask=002`), `upload` (write, `cmds_denied=DELE,RMD,
+    XRMD,RNFR,RNTO,SITE,RETR`). Writers join the FTP root's owner group (`carbonara`),
+    readers are removed from it. Header `# ftp-hub: perfil=… pasta=…` makes the profile
+    machine-readable; accounts predating the script are INFERRED from directives
+    ("conta antiga" in the UI). Disable = name in `/etc/ftpusers` (PAM deny list,
+    readable without root) + `usermod -L`. Control files go through `write_replace`.
+  - Subfolder syntax is validated identically in bash (`norm_sub`) and Python
+    (`ftp.normalize_subfolder`): components `[A-Za-z0-9_][A-Za-z0-9._-]*`, no `..`.
+- **Dashboard** (`app/ftp.py` logic, `app/ftp_views.py` blueprint `/ftp`,
+  `app/ftp_publish.py` publisher; admin-only even for viewing). READS are sudo-less
+  (`/etc/vsftpd.conf`, `pwd`, profile files 644, `/etc/ftpusers`, tail of
+  `/var/log/vsftpd.log` when the dashboard user is in `adm`); WRITES shell out to the
+  installed `ftp-hub` via `sudo -n` — never reimplement account logic in Python.
+  `list_accounts` must keep the SAME criteria as `is_ftp_account`. Port-listening
+  check parses `ss -ltn`; never connect to the FTP (it would log a CONNECT per refresh).
+  POSTs on the blueprint reject cross-site requests (`Sec-Fetch-Site`/`Origin`).
+- **Publications** (`ftp.publications` in config.yaml, edited by the UI): rules
+  `source` (relative to hub BASE or absolute — any folder, today `incoming/<id>/…`,
+  tomorrow the processing output) → `dest` (subfolder of the FTP root; the root itself
+  is refused), `include`/`exclude` globs, `delete` (mirror), `hidden`, `interval_min`
+  (0 = manual), `enabled`. The `Publisher` thread (started in `create_app`, disabled by
+  `CARBONARA_NO_PUBLISHER=1`) re-reads the config every 20 s and runs due rules; each
+  run is one `rsync -rtp --no-owner --no-group --chmod=Du=rwx,Dg=rwxs,Do=rx,Fu=rw,Fg=rw,Fo=r`
+  as the dashboard user, NO sudo (the FTP root is group/world-writable by the hub's
+  policy; `ftp-hub install` checks it). Symbolic `--chmod` on purpose: octal is rsync
+  3.x-only. Filter order: excludes, `.*` (unless hidden), `--include=*/` + includes +
+  `--exclude=*` + `--prune-empty-dirs`; `--delete` without `--delete-excluded`, so a
+  mirror only removes files the rule covers (verified on the server's rsync 3.2.7).
+  Validation refuses a source inside the FTP root, overlapping source/dest and `/`.
+  Per-rule lock (no self-overlap), rc 23/24 = "avisos" (partial), state JSON written
+  atomically, log capped. `describe()` feeds the table; `/ftp/publicacoes.json` is
+  polled by the page. The FTP root is also browsable as area `ftp` in `hub.AREAS`
+  (`area_root` special-cases it through `ftp.ftp_root`). macOS ships openrsync, so
+  the publisher cannot be validated locally — test rsync behavior on the Linux server.
+
 ## Data model (TimescaleDB)
 
 Long/EAV model so new measured quantities need **no `ALTER TABLE`** — just an `INSERT` into

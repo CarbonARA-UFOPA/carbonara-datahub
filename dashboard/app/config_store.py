@@ -37,6 +37,11 @@ DEFAULT_CONFIG: dict = {
     # Login de administração (edições). null = edição liberada (dev).
     # {username: ..., password_hash: <gerado com werkzeug generate_password_hash>}
     "auth": None,
+    # FTP de distribuição (página "FTP"): raiz servida (None = local_root do
+    # vsftpd.conf), caminho do vsftpd.conf, executável ftp-hub, host a exibir e as
+    # PUBLICAÇÕES (regras hub → FTP executadas pelo publicador da dashboard).
+    "ftp": {"root": None, "vsftpd_conf": None, "ftp_hub_bin": None,
+            "public_host": None, "publications": []},
     "stations": [],
 }
 
@@ -58,6 +63,9 @@ class ConfigStore:
             if raw.get(key) is not None:
                 cfg[key] = raw[key]
         cfg["stations"] = raw.get("stations") or []
+        if isinstance(raw.get("ftp"), dict):
+            cfg["ftp"].update({k: v for k, v in raw["ftp"].items() if v is not None})
+            cfg["ftp"]["publications"] = list(raw["ftp"].get("publications") or [])
         # Base para caminhos relativos: o diretório do próprio config.yaml —
         # independe do cwd de quem invocou o run.py.
         cfg["_base"] = str(self.path.parent.resolve())

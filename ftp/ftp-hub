@@ -1,0 +1,468 @@
+#!/usr/bin/env bash
+# ftp-hub — contas do FTP de DISTRIBUIÇÃO do CARBONARA (vsftpd nativo): o lado HOST.
+#
+# O vsftpd autentica usuários LOCAIS do sistema (PAM) e aplica um perfil por usuário
+# via `user_config_dir` (/etc/vsftpd/user_conf/<usuario>). Tudo isso é privilégio de
+# root — e a dashboard (que roda como usuário comum) precisa administrar contas. Em vez
+# de espalhar useradd/chpasswd pelo Python, TODA a escrita fica neste script, e a
+# dashboard o executa via `sudo -n` com uma regra restrita aos subcomandos (mesmo
+# modelo do rsync-hub). A LEITURA (listar contas, perfis, estado) dispensa root: os
+# arquivos de perfil são 644, /etc/passwd e /etc/ftpusers são públicos.
+#
+# Perfis (o que o usuário pode fazer DENTRO da sua pasta, presa por chroot):
+#   leitura  — só baixa (LIST/RETR); todo comando de escrita é negado pelo vsftpd.
+#   escrita  — baixa, envia, cria pastas, apaga e renomeia (gestão).
+#   upload   — envia e cria pastas, mas NÃO baixa, apaga nem renomeia (caixa de entrada).
+# A pasta é uma subpasta da raiz do FTP (local_root do vsftpd.conf); "/" = a raiz toda.
+#
+# Uso:
+#   sudo ./ftp-hub install [usuario-da-dashboard]   # instala em /usr/local/bin + regra sudo
+#   sudo ftp-hub add <usuario> --perfil <leitura|escrita|upload> [--pasta <sub>]
+#                              [--senha-stdin | --gerar]
+#   sudo ftp-hub senha <usuario> [--senha-stdin | --gerar]
+#   sudo ftp-hub perfil <usuario> <leitura|escrita|upload>
+#   sudo ftp-hub pasta <usuario> <sub|/>
+#   sudo ftp-hub desativar <usuario> | ativar <usuario>
+#   sudo ftp-hub remove <usuario>                    # só a conta; NUNCA apaga dados
+#        ftp-hub list                                # TSV: usuario uid perfil pasta estado
+#        ftp-hub status                              # resumo do servidor FTP
+#
+# A senha NUNCA passa pela linha de comando (apareceria em `ps`): vem pelo stdin
+# (--senha-stdin, primeira linha) ou é gerada (--gerar → impressa UMA vez no stdout,
+# na linha "SENHA=..."). O vsftpd relê o perfil a cada login: nada a reiniciar.
+set -eu
+
+FTP_HUB_VERSION="2026-09-25.1"
+
+VSFTPD_CONF="${FTP_HUB_VSFTPD_CONF:-/etc/vsftpd.conf}"
+FTPUSERS="${FTP_HUB_FTPUSERS:-/etc/ftpusers}"      # lista de NEGAÇÃO do PAM (pam_listfile)
+NOLOGIN=/usr/sbin/nologin
+FTP_GROUP="${FTP_HUB_GROUP:-ftpgroup}"               # grupo primário das contas FTP
+LOCK_FILE=/run/lock/ftp-hub.lock
+BIN_STABLE=/usr/local/bin/ftp-hub
+SUDOERS_FILE=/etc/sudoers.d/carbonara-dashboard-ftp
+SUBCMDS_SUDO="add remove senha perfil pasta desativar ativar"
+
+die()       { echo "erro: $*" >&2; exit 1; }
+need_root() { [ "$(id -u)" = 0 ] || die "execute como root (sudo)"; }
+valid_user(){ printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9_-]{2,31}$'; }
+now_utc()   { date -u +%FT%TZ; }
+
+# --- Configuração derivada do vsftpd.conf -----------------------------------------
+conf_value() {  # $1=chave → valor da ÚLTIMA ocorrência (o vsftpd também usa a última)
+    [ -r "$VSFTPD_CONF" ] || return 0
+    grep -E "^[[:space:]]*$1=" "$VSFTPD_CONF" 2>/dev/null | tail -1 \
+        | cut -d= -f2- | sed 's/[[:space:]]*#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+USER_CONF_DIR="$(conf_value user_config_dir)"
+USER_CONF_DIR="${USER_CONF_DIR:-/etc/vsftpd/user_conf}"
+FTP_ROOT="${FTP_HUB_ROOT:-$(conf_value local_root)}"
+if [ -z "$FTP_ROOT" ]; then
+    # Sem local_root no vsftpd.conf: convenção do hub (<BASE>/ftp), senão /srv/ftp.
+    HUB_BASE=""
+    if [ -r /etc/rsync-hub.conf ]; then
+        HUB_BASE="$(grep -E '^BASE=' /etc/rsync-hub.conf | tail -1 | cut -d= -f2- | tr -d '"')"
+    fi
+    FTP_ROOT="${HUB_BASE:+$HUB_BASE/ftp}"
+    FTP_ROOT="${FTP_ROOT:-/srv/ftp}"
+fi
+FTP_ROOT="${FTP_ROOT%/}"
+HUB_USER=""
+[ -r /etc/rsync-hub.conf ] && HUB_USER="$(grep -E '^HUB_USER=' /etc/rsync-hub.conf | tail -1 | cut -d= -f2- | tr -d '"')"
+HUB_USER="${HUB_USER:-carbonara}"
+# Grupo DONO da raiz do FTP: quem escreve (perfis escrita/upload) entra nele, para
+# conseguir gravar nas pastas 2775 criadas pela publicação da dashboard.
+DATA_GROUP="$(stat -c %G "$FTP_ROOT" 2>/dev/null || echo "$FTP_GROUP")"
+DATA_OWNER="$(stat -c %U "$FTP_ROOT" 2>/dev/null || echo root)"
+
+# --- Escrita segura ------------------------------------------------------------------
+write_replace() {   # $1=destino; conteúdo pelo STDIN. Só troca se a gravação completou.
+    wr_dst="$1"; wr_tmp="$wr_dst.novo.$$"
+    if cat > "$wr_tmp"; then
+        chmod 644 "$wr_tmp" 2>/dev/null || true
+        if mv "$wr_tmp" "$wr_dst"; then return 0; fi
+    fi
+    rm -f "$wr_tmp" 2>/dev/null || true
+    echo "erro: falha ao gravar $wr_dst — o arquivo anterior foi PRESERVADO (disco cheio?)." >&2
+    return 1
+}
+with_lock() {  # serializa as escritas (dashboard + terminal ao mesmo tempo)
+    command -v flock >/dev/null 2>&1 || return 0
+    lockf="$LOCK_FILE"; [ -w "$(dirname "$LOCK_FILE")" ] || lockf=/tmp/ftp-hub.lock
+    exec 9>"$lockf"
+    flock -w 30 9 || die "outra operação do ftp-hub está em andamento; tente de novo"
+}
+
+# --- O que É uma conta FTP (barreira contra mexer em usuários do sistema) ----------
+# Uma conta gerenciável: uid >= 1000, shell sem login, e (tem perfil em user_conf OU
+# home dentro da raiz do FTP / de /srv/ftp). Assim `remove`/`senha`/... jamais
+# alcançam root, a conta de serviço do hub, o usuário da dashboard ou qualquer
+# pessoa com shell — mesmo que a dashboard peça.
+passwd_field() { getent passwd "$1" 2>/dev/null | cut -d: -f"$2"; }
+is_ftp_account() {
+    u="$1"
+    ent="$(getent passwd "$u" 2>/dev/null)" || return 1
+    uid="$(printf '%s' "$ent" | cut -d: -f3)"
+    home="$(printf '%s' "$ent" | cut -d: -f6)"
+    shell="$(printf '%s' "$ent" | cut -d: -f7)"
+    [ "$uid" -ge 1000 ] 2>/dev/null || return 1
+    case "$u" in root|"$HUB_USER"|"${SUDO_USER:-__nenhum__}"|ftp|nobody) return 1 ;; esac
+    case "$shell" in */nologin|*/false) : ;; *) return 1 ;; esac
+    [ -f "$USER_CONF_DIR/$u" ] && return 0
+    case "$home" in "$FTP_ROOT"|"$FTP_ROOT"/*|/srv/ftp|/srv/ftp/*) return 0 ;; esac
+    return 1
+}
+require_ftp_account() {
+    valid_user "$1" || die "nome de usuário inválido: '$1' (minúsculas, dígitos, '_' e '-', 3–32 caracteres, começando por letra)"
+    is_ftp_account "$1" || die "'$1' não é uma conta FTP gerenciada pelo ftp-hub (ou é um usuário do sistema) — nada feito"
+}
+
+# --- Subpasta (relativa à raiz do FTP) --------------------------------------------
+# "/" ou vazio = a raiz inteira. Senão: componentes [A-Za-z0-9._-], sem '..', sem
+# componente começando por '.', sem barra inicial. O resultado é usado em caminho
+# absoluto e num arquivo de configuração — a validação é a única barreira.
+norm_sub() {  # imprime a subpasta normalizada ("" = raiz); rc 1 = inválida
+    s="$(printf '%s' "${1:-}" | sed 's#^/*##; s#/*$##; s#//*#/#g')"
+    [ -z "$s" ] && { printf ''; return 0; }
+    printf '%s' "$s" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$' || return 1
+    case "/$s/" in */../*|*/./*) return 1 ;; esac
+    printf '%s' "$s"
+}
+sub_dir() { s="$1"; if [ -n "$s" ]; then printf '%s/%s' "$FTP_ROOT" "$s"; else printf '%s' "$FTP_ROOT"; fi; }
+ensure_dir() {  # cria a subpasta (e intermediárias) legível por todos e gravável pelo grupo
+    d="$1"; [ -d "$d" ] && return 0
+    rel="${d#"$FTP_ROOT"/}"; acc="$FTP_ROOT"
+    IFS=/ read -ra parts <<<"$rel"
+    for p in "${parts[@]}"; do
+        acc="$acc/$p"
+        if [ ! -d "$acc" ]; then
+            install -d -m 2775 -o "$DATA_OWNER" -g "$DATA_GROUP" "$acc" \
+                || die "não consegui criar $acc"
+        fi
+    done
+}
+
+# --- Perfil (arquivo em user_conf) ------------------------------------------------
+valid_profile() { case "${1:-}" in leitura|escrita|upload) return 0 ;; *) return 1 ;; esac; }
+write_profile() {  # $1=usuario $2=perfil $3=subpasta-normalizada
+    u="$1"; p="$2"; s="$3"
+    mkdir -p "$USER_CONF_DIR"
+    {
+        echo "# ftp-hub: perfil=$p pasta=${s:-/} atualizado=$(now_utc)"
+        echo "# Gerado pelo ftp-hub (não edite à mão — a dashboard e o 'ftp-hub' reescrevem)."
+        echo "local_root=$(sub_dir "$s")"
+        case "$p" in
+            leitura)
+                echo "write_enable=NO"
+                echo "cmds_denied=STOR,STOU,APPE,DELE,RMD,XRMD,MKD,XMKD,RNFR,RNTO,SITE,CHMOD" ;;
+            escrita)
+                echo "write_enable=YES"
+                echo "local_umask=002" ;;
+            upload)
+                echo "write_enable=YES"
+                echo "local_umask=002"
+                echo "cmds_denied=DELE,RMD,XRMD,RNFR,RNTO,SITE,RETR" ;;
+        esac
+    } | write_replace "$USER_CONF_DIR/$u"
+}
+apply_group() {  # quem escreve entra no grupo dono da raiz; quem só lê sai dele
+    u="$1"; p="$2"
+    getent group "$DATA_GROUP" >/dev/null 2>&1 || return 0
+    if [ "$p" = leitura ]; then
+        gpasswd -d "$u" "$DATA_GROUP" >/dev/null 2>&1 || true
+    else
+        usermod -a -G "$DATA_GROUP" "$u"
+    fi
+}
+# Leitura do perfil GRAVADO (para list/status). Contas antigas (criadas à mão, sem a
+# linha "# ftp-hub:") são inferidas pelas diretivas.
+profile_of() {
+    f="$USER_CONF_DIR/$1"
+    if [ -r "$f" ]; then
+        meta="$(grep -m1 '^# ftp-hub: ' "$f" 2>/dev/null | sed -n 's/.*perfil=\([a-z]*\).*/\1/p')"
+        if valid_profile "$meta"; then printf '%s' "$meta"; return; fi
+        if grep -Eq '^write_enable=NO' "$f"; then printf 'leitura'; return; fi
+        if grep -Eq '^cmds_denied=.*RETR' "$f"; then printf 'upload'; return; fi
+        printf 'escrita'; return
+    fi
+    if [ "$(conf_value write_enable)" = "YES" ]; then printf 'escrita'; else printf 'leitura'; fi
+}
+folder_of() {
+    f="$USER_CONF_DIR/$1"; lr=""
+    [ -r "$f" ] && lr="$(grep -E '^local_root=' "$f" | tail -1 | cut -d= -f2-)"
+    [ -z "$lr" ] && lr="$(passwd_field "$1" 6)"
+    lr="${lr%/}"
+    case "$lr" in
+        "$FTP_ROOT") printf '/' ;;
+        "$FTP_ROOT"/*) printf '%s' "${lr#"$FTP_ROOT"/}" ;;
+        *) printf '%s' "$lr" ;;   # fora da raiz (conta antiga) — mostrado tal qual
+    esac
+}
+is_disabled() { grep -Eqx "[[:space:]]*$1[[:space:]]*" "$FTPUSERS" 2>/dev/null; }
+
+# --- Senha ---------------------------------------------------------------------------
+gen_password() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16; }
+read_password() {  # decide entre --senha-stdin / --gerar; imprime a senha em $PW
+    PW=""; GENERATED=0
+    if [ "${WANT_GEN:-0}" = 1 ]; then
+        PW="$(gen_password)"; GENERATED=1
+    elif [ "${WANT_STDIN:-0}" = 1 ]; then
+        IFS= read -r PW || PW=""
+    else
+        die "informe a senha: --senha-stdin (primeira linha do stdin) ou --gerar"
+    fi
+    [ "${#PW}" -ge 8 ] || die "a senha precisa ter pelo menos 8 caracteres"
+    case "$PW" in *:*) die "a senha não pode conter ':'" ;; esac
+}
+apply_password() {  # $1=usuario — usa $PW; nunca passa pela linha de comando
+    printf '%s:%s\n' "$1" "$PW" | chpasswd || die "chpasswd falhou para '$1'"
+    # Caso a conta tenha sido travada (usermod -L) por um 'desativar' antigo, a troca
+    # de senha NÃO a reativa — o estado continua sendo o de /etc/ftpusers.
+}
+
+# --- Subcomandos ---------------------------------------------------------------------
+cmd_add() {
+    need_root
+    u="${1:-}"; shift || true
+    valid_user "$u" || die "nome de usuário inválido: '$u' (minúsculas, dígitos, '_' e '-', 3–32 caracteres, começando por letra)"
+    PROFILE=""; SUB=""; WANT_GEN=0; WANT_STDIN=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --perfil) PROFILE="${2:-}"; shift 2 ;;
+            --pasta)  SUB="${2:-}"; shift 2 ;;
+            --gerar)  WANT_GEN=1; shift ;;
+            --senha-stdin) WANT_STDIN=1; shift ;;
+            *) die "argumento desconhecido: $1" ;;
+        esac
+    done
+    valid_profile "$PROFILE" || die "informe --perfil leitura|escrita|upload"
+    SUB="$(norm_sub "$SUB")" || die "subpasta inválida (use letras, dígitos, '.', '_' e '-'; sem '..')"
+    case "$u" in root|"$HUB_USER"|ftp|nobody|"${SUDO_USER:-__nenhum__}") die "nome reservado: $u" ;; esac
+    getent passwd "$u" >/dev/null 2>&1 && die "o usuário '$u' já existe no sistema — use 'senha'/'perfil'/'pasta' se for conta FTP, ou escolha outro nome"
+    [ -d "$FTP_ROOT" ] || die "raiz do FTP não existe: $FTP_ROOT (confira local_root em $VSFTPD_CONF)"
+    read_password
+    with_lock
+    grep -qxF "$NOLOGIN" /etc/shells 2>/dev/null || echo "$NOLOGIN" >> /etc/shells
+    getent group "$FTP_GROUP" >/dev/null 2>&1 || groupadd "$FTP_GROUP"
+    home="$(sub_dir "$SUB")"
+    ensure_dir "$home"
+    useradd -M -s "$NOLOGIN" -d "$home" -g "$FTP_GROUP" -c "FTP CARBONARA ($PROFILE)" "$u" \
+        || die "useradd falhou para '$u'"
+    apply_password "$u"
+    write_profile "$u" "$PROFILE" "$SUB" || { userdel "$u" 2>/dev/null || true; exit 1; }
+    apply_group "$u" "$PROFILE"
+    echo "ok: conta FTP '$u' criada — perfil $PROFILE, pasta ${SUB:-/} ($home)."
+    [ "$GENERATED" = 1 ] && echo "SENHA=$PW"
+    echo "Conexão: ftp://$u@<host>:$(conf_value listen_port | grep . || echo 21)/  (FTPS explícito disponível: $(conf_value ssl_enable | grep . || echo NO))"
+    return 0
+}
+
+cmd_senha() {
+    need_root
+    u="${1:-}"; shift || true
+    require_ftp_account "$u"
+    WANT_GEN=0; WANT_STDIN=0
+    while [ $# -gt 0 ]; do
+        case "$1" in --gerar) WANT_GEN=1 ;; --senha-stdin) WANT_STDIN=1 ;; *) die "argumento desconhecido: $1" ;; esac
+        shift
+    done
+    read_password
+    with_lock
+    apply_password "$u"
+    echo "ok: senha de '$u' alterada."
+    [ "$GENERATED" = 1 ] && echo "SENHA=$PW"
+    return 0
+}
+
+cmd_perfil() {
+    need_root
+    u="${1:-}"; p="${2:-}"
+    require_ftp_account "$u"
+    valid_profile "$p" || die "perfil inválido: '$p' (leitura|escrita|upload)"
+    with_lock
+    s="$(folder_of "$u")"; [ "$s" = / ] && s=""
+    case "$s" in /*) die "a pasta atual de '$u' ($s) está fora da raiz do FTP — defina-a antes com 'ftp-hub pasta $u <sub>'" ;; esac
+    write_profile "$u" "$p" "$s"
+    apply_group "$u" "$p"
+    echo "ok: perfil de '$u' agora é $p (vale a partir do próximo login)."
+}
+
+cmd_pasta() {
+    need_root
+    u="${1:-}"; sub_raw="${2:-}"
+    require_ftp_account "$u"
+    SUB="$(norm_sub "$sub_raw")" || die "subpasta inválida (use letras, dígitos, '.', '_' e '-'; sem '..')"
+    with_lock
+    p="$(profile_of "$u")"
+    home="$(sub_dir "$SUB")"
+    ensure_dir "$home"
+    usermod -d "$home" "$u"
+    write_profile "$u" "$p" "$SUB"
+    echo "ok: '$u' agora fica preso em ${SUB:-/} ($home)."
+}
+
+cmd_desativar() {
+    need_root
+    u="${1:-}"; require_ftp_account "$u"
+    with_lock
+    if ! is_disabled "$u"; then
+        { cat "$FTPUSERS" 2>/dev/null; echo "$u"; } | write_replace "$FTPUSERS"
+    fi
+    usermod -L "$u" 2>/dev/null || true
+    echo "ok: '$u' desativado — o login FTP passa a ser recusado; senha e dados preservados."
+}
+
+cmd_ativar() {
+    need_root
+    u="${1:-}"; require_ftp_account "$u"
+    with_lock
+    if is_disabled "$u"; then
+        grep -Evx "[[:space:]]*$u[[:space:]]*" "$FTPUSERS" | write_replace "$FTPUSERS"
+    fi
+    usermod -U "$u" 2>/dev/null || true
+    echo "ok: '$u' reativado."
+}
+
+cmd_remove() {
+    need_root
+    u="${1:-}"; require_ftp_account "$u"
+    with_lock
+    home="$(passwd_field "$u" 6)"
+    if ! userdel "$u" 2>/tmp/ftp-hub-userdel.$$; then
+        msg="$(cat /tmp/ftp-hub-userdel.$$ 2>/dev/null)"; rm -f /tmp/ftp-hub-userdel.$$
+        die "userdel falhou para '$u': ${msg:-sem detalhe} (sessão FTP aberta? desative a conta, aguarde e tente de novo)"
+    fi
+    rm -f /tmp/ftp-hub-userdel.$$
+    rm -f "$USER_CONF_DIR/$u"
+    if is_disabled "$u"; then
+        grep -Evx "[[:space:]]*$u[[:space:]]*" "$FTPUSERS" | write_replace "$FTPUSERS" || true
+    fi
+    echo "ok: conta '$u' removida. Os arquivos em ${home:-?} foram PRESERVADOS (o ftp-hub nunca apaga dados)."
+}
+
+cmd_list() {
+    # Sem root. TSV: usuario  uid  perfil  pasta  estado  home
+    getent passwd | awk -F: '$3 >= 1000' | while IFS=: read -r u _ uid _ _ home shell; do
+        is_ftp_account "$u" || continue
+        st=ativo; is_disabled "$u" && st=desativado
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$u" "$uid" "$(profile_of "$u")" "$(folder_of "$u")" "$st" "$home"
+    done
+}
+
+cmd_status() {
+    echo "ftp-hub $FTP_HUB_VERSION"
+    echo "vsftpd.conf : $VSFTPD_CONF"
+    echo "raiz do FTP : $FTP_ROOT $([ -d "$FTP_ROOT" ] && echo '(ok)' || echo '(NÃO EXISTE)')"
+    echo "perfis em   : $USER_CONF_DIR"
+    if command -v systemctl >/dev/null 2>&1; then
+        echo "serviço     : vsftpd $(systemctl is-active vsftpd 2>/dev/null || echo desconhecido)"
+    fi
+    echo "TLS (FTPS)  : ssl_enable=$(conf_value ssl_enable | grep . || echo NO) · obrigatório=$(conf_value force_local_logins_ssl | grep . || echo NO)"
+    echo "passivo     : $(conf_value pasv_min_port | grep . || echo -)–$(conf_value pasv_max_port | grep . || echo -) · pasv_address=$(conf_value pasv_address | grep . || echo -)"
+    echo "chroot      : chroot_local_user=$(conf_value chroot_local_user | grep . || echo NO)"
+    echo
+    printf '%-18s %-8s %-10s %-12s %s\n' USUARIO PERFIL ESTADO PASTA HOME
+    cmd_list | while IFS=$'\t' read -r u uid p s st home; do
+        printf '%-18s %-8s %-10s %-12s %s\n' "$u" "$p" "$st" "$s" "$home"
+    done
+}
+
+# --- install: cópia estável + regra sudo para a dashboard ---------------------------
+detect_dash_user() {
+    if command -v systemctl >/dev/null 2>&1; then
+        du_u="$(systemctl show -p User --value carbonara-dashboard 2>/dev/null || true)"
+        [ -n "$du_u" ] && { printf '%s' "$du_u"; return 0; }
+    fi
+    if command -v pgrep >/dev/null 2>&1; then
+        du_pid="$(pgrep -f '[r]un\.py' 2>/dev/null | head -1 || true)"
+        [ -n "$du_pid" ] && ps -o user= -p "$du_pid" 2>/dev/null | tr -d ' [:space:]'
+    fi
+    return 0
+}
+cmd_install() {
+    need_root
+    self="$(readlink -f "$0")"
+    echo "===== ftp-hub $FTP_HUB_VERSION — preparação do servidor ====="
+    if [ "$self" != "$BIN_STABLE" ]; then
+        if [ ! -f "$BIN_STABLE" ] || ! cmp -s "$self" "$BIN_STABLE"; then
+            install -m 755 "$self" "$BIN_STABLE"; echo "ok: instalado em $BIN_STABLE"
+        else
+            echo "ok: $BIN_STABLE já está atualizado"
+        fi
+    fi
+    [ -r "$VSFTPD_CONF" ] || die "$VSFTPD_CONF não encontrado — instale/configure o vsftpd antes (docs/ftp-native-install.md)"
+    for k in user_config_dir chroot_local_user local_root; do
+        v="$(conf_value "$k")"
+        if [ -z "$v" ]; then
+            echo "AVISO: $VSFTPD_CONF não define '$k' — os perfis por usuário/a pasta por conta dependem disso."
+        fi
+    done
+    mkdir -p "$USER_CONF_DIR"; chmod 755 "$USER_CONF_DIR"
+    grep -qxF "$NOLOGIN" /etc/shells 2>/dev/null || { echo "$NOLOGIN" >> /etc/shells; echo "ok: $NOLOGIN adicionado a /etc/shells (pam_shells)"; }
+    getent group "$FTP_GROUP" >/dev/null 2>&1 || { groupadd "$FTP_GROUP"; echo "ok: grupo $FTP_GROUP criado"; }
+    if [ ! -d "$FTP_ROOT" ]; then
+        install -d -m 2775 -o "$HUB_USER" -g "$HUB_USER" "$FTP_ROOT" 2>/dev/null \
+            || install -d -m 2775 "$FTP_ROOT"
+        echo "ok: raiz do FTP criada em $FTP_ROOT"
+    fi
+    echo "raiz do FTP: $FTP_ROOT (dono $DATA_OWNER:$DATA_GROUP)"
+
+    DASH_USER="${1:-}"
+    if [ -z "$DASH_USER" ]; then
+        DASH_USER="$(detect_dash_user)"
+        [ -n "$DASH_USER" ] && echo "detectei a dashboard rodando como: $DASH_USER"
+    fi
+    if [ -z "$DASH_USER" ] || [ "$DASH_USER" = root ]; then
+        echo "(nenhum usuário da dashboard informado/detectado — regra sudo NÃO instalada."
+        echo " Rode depois: sudo ftp-hub install <usuario-que-roda-a-dashboard>)"
+        return 0
+    fi
+    id "$DASH_USER" >/dev/null 2>&1 || die "usuário não existe: $DASH_USER"
+    rule="$DASH_USER ALL=(root) NOPASSWD:"
+    sep=" "
+    for c in $SUBCMDS_SUDO; do rule="$rule$sep$BIN_STABLE $c *"; sep=", "; done
+    tmp="$(mktemp)"
+    {
+        echo "# gerado por ftp-hub install em $(now_utc) — pode regerar rodando-o de novo."
+        echo "# Permite à dashboard CARBONARA administrar SOMENTE as contas do FTP pelo ftp-hub."
+        echo "$rule"
+    } > "$tmp"
+    if ! visudo -cf "$tmp" >/dev/null 2>&1; then rm -f "$tmp"; die "a regra sudoers não passou no visudo -cf — nada instalado"; fi
+    install -m 440 -o root -g root "$tmp" "$SUDOERS_FILE"; rm -f "$tmp"
+    echo "ok: regra instalada em $SUDOERS_FILE:"; echo "    $rule"
+    if ! grep -Eq '^[[:space:]]*[#@]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers 2>/dev/null; then
+        echo "AVISO: /etc/sudoers não inclui /etc/sudoers.d — a regra não terá efeito até incluir."
+    fi
+    # A dashboard PUBLICA dados copiando (rsync) para dentro da raiz do FTP como o
+    # próprio usuário dela — sem sudo. Confere se ela consegue escrever lá.
+    if su -s /bin/sh -c "test -w '$FTP_ROOT'" "$DASH_USER" 2>/dev/null; then
+        echo "ok: '$DASH_USER' consegue escrever em $FTP_ROOT (publicação de dados pela dashboard)."
+    else
+        echo "AVISO: '$DASH_USER' NÃO escreve em $FTP_ROOT — a publicação pela dashboard falharia."
+        echo "       Sugestão: usermod -a -G $DATA_GROUP $DASH_USER && chmod 2775 $FTP_ROOT"
+        echo "       (e reinicie a dashboard para o novo grupo valer)."
+    fi
+    echo
+    echo "Pronto. Na dashboard (admin), abra a página 'FTP'."
+}
+
+usage() {
+    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+    echo; echo "versão: $FTP_HUB_VERSION"
+}
+
+case "${1:-help}" in
+    install)   shift; cmd_install "$@" ;;
+    add)       shift; cmd_add "$@" ;;
+    senha)     shift; cmd_senha "$@" ;;
+    perfil)    shift; cmd_perfil "$@" ;;
+    pasta)     shift; cmd_pasta "$@" ;;
+    desativar) shift; cmd_desativar "$@" ;;
+    ativar)    shift; cmd_ativar "$@" ;;
+    remove)    shift; cmd_remove "$@" ;;
+    list)      cmd_list ;;
+    status)    cmd_status ;;
+    version|--version) echo "$FTP_HUB_VERSION" ;;
+    help|-h|--help) usage ;;
+    *) die "subcomando desconhecido: $1 (veja 'ftp-hub help')" ;;
+esac

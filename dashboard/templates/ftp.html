@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}FTP · CARBONARA{% endblock %}
+{% block content %}
+<h1>FTP — distribuição de dados</h1>
+
+<section class="card help-card">
+  Esta tela administra o <strong>FTP de distribuição</strong> do hub (vsftpd nativo no
+  servidor): as <strong>contas</strong> que acessam o FTP (usuário, senha, perfil e pasta)
+  e as <strong>publicações</strong> — regras que copiam pastas da coleta (e, no futuro,
+  do tratamento de dados) para dentro do FTP, com rsync, no intervalo que você definir.
+  A origem nunca é alterada; o FTP só recebe cópias.
+</section>
+
+{% if reveal %}
+<div class="flash flash-ok">
+  <strong>Senha gerada para <code>{{ reveal.user }}</code>:</strong>
+  <code class="reveal-pw" id="reveal-pw">{{ reveal.password }}</code>
+  <button class="btn btn-sm" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('reveal-pw').textContent)">copiar</button>
+  <br><small>Anote agora — ela <strong>não</strong> será mostrada de novo (se perder, gere outra na página da conta).</small>
+</div>
+{% endif %}
+
+{% if not info.can_write %}
+<div class="flash flash-error">
+  <strong>Contas em modo somente leitura.</strong>
+  {% if not info.bin %}
+    O <code>ftp-hub</code> não está instalado neste servidor. Rode lá, uma vez:
+    <pre class="mono">sudo {{ info.repo_bin }} install {{ info.user }}</pre>
+  {% else %}
+    A dashboard (usuário <strong>{{ info.user }}</strong>) não tem permissão para executar
+    <code>{{ info.bin }}</code> como root sem senha.
+    {% if info.sudo_error %}<br>Resposta do <code>sudo</code>: <pre class="mono">{{ info.sudo_error }}</pre>{% endif %}
+    Rode no servidor: <pre class="mono">sudo {{ info.repo_bin }} install {{ info.user }}</pre>
+    (ou libere no <code>visudo</code>: <code>{{ info.sudoers_hint }}</code>)
+  {% endif %}
+  Listar contas e publicar dados continuam funcionando.
+</div>
+{% endif %}
+
+{# ---------------------------------------------------------------- servidor #}
+<section class="card status-card">
+  <div class="page-head">
+    <h2>Servidor</h2>
+    <span>
+      {% if info.service == 'active' %}<span class="dot dot-online"></span> vsftpd ativo
+      {% elif info.service %}<span class="dot dot-offline"></span> vsftpd {{ info.service }}
+      {% else %}<span class="dot dot-unknown"></span> estado do serviço desconhecido{% endif %}
+      {% if info.listening is true %} · porta {{ info.port }} escutando
+      {% elif info.listening is false %} · <span class="warn">porta {{ info.port }} NÃO escuta</span>{% endif %}
+    </span>
+  </div>
+  <dl>
+    <dt>Endereço</dt>
+    <dd><code>ftp://{{ info.public_host }}:{{ info.port }}/</code>
+      {% if info.tls %} · FTPS explícito {{ 'OBRIGATÓRIO' if info.tls_required else 'disponível (opcional)' }}
+      {% else %} · <span class="warn">sem TLS</span>{% endif %}</dd>
+    <dt>Raiz servida</dt>
+    <dd><code>{{ info.root }}</code>
+      {% if not info.root_exists %}<span class="warn"> — não existe!</span>
+      {% elif not info.root_writable %}<span class="warn"> — a dashboard não consegue escrever aqui (publicações falhariam)</span>{% endif %}
+      {% if info.root_exists %} · <a href="{{ url_for('hub.files', area='ftp') }}">navegar</a>{% endif %}</dd>
+    {% if info.disk %}
+    <dt>Disco</dt>
+    <dd>{{ info.disk.used | fbytes }} usados de {{ info.disk.total | fbytes }} ({{ info.disk.pct }} %) · {{ info.disk.free | fbytes }} livres</dd>
+    {% endif %}
+    <dt>Modo passivo</dt>
+    <dd>{% if info.pasv_min %}portas {{ info.pasv_min }}–{{ info.pasv_max }}{% if info.pasv_address %} · pasv_address {{ info.pasv_address }}{% endif %}{% else %}—{% endif %}</dd>
+    <dt>Isolamento</dt>
+    <dd>{% if info.chroot %}cada conta fica presa (chroot) à sua pasta{% else %}<span class="warn">chroot desligado — as contas veem o sistema todo</span>{% endif %}
+      · anônimo {{ 'HABILITADO' if info.anonymous else 'desabilitado' }}</dd>
+    <dt>Config</dt>
+    <dd><code>{{ info.conf_path }}</code>{% if not info.conf_readable %} <span class="warn">(ilegível)</span>{% endif %}
+      · perfis em <code>{{ info.user_conf_dir }}</code>
+      {% if info.version %} · ftp-hub <code>{{ info.version }}</code>{% endif %}</dd>
+  </dl>
+</section>
+
+{# ---------------------------------------------------------------- contas #}
+<section class="card">
+  <div class="page-head"><h2>Contas do FTP</h2></div>
+  {% if not accounts %}
+    <p class="empty">Nenhuma conta FTP encontrada. Crie a primeira no formulário abaixo.</p>
+  {% else %}
+    <table class="table">
+      <thead><tr>
+        <th>Usuário</th><th>Perfil</th><th>Pasta</th><th>Estado</th><th>Último acesso</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for a in accounts %}
+        <tr>
+          <td><strong><a href="{{ url_for('ftp.account', user=a.user) }}">{{ a.user }}</a></strong>
+            {% if not a.managed %}<br><small class="meta" title="criada fora do ftp-hub; perfil inferido das diretivas">conta antiga</small>{% endif %}</td>
+          <td><span class="pill pill-{{ a.profile }}">{{ a.profile_label }}</span></td>
+          <td><code>{{ a.folder }}</code>{% if a.folder_outside %} <small class="warn">(fora da raiz)</small>{% endif %}</td>
+          <td>{% if a.disabled %}<span class="dot dot-offline"></span> <small>desativada</small>
+              {% else %}<span class="dot dot-online"></span> <small>ativa</small>{% endif %}</td>
+          <td><small>
+            {% if a.activity and a.activity.last_login %}{{ a.activity.last_login }}
+              {%- if a.activity.last_ip %} <span class="meta">({{ a.activity.last_ip }})</span>{% endif %}
+              {%- if a.activity.uploads or a.activity.downloads %}<br><span class="meta">↑{{ a.activity.uploads }} ↓{{ a.activity.downloads }} (log recente)</span>{% endif %}
+              {%- if a.activity.failed_logins %}<br><span class="warn">{{ a.activity.failed_logins }} login(s) falho(s)</span>{% endif %}
+            {% else %}<span class="meta">—</span>{% endif %}
+          </small></td>
+          <td class="ta-right">
+            {% if not a.folder_outside %}
+              <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=(a.folder if a.folder != '/' else '')) }}">arquivos</a>
+            {% endif %}
+            <a class="btn btn-sm" href="{{ url_for('ftp.account', user=a.user) }}">gerenciar</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="page-head"><h2>Nova conta</h2></div>
+  <form method="post" class="form" action="{{ url_for('ftp.account_add') }}" autocomplete="off">
+    <div class="grid-3">
+      <label>Usuário
+        <input name="user" required pattern="[a-z][a-z0-9_-]{2,31}" placeholder="ex.: ufopa_lab"
+               {% if not info.can_write %}disabled{% endif %}>
+        <small>Minúsculas, dígitos, <code>_</code> e <code>-</code>; 3–32 caracteres.</small>
+      </label>
+      <label>Perfil
+        <select name="profile" {% if not info.can_write %}disabled{% endif %}>
+          {% for key, p in profiles.items() %}
+            <option value="{{ key }}" {% if key == 'leitura' %}selected{% endif %}>{{ p.label }} — {{ p.desc }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Pasta (dentro do FTP)
+        <input name="folder" placeholder="vazio = raiz inteira · ex.: dados/km67"
+               {% if not info.can_write %}disabled{% endif %}>
+        <small>A conta fica presa (chroot) a esta subpasta; é criada se não existir.</small>
+      </label>
+    </div>
+    <label>Senha
+      <input name="password" type="text" autocomplete="new-password"
+             placeholder="vazio = gerar uma senha forte (mostrada uma vez)"
+             {% if not info.can_write %}disabled{% endif %}>
+      <small>Mínimo 8 caracteres, sem <code>:</code>. A senha nunca passa pela linha de comando nem fica em log.</small>
+    </label>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>Criar conta</button>
+    </div>
+  </form>
+</section>
+
+{# ---------------------------------------------------------------- publicações #}
+<section class="card">
+  <div class="page-head">
+    <h2>Publicações (hub → FTP)</h2>
+    <a class="btn btn-primary" href="{{ url_for('ftp.publication_new') }}">+ Nova publicação</a>
+  </div>
+  <p class="meta">Cada publicação copia (rsync) uma pasta do hub para uma subpasta do FTP, no
+    intervalo escolhido ou sob demanda. A origem <strong>nunca</strong> é modificada. Por padrão
+    a cópia <em>acumula</em> (não apaga nada no destino); "espelhar" remove no destino o que
+    sumiu da origem — só entre os arquivos que a regra cobre.</p>
+  {% if not info.rsync %}
+    <div class="flash flash-error">O <code>rsync</code> não foi encontrado no servidor — as publicações não vão executar. Instale-o (<code>sudo apt install rsync</code>).</div>
+  {% endif %}
+  {% if not pubs %}
+    <p class="empty">Nenhuma publicação cadastrada.</p>
+  {% else %}
+    <table class="table" id="pub-table">
+      <thead><tr>
+        <th>Publicação</th><th>Origem → destino</th><th>Filtros</th><th>Agenda</th><th>Última execução</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for p in pubs %}
+        <tr data-pub="{{ p.id }}">
+          <td><strong>{{ p.name }}</strong><br><small class="meta"><code>{{ p.id }}</code>
+            {% if not p.enabled %} · <span class="warn">desabilitada</span>{% endif %}</small></td>
+          <td><code>{{ p.source }}</code>{% if not p.source_exists %} <small class="warn">(origem não existe)</small>{% endif %}
+            <br>→ <code>ftp:/{{ p.dest }}</code>
+            <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=p.dest) }}">ver</a></td>
+          <td><small>
+            {% if p.include %}só <code>{{ p.include | join(', ') }}</code><br>{% endif %}
+            {% if p.exclude %}exceto <code>{{ p.exclude | join(', ') }}</code><br>{% endif %}
+            {{ 'espelhar (apaga o que sumiu)' if p.delete else 'acumular' }}{% if p.hidden %} · inclui ocultos{% endif %}
+          </small></td>
+          <td><small>{% if p.interval_min %}a cada {{ p.interval_min }} min<br>próxima: <span data-f="next">{{ p.next_display }}</span>{% else %}só manual{% endif %}</small></td>
+          <td>
+            <span class="pub-state pub-state-{{ p.status }}" data-f="status">{{ p.status }}</span>
+            <br><small class="meta"><span data-f="last">{{ p.last_start_display }}</span>
+              {% if p.state.files is defined %} · <span data-f="files">{{ p.state.files }}</span> arq. · <span data-f="bytes">{{ p.state.bytes | fbytes }}</span>{% endif %}</small>
+            {% if p.state.message %}<br><small class="warn" data-f="message">{{ p.state.message }}</small>{% else %}<small class="warn" data-f="message"></small>{% endif %}
+          </td>
+          <td class="ta-right">
+            <form method="post" class="inline-form" action="{{ url_for('ftp.publication_run', pid=p.id) }}">
+              <button class="btn btn-sm" type="submit" {% if p.running %}disabled{% endif %}>▶ publicar agora</button>
+            </form>
+            <form method="post" class="inline-form" action="{{ url_for('ftp.publication_toggle', pid=p.id) }}">
+              <button class="btn btn-sm" type="submit">{{ 'desabilitar' if p.enabled else 'habilitar' }}</button>
+            </form>
+            <a class="btn btn-sm" href="{{ url_for('ftp.publication_edit', pid=p.id) }}">editar</a>
+            <form method="post" class="inline-form" action="{{ url_for('ftp.publication_delete', pid=p.id) }}"
+                  onsubmit="return confirm('Remover a regra {{ p.name }}? Os arquivos já publicados continuam no FTP.');">
+              <button class="btn btn-sm btn-danger" type="submit">remover</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  <details class="adv">
+    <summary>Registro das publicações (últimas {{ log_lines | length }} linhas, mais recente primeiro)</summary>
+    {% if log_lines %}<pre class="mono">{{ log_lines | join('\n') }}</pre>
+    {% else %}<p class="empty">Nada registrado ainda.</p>{% endif %}
+    <small class="meta">Arquivo <code>ftp-publish.log</code> ao lado do <code>config.yaml</code>
+      (com teto de tamanho). Pelo terminal: <code>python -m app.ftp_publish [id]</code> executa
+      uma publicação na hora.</small>
+  </details>
+</section>
+
+<script>
+  // Atualiza o estado das publicações sem recarregar a página (uma execução manual
+  // costuma levar segundos a minutos; o admin quer ver "executando" virar "ok").
+  (function () {
+    var table = document.getElementById("pub-table");
+    if (!table) return;
+    function refresh() {
+      fetch("{{ url_for('ftp.publications_json') }}", {credentials: "same-origin"})
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (rows) {
+          rows.forEach(function (row) {
+            var tr = table.querySelector('tr[data-pub="' + row.id + '"]');
+            if (!tr) return;
+            var set = function (f, v) { var el = tr.querySelector('[data-f="' + f + '"]'); if (el) el.textContent = v; };
+            set("status", row.status); set("last", row.last); set("next", row.next);
+            set("files", row.files); set("bytes", row.bytes); set("message", row.message || "");
+            var st = tr.querySelector('[data-f="status"]');
+            if (st) st.className = "pub-state pub-state-" + row.status;
+            var btn = tr.querySelector('form button');
+            if (btn) btn.disabled = !!row.running;
+          });
+        }).catch(function () {});
+    }
+    setInterval(refresh, 5000);
+  })();
+</script>
+{% endblock %}

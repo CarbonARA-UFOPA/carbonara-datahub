@@ -34,12 +34,23 @@ def create_app(config_path: str) -> Flask:
     app.store = ConfigStore(config_path)
 
     from .api import api
+    from .ftp_publish import Publisher
+    from .ftp_views import ftp_pages
     from .hub_views import hub_pages
     from .views import pages
 
     app.register_blueprint(pages)
     app.register_blueprint(api, url_prefix="/api")
     app.register_blueprint(hub_pages, url_prefix="/hub")
+    app.register_blueprint(ftp_pages, url_prefix="/ftp")
+
+    # Publicador hub → FTP: thread de fundo que executa as regras de `ftp.publications`
+    # no intervalo de cada uma. Estado e log ficam ao lado do config.yaml.
+    # CARBONARA_NO_PUBLISHER=1 desliga (testes, ou uma segunda instância só de leitura —
+    # duas dashboards publicando a mesma regra rodariam rsync em duplicidade).
+    app.publisher = Publisher(app.store, Path(config_path).parent)
+    if os.environ.get("CARBONARA_NO_PUBLISHER") != "1":
+        app.publisher.start()
 
     @app.url_defaults
     def _static_cache_bust(endpoint, values):

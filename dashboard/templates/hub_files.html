@@ -5,6 +5,8 @@
   <h1>Arquivos — {{ l.label }}</h1>
   {% if back_station %}
     <a class="btn" href="{{ url_for('pages.station_edit', station_id=back_station) }}">← Voltar à estação {{ back_station }}</a>
+  {% elif l.area == 'ftp' %}
+    <a class="btn" href="{{ url_for('ftp.index') }}">← Voltar ao FTP</a>
   {% else %}
     <a class="btn" href="{{ url_for('hub.index') }}">← Voltar ao gerenciamento</a>
   {% endif %}

@@ -26,6 +26,30 @@ stale_fallback_seconds: 3600
 # Sem a regra, a página degrada para somente leitura (listar/credenciais/downloads).
 rsync_hub_bin: null
 
+# FTP de distribuição (página "FTP", só admin) — vsftpd NATIVO no host. As contas são
+# usuários locais; a dashboard as administra pelo script raiz ftp/ftp-hub via
+# "sudo -n" (regra instalada por: sudo ./ftp/ftp-hub install <usuario-da-dashboard>).
+# As PUBLICAÇÕES copiam (rsync) pastas do hub para dentro da raiz do FTP, no intervalo
+# de cada regra, pelo próprio processo da dashboard (sem sudo — a raiz do FTP é
+# gravável pelo usuário da dashboard). A UI edita este bloco.
+ftp:
+  root: null              # raiz servida; null = local_root do vsftpd.conf (senão <data_root>/ftp)
+  vsftpd_conf: null       # null = /etc/vsftpd.conf
+  ftp_hub_bin: null       # null = /usr/local/bin/ftp-hub
+  public_host: null       # host/IP mostrado nas instruções de conexão; null = pasv_address
+  publications: []
+  # publications:
+  #   - id: km67-brutos
+  #     name: "Dados brutos km67"
+  #     source: incoming/km67        # relativo à raiz do hub (ou absoluto); NUNCA é alterado
+  #     dest: dados/km67             # subpasta DENTRO da raiz do FTP (criada se faltar)
+  #     include: ["*.dat"]           # vazio = tudo
+  #     exclude: ["*.tmp"]
+  #     delete: false                # true = espelhar (apaga no destino o que sumiu da origem)
+  #     hidden: false                # incluir ocultos (.carbonara-status etc.)? normalmente não
+  #     interval_min: 60             # 0 = só manual
+  #     enabled: true
+
 # Fuso para EXIBIR o "último sinal" (só a exibição; o cálculo online/offline usa epoch,
 # imune a fuso). Útil quando o processo da dashboard roda em UTC e o servidor está em
 # outro fuso — defina o nome IANA do seu fuso para ver a hora local correta.

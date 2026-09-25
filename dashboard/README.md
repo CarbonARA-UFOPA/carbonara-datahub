@@ -272,6 +272,35 @@ expõem credenciais e download de dados. Se `/etc/rsync-hub.conf` apontar para u
 diferente do `data_root` do config, a página avisa (as escritas valem para a BASE do
 rsync-hub).
 
+## Gerenciamento do FTP (página **FTP**, só admin)
+
+A dashboard é o concentrador dos serviços do hub; a página **FTP** administra o FTP de
+**distribuição** (vsftpd nativo no servidor — ver [`ftp/README.md`](../ftp/README.md)):
+
+- **Servidor** — estado do `vsftpd`, porta, TLS, faixa passiva, raiz servida, disco. Só leitura
+  do `/etc/vsftpd.conf` e do `systemctl`; nunca abre conexão com o FTP (poluiria o log).
+- **Contas** — lista (usuário, perfil, pasta, ativa/desativada, último acesso a partir da cauda
+  do `/var/log/vsftpd.log`, legível quando o usuário da dashboard está no grupo `adm`), criar,
+  trocar senha (ou gerar uma — mostrada **uma vez**), mudar perfil (`leitura` / `escrita` /
+  `upload`), mudar pasta, desativar/reativar e remover (só a conta; **nenhum arquivo é
+  apagado**; a rota revalida o nome digitado). Listar dispensa sudo; escrever executa o
+  `ftp-hub` instalado via `sudo -n` (regra instalada por `sudo ./ftp/ftp-hub install
+  <usuario-da-dashboard>`); sem a regra a tela degrada para somente leitura com a instrução
+  na tela. A senha segue pelo **stdin** do processo, nunca pela linha de comando.
+- **Publicações** — regras "pasta do hub → subpasta do FTP" (origem, destino, filtros
+  incluir/excluir, acumular ou espelhar, intervalo em minutos, habilitada). Um **publicador**
+  em thread de fundo do processo da dashboard relê o config a cada 20 s e executa
+  `rsync -rtp` (sem sudo — a raiz do FTP é gravável pelo usuário da dashboard) nas regras
+  vencidas; "publicar agora" dispara na hora e a tabela atualiza sozinha. A origem nunca é
+  modificada; espelhar só apaga no destino o que a regra cobre. Seletores de pasta navegam
+  um nível por vez em `incoming/` / `archive/` / quarentena (origem) e na raiz do FTP
+  (destino). Estado em `ftp-publish.state.json`, registro em `ftp-publish.log` (ambos ao lado
+  do `config.yaml`, com teto). `CARBONARA_NO_PUBLISHER=1` desliga o publicador (testes ou uma
+  segunda instância só de leitura). Pelo terminal: `python -m app.ftp_publish [id]`.
+- **Navegador** — a raiz do FTP aparece como área *FTP (publicado)* no navegador de arquivos
+  (somente leitura, com download), ao lado de recebidos/arquivados/quarentena.
+- As ações (POST) rejeitam requisições de outra origem (`Sec-Fetch-Site`/`Origin`).
+
 ## Limites (por desenho)
 
 - Somente leitura sobre os dados: remover estação/arquivo do dashboard **não** apaga

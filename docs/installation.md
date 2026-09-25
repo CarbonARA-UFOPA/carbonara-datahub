@@ -273,6 +273,18 @@ docker exec -it carbonara-db psql -U carbonara -d carbonara \
 O serviço `ftp` **não recebe** dados — serve `archive/` como **somente leitura**. Consumidores
 baixam com o usuário `FTP_USER_NAME`/`FTP_USER_PASS` (via FTPS). Nada de upload por aqui.
 
+**Servidor com vsftpd nativo** (o caso da workstation de produção — instalação em
+[`ftp-native-install.md`](ftp-native-install.md)): as contas e as **publicações** (o que do
+hub aparece no FTP) são administradas pela página **FTP** da dashboard. Prepare o host uma vez:
+
+```bash
+sudo ./ftp/ftp-hub install <usuario-que-roda-a-dashboard>   # instala o script + regra sudo
+```
+
+Depois, na dashboard (admin) → **FTP**: crie contas (`leitura` / `escrita` / `upload`, presas a
+uma subpasta) e publicações ("`incoming/<estação>` → `dados/<estação>`, a cada 60 min", com
+filtros). A origem nunca é alterada; detalhes em [`../ftp/README.md`](../ftp/README.md).
+
 ---
 
 ## Teste ponta a ponta
