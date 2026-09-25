@@ -62,15 +62,65 @@ def index():
     info = ftp.server_info(cfg)
     rules = ftp.publications(cfg)
     reveal = session.pop("ftp_reveal", None)
+    # Gerenciador de pastas: ?pasta=<sub> escolhe o nível exibido (server-side, sem estado JS).
+    folder = ftp.folder_listing(cfg, request.args.get("pasta") or "")
+    if folder is None:
+        flash("Pasta não encontrada no FTP (ou fora da raiz).", "error")
+        folder = ftp.folder_listing(cfg, "")
     return render_template(
         "ftp.html",
         info=info,
         accounts=ftp.list_accounts(cfg),
         profiles=ftp.PROFILES,
         pubs=_publisher().describe(cfg, rules),
+        links=ftp.links(cfg),
+        folder=folder,
+        pick_areas=ftp.PICK_AREAS,
         log_lines=_publisher().tail_log(60),
         reveal=reveal,
     )
+
+
+def _back_to_folder(rel: str | None):
+    return redirect(url_for("ftp.index", pasta=rel or None) + "#pastas")
+
+
+# --- Pastas do FTP (organização) ---------------------------------------------------------
+@ftp_pages.post("/pastas")
+@admin_required
+def folder_create():
+    parent = request.form.get("parent") or ""
+    ok, out, rel = ftp.create_folder(_load(), parent, request.form.get("name") or "")
+    flash(out, "ok" if ok else "error")
+    return _back_to_folder(parent)
+
+
+@ftp_pages.post("/pastas/remover")
+@admin_required
+def folder_remove():
+    sub = request.form.get("sub") or ""
+    ok, out = ftp.remove_folder(_load(), sub)
+    flash(out, "ok" if ok else "error")
+    parent = "/".join(sub.strip("/").split("/")[:-1])
+    return _back_to_folder(parent)
+
+
+# --- Vínculos (bind mounts) ----------------------------------------------------------------
+@ftp_pages.post("/vinculos")
+@admin_required
+def link_create():
+    ok, out = ftp.add_link(_load(), request.form.get("dest") or "",
+                           request.form.get("source") or "", bool(request.form.get("rw")))
+    _flash_result(ok, out, "Vínculo criado.", "Falha ao criar o vínculo.")
+    return redirect(url_for("ftp.index") + "#vinculos")
+
+
+@ftp_pages.post("/vinculos/remover")
+@admin_required
+def link_remove():
+    ok, out = ftp.remove_link(_load(), request.form.get("dest") or "")
+    _flash_result(ok, out, "Vínculo desfeito.", "Falha ao desfazer o vínculo.")
+    return redirect(url_for("ftp.index") + "#vinculos")
 
 
 # --- Contas ------------------------------------------------------------------------------

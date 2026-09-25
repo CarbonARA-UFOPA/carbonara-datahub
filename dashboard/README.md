@@ -287,7 +287,15 @@ A dashboard é o concentrador dos serviços do hub; a página **FTP** administra
   `ftp-hub` instalado via `sudo -n` (regra instalada por `sudo ./ftp/ftp-hub install
   <usuario-da-dashboard>`); sem a regra a tela degrada para somente leitura com a instrução
   na tela. A senha segue pelo **stdin** do processo, nunca pela linha de comando.
-- **Publicações** — regras "pasta do hub → subpasta do FTP" (origem, destino, filtros
+- **Pastas do FTP** — cria subpastas em qualquer nível da raiz (2775) e remove **só pastas
+  vazias** que não sejam vínculos; escrita direta, sem sudo.
+- **Vínculos** — a forma preferida de "espelhar sem copiar": uma pasta **qualquer do servidor**
+  (seletor navega o sistema de arquivos inteiro) aparece dentro do FTP sem ocupar espaço e com
+  as mudanças na hora, via *bind mount* (`ftp-hub link`), só-leitura por padrão; links
+  simbólicos não servem por causa do chroot das contas. Registro em `/etc/ftp-hub/links`,
+  remontado no boot por `carbonara-ftp-links.service`. Origens do sistema (`/etc`, `/home`…)
+  são recusadas.
+- **Publicações (cópia)** — regras "pasta do hub → subpasta do FTP" (origem, destino, filtros
   incluir/excluir, acumular ou espelhar, intervalo em minutos, habilitada). Um **publicador**
   em thread de fundo do processo da dashboard relê o config a cada 20 s e executa
   `rsync -rtp` (sem sudo — a raiz do FTP é gravável pelo usuário da dashboard) nas regras

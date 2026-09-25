@@ -1,0 +1,76 @@
+{# Seletor de pastas compartilhado (formulário de publicação e card de vínculos).
+   Cada <div class="dir-picker" data-picker="<id-do-input>"> ganha um navegador de UM
+   nível por vez (sem recursão — as árvores do hub e do sistema são grandes), com
+   breadcrumbs e botão "usar". A área "sistema" lista o disco inteiro: o servidor já
+   esconde o que nunca pode ser origem (/etc, /home, /proc…). Inclua UMA vez por página. #}
+<script>
+  (function () {
+    var BROWSE = "{{ url_for('ftp.browse_json') }}";
+    document.querySelectorAll(".dir-picker").forEach(function (box) {
+      var target = document.getElementById(box.dataset.picker);
+      var areaSel = box.querySelector('[data-role="area"]');
+      var list = box.querySelector('[data-role="list"]');
+      var crumbs = box.querySelector('[data-role="crumbs"]');
+      var info = box.querySelector('[data-role="info"]');
+      var useBtn = box.querySelector('[data-role="use"]');
+      var requireSub = box.dataset.requireSub === "1";
+      var cur = {area: areaSel.value, rel: "", value: ""};
+
+      function load(area, rel) {
+        list.innerHTML = '<li class="meta">carregando…</li>';
+        fetch(BROWSE + "?area=" + encodeURIComponent(area) + "&sub=" + encodeURIComponent(rel),
+              {credentials: "same-origin"})
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.error) { list.innerHTML = '<li class="warn">' + d.error + '</li>'; return; }
+            cur = {area: d.area, rel: d.rel, value: d.value};
+            var parts = d.rel ? d.rel.split("/") : [];
+            crumbs.innerHTML = "";
+            var rootA = document.createElement("a"); rootA.href = "#"; rootA.textContent = d.label;
+            rootA.addEventListener("click", function (ev) { ev.preventDefault(); load(cur.area, ""); });
+            crumbs.appendChild(rootA);
+            var acc = [];
+            parts.forEach(function (p) {
+              acc.push(p);
+              var rel2 = acc.join("/");
+              crumbs.appendChild(document.createTextNode(" / "));
+              var a = document.createElement("a"); a.href = "#"; a.textContent = p;
+              a.addEventListener("click", function (ev) { ev.preventDefault(); load(cur.area, rel2); });
+              crumbs.appendChild(a);
+            });
+            list.innerHTML = "";
+            if (d.missing) { list.innerHTML = '<li class="meta">(pasta ainda não existe)</li>'; }
+            if (d.denied) { list.innerHTML = '<li class="warn">sem permissão para listar esta pasta</li>'; }
+            if (d.rel) {
+              var up = document.createElement("li");
+              var upA = document.createElement("a"); upA.href = "#"; upA.textContent = "↩ pasta acima";
+              upA.addEventListener("click", function (ev) { ev.preventDefault(); load(cur.area, parts.slice(0, -1).join("/")); });
+              up.appendChild(upA); list.appendChild(up);
+            }
+            d.dirs.forEach(function (name) {
+              var li = document.createElement("li");
+              li.appendChild(document.createTextNode("📁 "));
+              var a = document.createElement("a"); a.href = "#"; a.textContent = name + "/";
+              a.addEventListener("click", function (ev) {
+                ev.preventDefault(); load(cur.area, d.rel ? d.rel + "/" + name : name);
+              });
+              li.appendChild(a); list.appendChild(li);
+            });
+            if (!d.dirs.length && !d.missing && !d.denied) {
+              var e = document.createElement("li"); e.className = "meta"; e.textContent = "(sem subpastas)"; list.appendChild(e);
+            }
+            info.textContent = (d.files ? d.files + " arquivo(s) aqui · " : "") + "valor: " + (d.value || "(raiz)");
+          })
+          .catch(function () { list.innerHTML = '<li class="warn">falha ao listar</li>'; });
+      }
+      areaSel.addEventListener("change", function () { load(areaSel.value, ""); });
+      useBtn.addEventListener("click", function () {
+        if (requireSub && !cur.rel) {
+          info.textContent = "escolha uma SUBPASTA (a raiz não é aceita aqui)"; return;
+        }
+        target.value = cur.value; target.dispatchEvent(new Event("change"));
+      });
+      load(areaSel.value, "");
+    });
+  })();
+</script>

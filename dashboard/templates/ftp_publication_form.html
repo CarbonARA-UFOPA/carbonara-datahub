@@ -10,7 +10,10 @@
   Uma publicação copia, com <code>rsync</code>, uma <strong>pasta do hub</strong> (origem)
   para uma <strong>subpasta do FTP</strong> (destino), repetidamente. Só o que mudou é
   copiado a cada vez; a origem nunca é alterada. Escolha as pastas navegando nos seletores
-  ou digite o caminho.
+  ou digite o caminho. A origem pode ser <strong>qualquer pasta do servidor</strong>
+  (área <em>Sistema de arquivos</em>). Para espelhar sem gastar disco, prefira um
+  <a href="{{ url_for('ftp.index') }}#vinculos">vínculo</a>; a publicação por cópia é para quando a
+  cópia é desejada (ex.: congelar um recorte, ou filtrar tipos de arquivo).
 </section>
 
 <form method="post" class="card form"
@@ -28,7 +31,7 @@
         <small>Raiz do hub: <code>{{ info.hub_base }}</code>. Hoje: pastas de
           <code>incoming/</code>; no futuro, a saída do tratamento de dados — qualquer pasta serve.</small>
       </label>
-      <div class="dir-picker" data-picker="source" data-areas="{{ pick_areas.keys() | join(',') }}">
+      <div class="dir-picker" data-picker="f-source">
         <div class="dir-picker-head">
           <select data-role="area">
             {% for key, label in pick_areas.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
@@ -49,7 +52,7 @@
         <small>Dentro de <code>{{ info.root }}</code>; criada se não existir. A raiz inteira não
           é aceita como destino — dê uma subpasta, é ela que as contas de leitura recebem.</small>
       </label>
-      <div class="dir-picker" data-picker="dest" data-areas="ftp">
+      <div class="dir-picker" data-picker="f-dest" data-require-sub="1">
         <div class="dir-picker-head">
           <select data-role="area"><option value="ftp">FTP (raiz servida)</option></select>
           <span class="mono" data-role="crumbs"></span>
@@ -106,70 +109,5 @@
   </div>
 </form>
 
-<script>
-  // Seletor de pastas: um nível por vez, sem recursão (as árvores do hub são grandes).
-  (function () {
-    var BROWSE = "{{ url_for('ftp.browse_json') }}";
-    document.querySelectorAll(".dir-picker").forEach(function (box) {
-      var target = document.getElementById(box.dataset.picker === "source" ? "f-source" : "f-dest");
-      var areaSel = box.querySelector('[data-role="area"]');
-      var list = box.querySelector('[data-role="list"]');
-      var crumbs = box.querySelector('[data-role="crumbs"]');
-      var info = box.querySelector('[data-role="info"]');
-      var useBtn = box.querySelector('[data-role="use"]');
-      var cur = {area: areaSel.value, rel: "", value: ""};
-
-      function load(area, rel) {
-        list.innerHTML = '<li class="meta">carregando…</li>';
-        fetch(BROWSE + "?area=" + encodeURIComponent(area) + "&sub=" + encodeURIComponent(rel),
-              {credentials: "same-origin"})
-          .then(function (r) { return r.json(); })
-          .then(function (d) {
-            if (d.error) { list.innerHTML = '<li class="warn">' + d.error + '</li>'; return; }
-            cur = {area: d.area, rel: d.rel, value: d.value};
-            var parts = d.rel ? d.rel.split("/") : [];
-            var html = '<a href="#" data-rel="">' + d.label + '</a>';
-            var acc = [];
-            parts.forEach(function (p) { acc.push(p); html += ' / <a href="#" data-rel="' + acc.join("/") + '">' + p + '</a>'; });
-            crumbs.innerHTML = html;
-            crumbs.querySelectorAll("a").forEach(function (a) {
-              a.addEventListener("click", function (ev) { ev.preventDefault(); load(cur.area, a.dataset.rel); });
-            });
-            list.innerHTML = "";
-            if (d.missing) { list.innerHTML = '<li class="meta">(pasta ainda não existe)</li>'; }
-            if (d.rel) {
-              var up = document.createElement("li");
-              up.innerHTML = '<a href="#">↩ pasta acima</a>';
-              up.querySelector("a").addEventListener("click", function (ev) {
-                ev.preventDefault(); load(cur.area, parts.slice(0, -1).join("/"));
-              });
-              list.appendChild(up);
-            }
-            d.dirs.forEach(function (name) {
-              var li = document.createElement("li");
-              li.innerHTML = '📁 <a href="#"></a>';
-              li.querySelector("a").textContent = name + "/";
-              li.querySelector("a").addEventListener("click", function (ev) {
-                ev.preventDefault(); load(cur.area, d.rel ? d.rel + "/" + name : name);
-              });
-              list.appendChild(li);
-            });
-            if (!d.dirs.length && !d.missing) {
-              var e = document.createElement("li"); e.className = "meta"; e.textContent = "(sem subpastas)"; list.appendChild(e);
-            }
-            info.textContent = (d.files ? d.files + " arquivo(s) nesta pasta · " : "") + "valor: " + (d.value || "(raiz)");
-          })
-          .catch(function () { list.innerHTML = '<li class="warn">falha ao listar</li>'; });
-      }
-      areaSel.addEventListener("change", function () { load(areaSel.value, ""); });
-      useBtn.addEventListener("click", function () {
-        if (box.dataset.picker === "dest" && !cur.value) {
-          info.textContent = "escolha uma SUBPASTA do FTP (a raiz não é aceita como destino)"; return;
-        }
-        target.value = cur.value; target.dispatchEvent(new Event("change"));
-      });
-      load(areaSel.value, "");
-    });
-  })();
-</script>
+{% include '_dir_picker.html' %}
 {% endblock %}

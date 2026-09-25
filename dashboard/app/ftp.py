@@ -43,7 +43,14 @@ PROFILES = {
     "upload": {"label": "Só envio (caixa de entrada)",
                "desc": "envia e cria pastas; NÃO baixa, não apaga nem renomeia"},
 }
-SUDO_SUBCMDS = ("add", "remove", "senha", "perfil", "pasta", "desativar", "ativar")
+SUDO_SUBCMDS = ("add", "remove", "senha", "perfil", "pasta", "desativar", "ativar",
+                "link", "unlink")
+LINKS_FILE = "/etc/ftp-hub/links"
+# Espelha FORBIDDEN_SRC do ftp-hub: origens que nunca podem ser vinculadas/copiadas
+# para o FTP (raiz, pseudo-fs e pastas com segredos do host).
+FORBIDDEN_SOURCES = ("/", "/proc", "/sys", "/dev", "/run", "/etc", "/boot", "/root",
+                     "/var/log", "/var/lib", "/usr", "/bin", "/sbin", "/lib", "/lib64",
+                     "/snap", "/home")
 
 DEFAULT_VSFTPD_CONF = "/etc/vsftpd.conf"
 DEFAULT_USER_CONF_DIR = "/etc/vsftpd/user_conf"
@@ -576,8 +583,8 @@ def validate_publication(form: dict, cfg: dict, current_id: str | None = None) -
             src_res = src_abs
         if not src_abs.is_dir():
             errors.append(f"A origem não existe ou não é uma pasta: {src_abs}")
-        elif src_res == Path("/"):
-            errors.append("A origem não pode ser a raiz do sistema.")
+        elif source_forbidden(src_abs):
+            errors.append("Origem recusada: " + source_forbidden(src_abs))
         elif _is_within(src_res, ftp_root(cfg).resolve()):
             errors.append("A origem não pode estar DENTRO da raiz do FTP (copiaria o FTP sobre ele mesmo).")
 
@@ -653,21 +660,26 @@ PICK_AREAS = {
     "incoming": "Recebidos (incoming)",
     "archive": "Arquivados (archive)",
     "quarantine": "Quarentena",
+    "sistema": "Sistema de arquivos (/)",
 }
 
 
 def browse_dirs(cfg: dict, area: str, sub: str) -> dict | None:
-    """Subpastas de um nível (sem recursão) de uma área do hub ou da raiz do FTP —
-    alimenta o seletor de origem/destino do formulário de publicação."""
+    """Subpastas de um nível (sem recursão) de uma área do hub, da raiz do FTP ou do
+    sistema de arquivos inteiro (``sistema`` — a origem pode ser qualquer pasta do
+    servidor) — alimenta os seletores de origem/destino."""
     if area == "ftp":
-        root = ftp_root(cfg)
-        label = "FTP"
+        root, label = ftp_root(cfg), "FTP"
+    elif area == "sistema":
+        root, label = Path("/"), "/"
     elif area in PICK_AREAS:
-        root = hub.hub_base(cfg) / area
-        label = PICK_AREAS[area]
+        root, label = hub.hub_base(cfg) / area, PICK_AREAS[area]
     else:
         return None
-    rel_norm, err = normalize_subfolder(sub)
+    if area == "sistema":
+        rel_norm, err = _normalize_system_rel(sub)
+    else:
+        rel_norm, err = normalize_subfolder(sub)
     if rel_norm is None:
         return None
     path = (root / rel_norm) if rel_norm else root
@@ -677,6 +689,11 @@ def browse_dirs(cfg: dict, area: str, sub: str) -> dict | None:
             return None
     except OSError:
         return None
+    base = {"area": area, "label": label, "root": str(root), "rel": rel_norm,
+            "dirs": [], "files": 0, "missing": False, "denied": False,
+            "value": _pick_value(area, rel_norm)}
+    if not path.is_dir():
+        return {**base, "missing": True}
     dirs, files = [], 0
     try:
         with os.scandir(path) as it:
@@ -690,22 +707,235 @@ def browse_dirs(cfg: dict, area: str, sub: str) -> dict | None:
                         files += 1
                 except OSError:
                     continue
+    except PermissionError:
+        return {**base, "denied": True}
     except OSError:
-        return {"area": area, "label": label, "root": str(root), "rel": rel_norm,
-                "dirs": [], "files": 0, "missing": True,
-                "value": _pick_value(area, rel_norm)}
+        return {**base, "missing": True}
+    if area == "sistema" and not rel_norm:
+        # Na raiz do sistema, esconde o que nunca pode ser origem (pseudo-fs, segredos).
+        dirs = [d for d in dirs if "/" + d not in FORBIDDEN_SOURCES]
     dirs.sort()
-    return {"area": area, "label": label, "root": str(root), "rel": rel_norm,
-            "dirs": dirs, "files": files, "missing": False,
-            "value": _pick_value(area, rel_norm)}
+    return {**base, "dirs": dirs, "files": files}
+
+
+def _normalize_system_rel(sub: str) -> tuple[str | None, str]:
+    """Caminho relativo à raiz do sistema para o seletor: aceita qualquer nome de
+    pasta (o sistema tem nomes com espaço, acento…), mas nunca ``..`` nem NUL."""
+    s = (sub or "").strip().strip("/")
+    s = re.sub(r"/+", "/", s)
+    if not s:
+        return "", ""
+    for part in s.split("/"):
+        if part in (".", "..") or "\0" in part or "\n" in part:
+            return None, "caminho inválido."
+    return s, ""
 
 
 def _pick_value(area: str, rel: str) -> str:
     """O que vai para o campo do formulário: origem relativa à BASE (``incoming/x``),
-    destino relativo à raiz do FTP (``dados/x``)."""
+    caminho absoluto para o sistema (``/mnt/dados/x``), destino relativo à raiz do
+    FTP (``dados/x``)."""
     if area == "ftp":
         return rel
+    if area == "sistema":
+        return "/" + rel if rel else "/"
     return f"{area}/{rel}" if rel else area
+
+
+def source_forbidden(path: Path) -> str:
+    """Motivo pelo qual a origem é recusada (''= aceitável). Vale para cópia E vínculo."""
+    # Testa o caminho LITERAL e o RESOLVIDO: /etc pode ser symlink (macOS → /private/etc)
+    # e um symlink dentro de uma pasta permitida pode apontar para uma proibida.
+    candidates = {str(path)}
+    try:
+        candidates.add(str(path.resolve()))
+    except OSError:
+        pass
+    for s in candidates:
+        if s == "/":
+            return "a origem não pode ser a raiz do sistema."
+        for f in FORBIDDEN_SOURCES:
+            if f != "/" and (s == f or s.startswith(f + "/")):
+                return (f"a origem não pode estar em {f} (pastas do sistema/segredos do host "
+                        "nunca vão para o FTP).")
+    return ""
+
+
+# --- Vínculos (bind mounts) ---------------------------------------------------------------
+def _mountpoints() -> set[str]:
+    pts: set[str] = set()
+    try:
+        for line in Path("/proc/self/mounts").read_text(encoding="utf-8",
+                                                          errors="replace").splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                pts.add(parts[1].replace("\\040", " "))
+    except OSError:
+        pass
+    return pts
+
+
+def links(cfg: dict) -> list[dict]:
+    """Vínculos registrados em /etc/ftp-hub/links (644) + estado real de montagem
+    (/proc/self/mounts). Montagens sob a raiz do FTP que NÃO estão no registro (ex.:
+    um bind do /etc/fstab feito à mão) aparecem como ``manual``."""
+    root = ftp_root(cfg)
+    root_s = str(root).rstrip("/")
+    mounted = _mountpoints()
+    out, seen = [], set()
+    try:
+        text = Path(LINKS_FILE).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) < 2:
+            continue
+        sub, src = parts[0], parts[1]
+        mode = parts[2] if len(parts) > 2 and parts[2] else "ro"
+        dest = str(root / sub)
+        seen.add(dest)
+        out.append({"dest": sub, "dest_abs": dest, "source": src, "mode": mode,
+                    "mounted": dest in mounted, "source_exists": Path(src).is_dir(),
+                    "manual": False})
+    for mp in sorted(mounted):
+        if mp.startswith(root_s + "/") and mp not in seen:
+            out.append({"dest": mp[len(root_s) + 1:], "dest_abs": mp, "source": "(fstab/manual)",
+                        "mode": "?", "mounted": True, "source_exists": True, "manual": True})
+    out.sort(key=lambda l: l["dest"])
+    return out
+
+
+def add_link(cfg: dict, dest: str, source: str, rw: bool = False) -> tuple[bool, str]:
+    """``ftp-hub link <sub> <origem> [--rw]`` — bind mount da origem dentro do FTP."""
+    norm, err = normalize_subfolder(dest)
+    if norm is None:
+        return False, "Destino: " + err
+    if not norm:
+        return False, "informe uma SUBPASTA do FTP como destino do vínculo."
+    src = (source or "").strip().rstrip("/")
+    if any(c in src for c in "\n\r\t\0") or not src:
+        return False, "informe a pasta de origem."
+    if not src.startswith("/"):
+        # Valor vindo do seletor das áreas do hub (``incoming/km67``): vira absoluto
+        # sob a BASE — o ftp-hub só aceita caminho absoluto.
+        src = str(hub.hub_base(cfg) / src)
+    p = Path(src)
+    if not p.is_dir():
+        return False, f"a origem não existe ou não é uma pasta: {src}"
+    why = source_forbidden(p)
+    if why:
+        return False, why
+    if _is_within(p.resolve(), ftp_root(cfg).resolve()):
+        return False, "a origem já está dentro do FTP — organize com uma pasta ou publique noutra subpasta."
+    args = ["link", norm, src] + (["--rw"] if rw else [])
+    ok, out, _ = _run(cfg, args, timeout=60)
+    return ok, out
+
+
+def remove_link(cfg: dict, dest: str) -> tuple[bool, str]:
+    norm, err = normalize_subfolder(dest)
+    if norm is None or not norm:
+        return False, "vínculo inválido."
+    ok, out, _ = _run(cfg, ["unlink", norm], timeout=60)
+    return ok, out
+
+
+# --- Pastas do FTP (organização) — escrita direta, sem sudo -----------------------------------
+def folder_listing(cfg: dict, sub: str) -> dict | None:
+    """Um nível da raiz do FTP para o gerenciador de pastas: subpastas com contagem,
+    se estão vazias e se são pontos de montagem (vínculos), + arquivos soltos."""
+    norm, err = normalize_subfolder(sub)
+    if norm is None:
+        return None
+    root = ftp_root(cfg)
+    path = root / norm if norm else root
+    try:
+        if not _is_within(path.resolve(), root.resolve()) or not path.is_dir():
+            return None
+    except OSError:
+        return None
+    mounted = _mountpoints()
+    dirs, files = [], []
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        rel = f"{norm}/{e.name}" if norm else e.name
+                        full = str(path / e.name)
+                        try:
+                            empty = not any(os.scandir(full))
+                        except OSError:
+                            empty = False
+                        dirs.append({"name": e.name, "rel": rel, "empty": empty,
+                                     "mounted": full in mounted,
+                                     "writable": os.access(full, os.W_OK)})
+                    elif e.is_file(follow_symlinks=False):
+                        files.append(e.name)
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    dirs.sort(key=lambda d: d["name"])
+    crumbs, acc = [], []
+    for part in norm.split("/") if norm else []:
+        acc.append(part)
+        crumbs.append({"name": part, "rel": "/".join(acc)})
+    return {"rel": norm, "abs": str(path), "dirs": dirs, "files": sorted(files),
+            "crumbs": crumbs, "writable": os.access(path, os.W_OK),
+            "parent": "/".join(norm.split("/")[:-1]) if norm else None}
+
+
+def create_folder(cfg: dict, parent: str, name: str) -> tuple[bool, str, str]:
+    """Cria ``<raiz>/<parent>/<name>`` (2775). Retorna (ok, msg, rel_da_nova)."""
+    pnorm, err = normalize_subfolder(parent)
+    if pnorm is None:
+        return False, "Pasta-mãe: " + err, ""
+    nnorm, err = normalize_subfolder(name)
+    if nnorm is None or not nnorm or "/" in nnorm:
+        return False, "Nome inválido: use letras, dígitos, '.', '_' e '-' (sem barras).", ""
+    rel = f"{pnorm}/{nnorm}" if pnorm else nnorm
+    root = ftp_root(cfg)
+    target = root / rel
+    try:
+        if not _is_within(target.parent.resolve(), root.resolve()):
+            return False, "fora da raiz do FTP.", ""
+        if target.exists():
+            return False, f"já existe: ftp:/{rel}", rel
+        target.mkdir(mode=0o2775)
+        os.chmod(target, 0o2775)
+    except PermissionError:
+        return False, (f"sem permissão para criar em {target.parent} (a pasta-mãe não é "
+                       "gravável pelo usuário da dashboard)."), ""
+    except OSError as exc:
+        return False, f"falha ao criar a pasta: {exc}", ""
+    return True, f"Pasta ftp:/{rel} criada.", rel
+
+
+def remove_folder(cfg: dict, sub: str) -> tuple[bool, str]:
+    """Remove SÓ uma pasta VAZIA (rmdir) que não seja ponto de montagem — a dashboard
+    nunca apaga dados do FTP."""
+    norm, err = normalize_subfolder(sub)
+    if norm is None or not norm:
+        return False, "pasta inválida."
+    root = ftp_root(cfg)
+    target = root / norm
+    try:
+        if not _is_within(target.resolve(), root.resolve()) or target.resolve() == root.resolve():
+            return False, "fora da raiz do FTP."
+        if str(target) in _mountpoints():
+            return False, "esta pasta é um vínculo — desfaça o vínculo em vez de removê-la."
+        if not target.is_dir():
+            return False, "não é uma pasta."
+        target.rmdir()
+    except OSError as exc:
+        if getattr(exc, "errno", None) in (39, 66):  # ENOTEMPTY
+            return False, f"ftp:/{norm} não está vazia — a dashboard só remove pastas vazias."
+        return False, f"não consegui remover: {exc}"
+    return True, f"Pasta vazia ftp:/{norm} removida."
 
 
 def fmt_epoch(ts: float | None) -> str:

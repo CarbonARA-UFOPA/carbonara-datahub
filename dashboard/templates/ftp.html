@@ -148,6 +148,158 @@
   </form>
 </section>
 
+{# ---------------------------------------------------------------- pastas #}
+<section class="card" id="pastas">
+  <div class="page-head"><h2>Pastas do FTP</h2>
+    <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=folder.rel) }}">ver arquivos desta pasta</a></div>
+  <p class="mono">
+    <a href="{{ url_for('ftp.index') }}#pastas">{{ info.root }}</a>{% for c in folder.crumbs %}
+      / <a href="{{ url_for('ftp.index', pasta=c.rel) }}#pastas">{{ c.name }}</a>{% endfor %}
+  </p>
+  <table class="table">
+    <thead><tr><th>Pasta</th><th>Conteúdo</th><th></th></tr></thead>
+    <tbody>
+    {% if folder.rel %}
+      <tr><td colspan="3"><a href="{{ url_for('ftp.index', pasta=(folder.parent or none)) }}#pastas">↩ pasta acima</a></td></tr>
+    {% endif %}
+    {% for d in folder.dirs %}
+      <tr>
+        <td>📁 <a href="{{ url_for('ftp.index', pasta=d.rel) }}#pastas"><strong>{{ d.name }}/</strong></a></td>
+        <td><small>
+          {% if d.mounted %}<span class="pill pill-vinculo">vínculo</span>
+          {% elif d.empty %}<span class="meta">vazia</span>
+          {% else %}<span class="meta">com conteúdo</span>{% endif %}
+        </small></td>
+        <td class="ta-right">
+          {% if d.mounted %}
+            <a class="btn btn-sm" href="#vinculos">gerenciar vínculo</a>
+          {% elif d.empty %}
+            <form method="post" class="inline-form" action="{{ url_for('ftp.folder_remove') }}"
+                  onsubmit="return confirm('Remover a pasta vazia {{ d.rel }}?');">
+              <input type="hidden" name="sub" value="{{ d.rel }}">
+              <button class="btn btn-sm btn-danger" type="submit">remover (vazia)</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    {% if not folder.dirs %}
+      <tr><td colspan="3" class="meta">(sem subpastas{% if folder.files %} · {{ folder.files | length }} arquivo(s) soltos aqui{% endif %})</td></tr>
+    {% elif folder.files %}
+      <tr><td colspan="3" class="meta">… e {{ folder.files | length }} arquivo(s) soltos nesta pasta.</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+  <form method="post" class="form form-inline" action="{{ url_for('ftp.folder_create') }}">
+    <input type="hidden" name="parent" value="{{ folder.rel }}">
+    <label>Nova pasta em <code>ftp:/{{ folder.rel }}</code>
+      <input name="name" required pattern="[A-Za-z0-9_][A-Za-z0-9._-]*" placeholder="ex.: parceiros"
+             {% if not folder.writable %}disabled title="a dashboard não consegue escrever nesta pasta"{% endif %}>
+    </label>
+    <button class="btn btn-primary" type="submit" {% if not folder.writable %}disabled{% endif %}>Criar pasta</button>
+  </form>
+  <p class="meta">Só pastas <strong>vazias</strong> podem ser removidas por aqui: a dashboard nunca apaga
+    dados do FTP (use uma conta de <em>escrita</em> num cliente FTP para isso).</p>
+</section>
+
+{# ---------------------------------------------------------------- vínculos #}
+<section class="card" id="vinculos">
+  <div class="page-head"><h2>Vínculos — pastas do sistema espelhadas no FTP, sem copiar</h2></div>
+  <p class="meta">Um vínculo faz uma pasta <strong>qualquer do servidor</strong> aparecer dentro do FTP
+    <strong>sem ocupar espaço</strong> e com as mudanças visíveis <strong>na hora</strong>
+    (<em>bind mount</em>; um link simbólico não serviria — o chroot das contas o veria quebrado).
+    Só-leitura por padrão: nenhuma conta consegue alterar a origem. Sobrevive a reboot
+    (unidade <code>carbonara-ftp-links</code>). Prefira isto à cópia sempre que não precisar filtrar.</p>
+  {% if links %}
+    <table class="table">
+      <thead><tr><th>No FTP</th><th>Origem</th><th>Modo</th><th>Estado</th><th></th></tr></thead>
+      <tbody>
+      {% for l in links %}
+        <tr>
+          <td><code>ftp:/{{ l.dest }}</code>
+            <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=l.dest) }}">ver</a></td>
+          <td><code>{{ l.source }}</code>{% if not l.source_exists %} <small class="warn">(origem não existe)</small>{% endif %}</td>
+          <td><small>{% if l.manual %}fstab/manual{% elif l.mode == 'rw' %}<span class="warn">leitura e escrita</span>{% else %}só leitura{% endif %}</small></td>
+          <td>{% if l.mounted %}<span class="dot dot-online"></span> <small>montado</small>
+              {% else %}<span class="dot dot-offline"></span> <small>NÃO montado</small>{% endif %}</td>
+          <td class="ta-right">
+            {% if not l.manual %}
+              {% if not l.mounted and l.source_exists %}
+                <form method="post" class="inline-form" action="{{ url_for('ftp.link_create') }}">
+                  <input type="hidden" name="dest" value="{{ l.dest }}">
+                  <input type="hidden" name="source" value="{{ l.source }}">
+                  {% if l.mode == 'rw' %}<input type="hidden" name="rw" value="1">{% endif %}
+                  <button class="btn btn-sm" type="submit" {% if not info.can_write %}disabled{% endif %}>montar</button>
+                </form>
+              {% endif %}
+              <form method="post" class="inline-form" action="{{ url_for('ftp.link_remove') }}"
+                    onsubmit="return confirm('Desfazer o vínculo ftp:/{{ l.dest }}? Nada é apagado na origem.');">
+                <input type="hidden" name="dest" value="{{ l.dest }}">
+                <button class="btn btn-sm btn-danger" type="submit" {% if not info.can_write %}disabled{% endif %}>desfazer</button>
+              </form>
+            {% else %}<small class="meta">gerido fora da dashboard</small>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">Nenhum vínculo ainda.</p>
+  {% endif %}
+
+  <h3 class="h3-sub">Novo vínculo</h3>
+  <form method="post" class="form" action="{{ url_for('ftp.link_create') }}">
+    <div class="grid-2">
+      <div>
+        <label>Origem (pasta do servidor)
+          <input name="source" id="l-source" required placeholder="caminho absoluto, ex.: /mnt/data_8tb/carbonara-data-hub/incoming/km67"
+                 {% if not info.can_write %}disabled{% endif %}>
+        </label>
+        <div class="dir-picker" data-picker="l-source">
+          <div class="dir-picker-head">
+            <select data-role="area">
+              {% for key, label in pick_areas.items() %}<option value="{{ key }}" {% if key == 'sistema' %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+            <span class="mono" data-role="crumbs"></span>
+          </div>
+          <ul data-role="list"></ul>
+          <div class="dir-picker-foot">
+            <span class="meta" data-role="info"></span>
+            <button class="btn btn-sm" type="button" data-role="use">usar esta pasta como origem</button>
+          </div>
+        </div>
+        <small class="meta">Pelas áreas do hub o valor sai relativo (<code>incoming/km67</code>) — o
+          vínculo o converte para absoluto sob <code>{{ info.hub_base }}</code>.</small>
+      </div>
+      <div>
+        <label>Destino (subpasta do FTP, vazia ou nova)
+          <input name="dest" id="l-dest" required placeholder="ex.: dados/km67" {% if not info.can_write %}disabled{% endif %}>
+        </label>
+        <div class="dir-picker" data-picker="l-dest" data-require-sub="1">
+          <div class="dir-picker-head">
+            <select data-role="area"><option value="ftp">FTP (raiz servida)</option></select>
+            <span class="mono" data-role="crumbs"></span>
+          </div>
+          <ul data-role="list"></ul>
+          <div class="dir-picker-foot">
+            <span class="meta" data-role="info"></span>
+            <button class="btn btn-sm" type="button" data-role="use">usar esta pasta como destino</button>
+          </div>
+        </div>
+        <label class="check-row">
+          <input type="checkbox" name="rw" value="1" {% if not info.can_write %}disabled{% endif %}>
+          <span><strong>Permitir escrita</strong> pelo FTP (contas de escrita/upload presas a esta pasta
+            passam a ALTERAR a origem). Padrão desmarcado = só leitura.</span>
+        </label>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>Criar vínculo</button>
+    </div>
+    {% if not info.can_write %}<small class="meta">Vínculos exigem o <code>ftp-hub</code> instalado com a regra sudo (veja o aviso no topo).</small>{% endif %}
+  </form>
+</section>
+
 {# ---------------------------------------------------------------- publicações #}
 <section class="card">
   <div class="page-head">
@@ -217,6 +369,7 @@
   </details>
 </section>
 
+{% include '_dir_picker.html' %}
 <script>
   // Atualiza o estado das publicações sem recarregar a página (uma execução manual
   // costuma levar segundos a minutos; o admin quer ver "executando" virar "ok").

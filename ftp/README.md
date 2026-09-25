@@ -77,7 +77,45 @@ Contas criadas à mão antes do `ftp-hub` (ex.: `ftpmaster`, `ftpupload`) aparec
 "conta antiga": o perfil é **inferido** das diretivas do `user_conf`; a primeira operação
 pela dashboard passa a gravar o cabeçalho `# ftp-hub: perfil=… pasta=…`.
 
-### Publicações — modelo
+### Vínculos — espelhar sem copiar (preferido)
+
+Um **vínculo** faz uma pasta **qualquer do servidor** aparecer dentro do FTP **sem ocupar
+espaço** e com as mudanças visíveis **na hora**. É um *bind mount*, não um link simbólico:
+cada conta fica presa por `chroot`, e o kernel resolve o alvo de um symlink *dentro* da
+prisão — um link para fora da raiz do FTP aparece quebrado. O bind mount é um diretório
+de verdade na visão do chroot (é a mesma técnica que o `/etc/fstab` do servidor já usa
+para `carbonara-dados`).
+
+```bash
+sudo ftp-hub link dados/km67 /mnt/data_8tb/carbonara-data-hub/incoming/km67   # só leitura
+sudo ftp-hub link caixa/upload /srv/entrada --rw                               # leitura+escrita
+sudo ftp-hub unlink dados/km67          # desmonta e apaga o registro — nada é apagado na origem
+     ftp-hub links                      # TSV: sub origem modo montado origem_existe
+sudo ftp-hub link-apply                 # remonta tudo o que está registrado (usado no boot)
+```
+
+- Registro em `/etc/ftp-hub/links` (644 — a dashboard lê sem sudo); a unidade systemd
+  `carbonara-ftp-links.service` (criada pelo `install`, `Before=vsftpd`) remonta os vínculos
+  no boot. Não editamos o `/etc/fstab`.
+- **Só leitura por padrão** (`mount -o remount,bind,ro`): nem uma conta de escrita altera a
+  origem. `--rw` é explícito e a UI avisa.
+- O destino precisa ser uma subpasta **vazia ou nova** — um vínculo sobre uma pasta com
+  conteúdo o *esconderia*, então é recusado. A raiz do FTP inteira não pode ser vínculo.
+- Origens **recusadas**: `/`, `/etc`, `/home`, `/root`, `/boot`, `/proc`, `/sys`, `/dev`,
+  `/run`, `/var/log`, `/var/lib`, `/usr`, `/bin`, `/sbin`, `/lib*`, `/snap` (segredos e
+  pseudo-filesystems do host nunca vão para o FTP, mesmo só-leitura) e qualquer coisa já
+  dentro da raiz do FTP. A mesma lista vale para a cópia.
+- Na dashboard, o card **Vínculos** lista os registrados (montado / não montado / origem
+  ausente) e as montagens sob a raiz feitas fora dele (`fstab/manual`), com seletor de
+  pasta que navega o **sistema de arquivos inteiro**.
+
+### Pastas — organização
+
+O card **Pastas do FTP** cria subpastas (2775, legíveis por todas as contas) em qualquer
+nível da raiz e remove **somente pastas vazias** que não sejam vínculos — a dashboard nunca
+apaga dados do FTP. Não precisa de sudo (a raiz do FTP é gravável pelo usuário da dashboard).
+
+### Publicações (cópia) — quando copiar
 
 Cada regra copia uma **origem** (qualquer pasta do hub — `incoming/km67`, uma subpasta,
 ou um caminho absoluto; amanhã, a saída do tratamento de dados) para um **destino**

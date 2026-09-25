@@ -26,13 +26,28 @@
 #   sudo ftp-hub remove <usuario>                    # só a conta; NUNCA apaga dados
 #        ftp-hub list                                # TSV: usuario uid perfil pasta estado
 #        ftp-hub status                              # resumo do servidor FTP
+#   sudo ftp-hub link <sub> <pasta-do-sistema> [--rw] # VINCULA (bind mount) uma pasta
+#                                                    #   qualquer do sistema DENTRO do FTP,
+#                                                    #   sem copiar; só-leitura por padrão
+#   sudo ftp-hub unlink <sub>                        # desfaz o vínculo (nada é apagado)
+#        ftp-hub links                               # TSV: sub origem modo montado
+#   sudo ftp-hub link-apply                          # remonta os vínculos (usado no boot)
 #
 # A senha NUNCA passa pela linha de comando (apareceria em `ps`): vem pelo stdin
 # (--senha-stdin, primeira linha) ou é gerada (--gerar → impressa UMA vez no stdout,
 # na linha "SENHA=..."). O vsftpd relê o perfil a cada login: nada a reiniciar.
+#
+# Por que bind mount e não link simbólico: cada conta fica presa (chroot) à sua pasta,
+# e o kernel resolve o alvo de um symlink DENTRO da prisão — um link para fora da raiz
+# do FTP aparece quebrado. Um bind mount é um diretório de verdade na visão do chroot:
+# zero espaço extra, mudanças na origem visíveis na hora, e `ro` impede que uma conta
+# de escrita altere a origem. Os vínculos ficam em /etc/ftp-hub/links e são remontados
+# no boot pela unidade systemd carbonara-ftp-links (criada pelo `install`).
 set -eu
 
-FTP_HUB_VERSION="2026-09-25.1"
+FTP_HUB_VERSION="2026-09-26.1"
+LINKS_FILE=/etc/ftp-hub/links                        # registro dos vínculos (sub<TAB>origem<TAB>ro|rw)
+LINKS_UNIT=/etc/systemd/system/carbonara-ftp-links.service
 
 VSFTPD_CONF="${FTP_HUB_VSFTPD_CONF:-/etc/vsftpd.conf}"
 FTPUSERS="${FTP_HUB_FTPUSERS:-/etc/ftpusers}"      # lista de NEGAÇÃO do PAM (pam_listfile)
@@ -41,7 +56,7 @@ FTP_GROUP="${FTP_HUB_GROUP:-ftpgroup}"               # grupo primário das conta
 LOCK_FILE=/run/lock/ftp-hub.lock
 BIN_STABLE=/usr/local/bin/ftp-hub
 SUDOERS_FILE=/etc/sudoers.d/carbonara-dashboard-ftp
-SUBCMDS_SUDO="add remove senha perfil pasta desativar ativar"
+SUBCMDS_SUDO="add remove senha perfil pasta desativar ativar link unlink"
 
 die()       { echo "erro: $*" >&2; exit 1; }
 need_root() { [ "$(id -u)" = 0 ] || die "execute como root (sudo)"; }
@@ -367,6 +382,150 @@ cmd_status() {
     done
 }
 
+# --- Vínculos (bind mounts): pastas do sistema espelhadas DENTRO do FTP, sem copiar ---
+# Registro: $LINKS_FILE, uma linha por vínculo "sub<TAB>origem<TAB>ro|rw" (644 — a
+# dashboard lê sem sudo). A montagem em si só existe em memória: `link-apply` (chamado
+# pela unidade systemd no boot) remonta tudo o que está registrado.
+# Origens PROIBIDAS: raiz do sistema, pseudo-filesystems e as pastas que guardam
+# segredos/credenciais do host — mesmo só-leitura, expô-las pelo FTP seria um vazamento.
+FORBIDDEN_SRC="/ /proc /sys /dev /run /etc /boot /root /var/log /var/lib /usr /bin /sbin /lib /lib64 /snap /home"
+valid_src() {   # $1=origem absoluta; rc 0 = aceitável (imprime a origem normalizada)
+    s="${1:-}"
+    case "$s" in /*) : ;; *) return 1 ;; esac
+    case "$s" in *$'\n'*|*$'\t'*) return 1 ;; esac
+    s="$(printf '%s' "$s" | sed 's#//*#/#g; s#/$##')"; [ -n "$s" ] || return 1
+    case "/$s/" in */../*|*/./*) return 1 ;; esac
+    for f in $FORBIDDEN_SRC; do
+        [ "$s" = "$f" ] && return 1
+        case "$s" in "$f"/*) return 1 ;; esac
+    done
+    # Dentro da raiz do FTP não faz sentido (já está no FTP) e criaria laços.
+    case "$s" in "$FTP_ROOT"|"$FTP_ROOT"/*) return 1 ;; esac
+    printf '%s' "$s"
+}
+is_mounted() {  # $1=caminho absoluto → rc 0 se é ponto de montagem
+    if command -v mountpoint >/dev/null 2>&1; then mountpoint -q "$1"; return; fi
+    esc="$(printf '%s' "$1" | sed 's/ /\\040/g')"
+    awk -v m="$esc" '$2 == m {found=1} END {exit !found}' /proc/self/mounts 2>/dev/null
+}
+links_read() {  # ecoa o registro sem comentários/vazios
+    [ -r "$LINKS_FILE" ] || return 0
+    grep -Ev '^[[:space:]]*(#|$)' "$LINKS_FILE" || true
+}
+links_write() {  # STDIN = novo conteúdo; preserva o anterior em caso de falha
+    mkdir -p "$(dirname "$LINKS_FILE")"; chmod 755 "$(dirname "$LINKS_FILE")"
+    { echo "# ftp-hub: vínculos (bind mounts) dentro da raiz do FTP — sub<TAB>origem<TAB>ro|rw"
+      echo "# Editado por 'ftp-hub link/unlink'; remontado no boot por carbonara-ftp-links.service"
+      cat; } | write_replace "$LINKS_FILE"
+}
+do_mount() {  # $1=origem $2=destino $3=ro|rw
+    mount --bind "$1" "$2" || return 1
+    if [ "$3" = ro ]; then
+        mount -o remount,bind,ro "$2" || { umount "$2" 2>/dev/null || true; return 1; }
+    fi
+}
+
+cmd_link() {
+    need_root
+    sub_raw="${1:-}"; src_raw="${2:-}"; shift 2 2>/dev/null || die "uso: ftp-hub link <sub> <pasta-do-sistema> [--rw]"
+    mode=ro
+    while [ $# -gt 0 ]; do
+        case "$1" in --rw) mode=rw ;; --ro) mode=ro ;; *) die "argumento desconhecido: $1" ;; esac; shift
+    done
+    SUB="$(norm_sub "$sub_raw")" || die "subpasta de destino inválida"
+    [ -n "$SUB" ] || die "informe uma SUBPASTA do FTP como destino (a raiz inteira não pode ser um vínculo)"
+    SRC="$(valid_src "$src_raw")" || die "origem recusada: '$src_raw' (precisa ser um caminho absoluto fora da raiz do FTP e fora de /, /etc, /home, /proc, /sys, /dev, /run, /boot, /root, /var/log, /var/lib, /usr…)"
+    [ -d "$SRC" ] || die "a origem não existe ou não é uma pasta: $SRC"
+    dest="$(sub_dir "$SUB")"
+    with_lock
+    # Destino: pasta vazia (ou já o próprio vínculo, remontagem) — nunca esconder conteúdo.
+    if [ -e "$dest" ] && ! is_mounted "$dest"; then
+        [ -d "$dest" ] || die "o destino existe e não é uma pasta: $dest"
+        [ -z "$(ls -A "$dest" 2>/dev/null)" ] || die "o destino $dest não está vazio — um vínculo ESCONDERIA o que está lá. Escolha outra subpasta ou esvazie-a antes."
+    fi
+    if is_mounted "$dest"; then
+        umount "$dest" 2>/dev/null || die "não consegui desmontar o vínculo anterior em $dest (em uso?)"
+    fi
+    ensure_dir "$dest"
+    do_mount "$SRC" "$dest" "$mode" || die "mount --bind falhou ($SRC → $dest)"
+    { links_read | awk -F'\t' -v s="$SUB" '$1 != s'; printf '%s\t%s\t%s\n' "$SUB" "$SRC" "$mode"; } | links_write \
+        || { umount "$dest" 2>/dev/null || true; exit 1; }
+    echo "ok: $SRC vinculado em ftp:/$SUB ($mode) — sem cópia; alterações na origem aparecem na hora."
+    [ "$mode" = rw ] && echo "AVISO: modo rw — contas com escrita/upload presas a esta pasta ALTERAM a origem."
+    if [ ! -f "$LINKS_UNIT" ]; then
+        echo "AVISO: a unidade systemd de remontagem não existe — rode 'sudo ftp-hub install' para o vínculo sobreviver a um reboot."
+    fi
+    return 0
+}
+
+cmd_unlink() {
+    need_root
+    SUB="$(norm_sub "${1:-}")" || die "subpasta inválida"
+    [ -n "$SUB" ] || die "informe a subpasta do vínculo"
+    dest="$(sub_dir "$SUB")"
+    with_lock
+    registered="$(links_read | awk -F'\t' -v s="$SUB" '$1 == s' | head -1)"
+    [ -n "$registered" ] || is_mounted "$dest" || die "não há vínculo em ftp:/$SUB"
+    if is_mounted "$dest"; then
+        umount "$dest" 2>/dev/null || umount -l "$dest" || die "não consegui desmontar $dest"
+    fi
+    links_read | awk -F'\t' -v s="$SUB" '$1 != s' | links_write
+    rmdir "$dest" 2>/dev/null && echo "ok: vínculo desfeito e a pasta vazia $dest removida." \
+        || echo "ok: vínculo desfeito ($dest continua existindo)."
+    echo "Nada foi apagado na origem${registered:+ ($(printf '%s' "$registered" | cut -f2))}."
+}
+
+cmd_links() {  # sem root — TSV: sub origem modo montado(sim|nao) origem_existe(sim|nao)
+    links_read | while IFS=$'\t' read -r sub src mode; do
+        [ -n "$sub" ] || continue
+        d="$(sub_dir "$sub")"
+        m=nao; is_mounted "$d" && m=sim
+        e=nao; [ -d "$src" ] && e=sim
+        printf '%s\t%s\t%s\t%s\t%s\n' "$sub" "$src" "${mode:-ro}" "$m" "$e"
+    done
+}
+
+cmd_link_apply() {  # root; idempotente — usado no boot
+    need_root
+    n=0; f=0
+    while IFS=$'\t' read -r sub src mode; do
+        [ -n "$sub" ] || continue
+        d="$(sub_dir "$sub")"
+        if is_mounted "$d"; then continue; fi
+        if [ ! -d "$src" ]; then echo "aviso: origem ausente, vínculo ftp:/$sub não montado: $src" >&2; f=$((f+1)); continue; fi
+        ensure_dir "$d"
+        if do_mount "$src" "$d" "${mode:-ro}"; then n=$((n+1)); else echo "erro: falha ao montar ftp:/$sub ← $src" >&2; f=$((f+1)); fi
+    done < <(links_read)
+    echo "ok: $n vínculo(s) montado(s), $f falha(s)."
+    [ "$f" = 0 ]
+}
+
+install_links_unit() {  # chamado pelo install
+    command -v systemctl >/dev/null 2>&1 || { echo "aviso: sem systemd — os vínculos NÃO serão remontados no boot (use 'ftp-hub link-apply' num rc.local)."; return 0; }
+    cat > "$LINKS_UNIT.novo" <<EOF
+[Unit]
+Description=CARBONARA — remonta os vínculos (bind mounts) do FTP de distribuição
+After=local-fs.target remote-fs.target
+Before=vsftpd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$BIN_STABLE link-apply
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    if [ -f "$LINKS_UNIT" ] && cmp -s "$LINKS_UNIT.novo" "$LINKS_UNIT"; then
+        rm -f "$LINKS_UNIT.novo"
+    else
+        mv "$LINKS_UNIT.novo" "$LINKS_UNIT"; systemctl daemon-reload
+        echo "ok: unidade carbonara-ftp-links.service instalada (remonta os vínculos no boot)."
+    fi
+    systemctl enable carbonara-ftp-links.service >/dev/null 2>&1 || true
+    mkdir -p "$(dirname "$LINKS_FILE")"; [ -f "$LINKS_FILE" ] || : | links_write
+}
+
 # --- install: cópia estável + regra sudo para a dashboard ---------------------------
 detect_dash_user() {
     if command -v systemctl >/dev/null 2>&1; then
@@ -406,6 +565,7 @@ cmd_install() {
         echo "ok: raiz do FTP criada em $FTP_ROOT"
     fi
     echo "raiz do FTP: $FTP_ROOT (dono $DATA_OWNER:$DATA_GROUP)"
+    install_links_unit
 
     DASH_USER="${1:-}"
     if [ -z "$DASH_USER" ]; then
@@ -447,7 +607,7 @@ cmd_install() {
 }
 
 usage() {
-    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
     echo; echo "versão: $FTP_HUB_VERSION"
 }
 
@@ -462,6 +622,10 @@ case "${1:-help}" in
     remove)    shift; cmd_remove "$@" ;;
     list)      cmd_list ;;
     status)    cmd_status ;;
+    link)      shift; cmd_link "$@" ;;
+    unlink)    shift; cmd_unlink "$@" ;;
+    links)     cmd_links ;;
+    link-apply) cmd_link_apply ;;
     version|--version) echo "$FTP_HUB_VERSION" ;;
     help|-h|--help) usage ;;
     *) die "subcomando desconhecido: $1 (veja 'ftp-hub help')" ;;

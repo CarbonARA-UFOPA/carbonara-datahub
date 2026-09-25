@@ -768,6 +768,26 @@ privilege model as the collection layer:
   `list_accounts` must keep the SAME criteria as `is_ftp_account`. Port-listening
   check parses `ss -ltn`; never connect to the FTP (it would log a CONNECT per refresh).
   POSTs on the blueprint reject cross-site requests (`Sec-Fetch-Site`/`Origin`).
+- **Links (bind mounts) — the preferred "mirror without copying"** (`ftp-hub link <sub>
+  <abs-source> [--rw]` / `unlink` / `links` / `link-apply`; dashboard card *Vínculos*).
+  Symlinks do NOT work here: accounts are chrooted and the kernel resolves a symlink
+  target inside the jail, so a link to anything outside the FTP root shows as broken.
+  A bind mount is a real directory in the chroot's view: zero space, instant changes,
+  and `remount,bind,ro` (default) keeps write-profile accounts from touching the
+  source. Registry `/etc/ftp-hub/links` (`sub<TAB>source<TAB>ro|rw`, 644, read by the
+  dashboard without sudo); systemd unit `carbonara-ftp-links.service` (written by
+  `install`, `Before=vsftpd`) re-applies it at boot — we never edit `/etc/fstab`
+  (the pre-existing `carbonara-dados` fstab bind shows up as `fstab/manual`).
+  Guards in BOTH bash (`valid_src`/`FORBIDDEN_SRC`) and Python
+  (`ftp.source_forbidden`/`FORBIDDEN_SOURCES`, also applied to copy rules): source
+  absolute, exists, not `/`, not under `/etc /home /root /boot /proc /sys /dev /run
+  /var/log /var/lib /usr /bin /sbin /lib* /snap`, not inside the FTP root; dest is a
+  non-root subfolder that is EMPTY or new (mounting over content would hide it).
+  `unlink` never deletes anything (rmdir only if empty). The picker area `sistema`
+  browses the whole filesystem (admin-only, one level, forbidden roots hidden).
+- **Folders** (card *Pastas do FTP*, `ftp.create_folder`/`remove_folder`): direct
+  Python writes, no sudo (FTP root is writable by the dashboard user); `mkdir` 2775,
+  `rmdir` ONLY for empty non-mountpoint dirs — the dashboard never deletes FTP data.
 - **Publications** (`ftp.publications` in config.yaml, edited by the UI): rules
   `source` (relative to hub BASE or absolute — any folder, today `incoming/<id>/…`,
   tomorrow the processing output) → `dest` (subfolder of the FTP root; the root itself
