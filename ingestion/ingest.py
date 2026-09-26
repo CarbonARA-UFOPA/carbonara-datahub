@@ -491,6 +491,26 @@ def reprocess(conn, cfg: dict, station_id: str, file_key: str | None, apagar: bo
     log.info("offset zerado em %d arquivo(s) de %s", len(ids), station_id)
 
 
+def wait_for_schema(retries: int = 60, delay: int = 10):
+    """Conecta e espera o schema existir. No primeiro `docker compose up` a ingestão pode
+    subir antes de `migrate.sh` (ou do init) criar as tabelas — em vez de morrer e ficar
+    em restart, espera e tenta de novo (o healthcheck do db só cobre "aceita conexões")."""
+    for tentativa in range(1, retries + 1):
+        try:
+            conn = psycopg2.connect(**db_dsn())
+            conn.autocommit = False
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pipeline_runs LIMIT 1")
+            conn.rollback()
+            return conn
+        except psycopg2.OperationalError as exc:
+            log.warning("banco indisponível (%s) — nova tentativa em %ss", str(exc).strip()[:80], delay)
+        except psycopg2.errors.UndefinedTable:
+            log.warning("schema ainda não aplicado (rode ./database/migrate.sh) — aguardando %ss", delay)
+        time.sleep(delay)
+    raise SystemExit("banco/schema não ficaram disponíveis a tempo")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Ingestão CARBONARA (dirigida pela dashboard)")
     ap.add_argument("--once", action="store_true", help="roda um ciclo e sai")
@@ -511,8 +531,7 @@ def main() -> int:
     log.info("QA/QC global: %d check(s) (%s) + limites do registro por arquivo",
              len(global_qc.checks), qc_path)
 
-    conn = psycopg2.connect(**db_dsn())
-    conn.autocommit = False
+    conn = wait_for_schema()
     try:
         cfg = dash.load()
         if args.reprocess:

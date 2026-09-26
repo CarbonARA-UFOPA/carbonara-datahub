@@ -61,12 +61,20 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
     if fcfg.get("ingest") and api_client.configured(cfg):
         try:
             return series_from_api(cfg, station, fcfg)
+        except _SemDadosNoBanco as exc:
+            out = build_series_from_file(cfg, station, fcfg)
+            out.setdefault("problems", []).insert(0, f"{exc} — lendo o arquivo diretamente")
+            return out
         except Exception as exc:  # noqa: BLE001 — a API nunca derruba o gráfico
             out = build_series_from_file(cfg, station, fcfg)
             out.setdefault("problems", []).insert(
                 0, f"banco indisponível ({exc}) — lendo o arquivo diretamente")
             return out
     return build_series_from_file(cfg, station, fcfg)
+
+
+class _SemDadosNoBanco(RuntimeError):
+    """A API respondeu, mas ainda não há valores deste arquivo (ingestão não rodou)."""
 
 
 def _display_tz(cfg: dict, fcfg: dict):
@@ -108,12 +116,16 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
     for s in por_var.values():
         instantes.update(s["times"])
     ordenados = sorted(instantes)
+    if not ordenados:
+        raise _SemDadosNoBanco("o banco ainda não tem valores deste arquivo (a ingestão "
+                               "roda a cada ciclo; confira o chip 'no banco' na estação)")
     dts = [_dt.fromisoformat(t.replace("Z", "+00:00")).astimezone(tz).replace(tzinfo=None)
            for t in ordenados]
     ts_fmt = ts_display_format(dts)
     idx = {t: i for i, t in enumerate(ordenados)}
 
     problems: list[str] = []
+    sem_valores: list[str] = []
     variables = []
     for v, vid in numericas:
         vtype = v.get("type") or "numero"
@@ -129,8 +141,11 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
                 f = ts_display_format(dts_var)
                 entry["ts_res"] = "ms" if f == TS_DISPLAY_MS else "s" if f == TS_DISPLAY_S else "min"
         else:
-            problems.append(f"'{v['label']}' ({vid}) ainda não tem valores no banco")
+            sem_valores.append(f"{v['label']} ({vid})")
         variables.append(entry)
+    if sem_valores:
+        mostra = ", ".join(sem_valores[:4]) + (f" e mais {len(sem_valores) - 4}" if len(sem_valores) > 4 else "")
+        problems.append(f"{len(sem_valores)} variável(is) ainda sem valores no banco: {mostra}")
     # Colunas de texto não vão para o banco: último valor lido do próprio arquivo.
     textos = [v for v in variables_cfg if (v.get("type") or "numero") == "texto"]
     if textos:
