@@ -16,6 +16,22 @@ router = APIRouter(tags=["séries"])
 
 AGG_VIEWS = {"1h": "measurements_hourly", "1d": "measurements_daily"}
 
+# Último valor por variável SEM varrer a estação inteira: um DISTINCT ON sobre
+# measurements lê todas as linhas da estação (34 s em 11 M linhas — o PostgreSQL não
+# "salta" pelo índice). Aqui a lista de variáveis vem do agregado diário (barato) e, para
+# cada uma, um LATERAL com ORDER BY time DESC LIMIT 1 usa o índice
+# (station_id, variable_id, time DESC): milissegundos por variável.
+LATEST_SQL = """
+    SELECT d.variable_id, v.name, v.unit, l.time, l.value, l.quality
+    FROM (SELECT DISTINCT variable_id FROM measurements_daily
+          WHERE station_id = $1 AND ($2::text[] IS NULL OR variable_id = ANY($2))) d
+    JOIN variables v USING (variable_id)
+    JOIN LATERAL (SELECT m.time, m.value, m.quality FROM measurements m
+                  WHERE m.station_id = $1 AND m.variable_id = d.variable_id
+                  ORDER BY m.time DESC LIMIT 1) l ON true
+    ORDER BY d.variable_id
+"""
+
 
 @router.get("/series", summary="Série temporal de uma estação")
 async def get_series(
@@ -139,13 +155,7 @@ async def latest(station: str, vars: str | None = None, tz: str | None = None,
                  _who: auth.KeyInfo = Depends(auth.require("read"))):
     tzi = tzinfo_of(tz)
     variables = split_csv(vars)
-    rows = await db.pool().fetch(
-        """
-        SELECT DISTINCT ON (m.variable_id) m.variable_id, v.name, v.unit, m.time, m.value, m.quality
-        FROM measurements m JOIN variables v USING (variable_id)
-        WHERE m.station_id = $1 AND ($2::text[] IS NULL OR m.variable_id = ANY($2))
-        ORDER BY m.variable_id, m.time DESC
-        """, station, variables or None)
+    rows = await db.pool().fetch(LATEST_SQL, station, variables or None)
     return {"station": station, "tz": tz or "UTC", "values": [
         {"variable_id": r["variable_id"], "name": r["name"], "unit": r["unit"],
          "time": iso(r["time"], tzi), "value": r["value"], "quality": r["quality"]}

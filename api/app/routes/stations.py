@@ -64,13 +64,8 @@ async def get_station(station_id: str, _who: auth.KeyInfo = Depends(auth.optiona
 async def station_variables(station_id: str, tz: str | None = None,
                             _who: auth.KeyInfo = Depends(auth.require("read"))):
     tzi = tzinfo_of(tz)
-    rows = await db.pool().fetch(
-        """
-        SELECT DISTINCT ON (m.variable_id) m.variable_id, v.name, v.unit, m.time, m.value, m.quality
-        FROM measurements m JOIN variables v USING (variable_id)
-        WHERE m.station_id = $1
-        ORDER BY m.variable_id, m.time DESC
-        """, station_id)
+    from .series import LATEST_SQL   # mesma consulta indexada do /latest
+    rows = await db.pool().fetch(LATEST_SQL, station_id, None)
     return [{"variable_id": r["variable_id"], "name": r["name"], "unit": r["unit"],
              "last_time": iso(r["time"], tzi), "last_value": r["value"],
              "last_quality": r["quality"]} for r in rows]
