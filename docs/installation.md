@@ -266,7 +266,12 @@ leitura**, de forma incremental (offset por arquivo), e nunca move nem altera na
 3. Em **Estações → arquivo → Editar**, marque *Ingerir no banco*, informe o **fuso dos
    carimbos** do arquivo (vazio = UTC), escolha a **reamostragem** (média por 1/30 min para
    arquivos de alta frequência) e confira o **ID no banco** de cada variável. Salve.
-4. Acompanhe: `docker compose logs -f ingestion` e o chip "no banco" na página da estação.
+4. Na aba **Tratamento** (admin) revise, por estação e arquivo, o que vai para o banco e
+   as regras por variável: entra ou não, ID, faixa física (flag 2), salto máximo entre
+   leituras (flag 3) e leituras iguais seguidas = travado (flag 4).
+5. Acompanhe: `docker compose logs -f ingestion`, o chip "no banco" na página da estação e
+   a aba **Banco** (tamanho, tabelas, período coberto por estação/variável e consultas
+   SQL somente leitura).
 
 Reprocessar (ex.: depois de corrigir o fuso ou um ID):
 `docker compose exec ingestion python ingest.py --reprocess <estação> [--file <id>] --apagar`.

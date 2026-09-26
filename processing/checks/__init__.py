@@ -5,4 +5,4 @@ não importado é invisível para o registry (mesma regra dos parsers da ingest�
 """
 from .base import Check, get_check, register  # noqa: F401
 
-from . import range_check  # noqa: F401
+from . import persistence_check, range_check, spike_check  # noqa: F401

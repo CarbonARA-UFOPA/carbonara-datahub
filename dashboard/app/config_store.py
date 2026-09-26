@@ -735,3 +735,97 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
     if strip_regex:
         entry["strip_regex"] = strip_regex
     return entry, errors
+
+
+# --- Aba Tratamento: o que de cada arquivo vai para o banco e com quais regras -------
+def _num_or_none(raw, what: str, errors: list[str], integer: bool = False):
+    raw = (raw or "").strip().replace(",", ".")
+    if raw == "":
+        return None
+    try:
+        v = float(raw)
+        if integer:
+            v = int(v)
+            if v < 2:
+                raise ValueError
+        return v
+    except ValueError:
+        errors.append(f"{what}: valor inválido ('{raw}')" + (" — use um inteiro ≥ 2." if integer else "."))
+        return None
+
+
+def apply_treatment_form(form: dict, station: dict, fcfg: dict) -> tuple[dict, list[str]]:
+    """Aplica o formulário da aba Tratamento a UM arquivo monitorado: ingest/fuso/
+    reamostragem do arquivo e, por variável, inclusão no banco, ID, faixa física,
+    salto máximo e nº de leituras iguais (travado). Devolve (nova entrada, erros) —
+    nada mais do registro (parse, colunas, rótulos) é tocado aqui."""
+    errors: list[str] = []
+    out = copy.deepcopy(fcfg)
+    out["ingest"] = bool(form.get("ingest"))
+    tzname = (form.get("timezone") or "").strip() or None
+    if tzname and not valid_timezone(tzname):
+        errors.append(f"Fuso horário inválido: '{tzname}' (ex.: UTC, America/Santarem).")
+        tzname = fcfg.get("timezone")
+    out["timezone"] = tzname
+    resample = (form.get("resample") or "raw").strip().lower() or "raw"
+    if resample not in RESAMPLE_OPTIONS:
+        errors.append(f"Reamostragem inválida ('{resample}').")
+        resample = fcfg.get("resample") or "raw"
+    out["resample"] = resample
+
+    seen: set[str] = set()
+    for i, var in enumerate(out.get("variables") or []):
+        label = var.get("label") or str(var.get("column"))
+        var["ingest"] = bool(form.get(f"v{i}_ingest"))
+        vid_raw = (form.get(f"v{i}_id") or "").strip()
+        vid = variable_slug(vid_raw) if vid_raw else (var.get("variable_id") or variable_slug(label))
+        if not vid:
+            vid = variable_slug(f"col_{var.get('column')}")
+        if vid in seen:
+            errors.append(f"ID no banco repetido: '{vid}' ('{label}').")
+        seen.add(vid)
+        var["variable_id"] = vid
+        vmin = _num_or_none(form.get(f"v{i}_min"), f"Mín de '{label}'", errors)
+        vmax = _num_or_none(form.get(f"v{i}_max"), f"Máx de '{label}'", errors)
+        if vmin is not None and vmax is not None and vmin > vmax:
+            errors.append(f"'{label}': mínimo ({vmin}) maior que o máximo ({vmax}).")
+        var["min"], var["max"] = vmin, vmax
+        spike = _num_or_none(form.get(f"v{i}_spike"), f"Salto máximo de '{label}'", errors)
+        if spike is not None and spike <= 0:
+            errors.append(f"Salto máximo de '{label}' deve ser > 0.")
+            spike = None
+        stuck = _num_or_none(form.get(f"v{i}_stuck"), f"Leituras iguais de '{label}'", errors, integer=True)
+        # chaves sempre presentes (None = regra desligada) — o merge com o YAML preserva
+        var["qc_spike"] = spike
+        var["qc_stuck"] = stuck
+
+    if out["ingest"]:
+        ativos = {v["variable_id"] for v in out.get("variables") or [] if v.get("ingest") is not False}
+        for other in station.get("files") or []:
+            if other.get("id") == fcfg.get("id") or not other.get("ingest"):
+                continue
+            outros = {(v.get("variable_id") or variable_slug(v.get("label") or ""))
+                      for v in other.get("variables") or [] if v.get("ingest") is not False}
+            colisao = sorted(ativos & outros)
+            if colisao:
+                errors.append(
+                    f"ID(s) já usados pelo arquivo '{other.get('id')}' desta estação: "
+                    f"{', '.join(colisao)} — mude o ID ou tire a variável do banco num deles.")
+    return out, errors
+
+
+def carry_treatment(old_vars: list, new_vars: list) -> list:
+    """O formulário do ARQUIVO reconstrói a lista de variáveis a partir das colunas, e
+    não conhece as escolhas da aba Tratamento (ingest por variável, salto, travado).
+    Reaproveita-as da entrada antiga casando por coluna (ou por ID), para que salvar o
+    parse não apague o tratamento."""
+    por_col = {str(v.get("column")): v for v in old_vars or []}
+    por_id = {v.get("variable_id"): v for v in old_vars or [] if v.get("variable_id")}
+    for nv in new_vars:
+        old = por_col.get(str(nv.get("column"))) or por_id.get(nv.get("variable_id"))
+        if not old:
+            continue
+        for k in ("ingest", "qc_spike", "qc_stuck"):
+            if k in old and k not in nv:
+                nv[k] = old[k]
+    return new_vars

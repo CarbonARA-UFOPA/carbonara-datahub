@@ -109,6 +109,10 @@ class ColumnSpec:
     unit: str | None
     vmin: float | None
     vmax: float | None
+    # tratamento (aba Tratamento da dashboard): salto máximo entre leituras e nº de
+    # leituras iguais que caracteriza sensor travado — None = regra desligada
+    spike: float | None = None
+    stuck: int | None = None
 
 
 def resolve_columns(fcfg: dict, header: list[str] | None, row_len: int) -> list[ColumnSpec]:
@@ -116,7 +120,7 @@ def resolve_columns(fcfg: dict, header: list[str] | None, row_len: int) -> list[
     out = []
     for var in fcfg.get("variables") or []:
         vid = variable_id_of(var)
-        if not vid:
+        if not vid or var.get("ingest") is False:     # variável monitorada mas fora do banco
             continue
         out.append(ColumnSpec(
             variable_id=vid,
@@ -127,6 +131,8 @@ def resolve_columns(fcfg: dict, header: list[str] | None, row_len: int) -> list[
             unit=var.get("unit"),
             vmin=var.get("min"),
             vmax=var.get("max"),
+            spike=var.get("qc_spike"),
+            stuck=var.get("qc_stuck"),
         ))
     return out
 

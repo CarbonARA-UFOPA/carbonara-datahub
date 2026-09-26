@@ -619,6 +619,20 @@ computes live station status. Viewing is open; edits require the admin login
   (time, station, variable)). `station_detail` shows a "no banco" chip per ingested file
   from `/files`. `/api-keys` (admin) lists/creates/revokes keys via the API. The dashboard
   is the ONLY place that decides what enters the DB — keep it that way.
+- **Tratamento tab** (`/tratamento`, admin; `config_store.apply_treatment_form`): ONE
+  place to decide what enters the DB and with which rules — per file (`ingest`,
+  `timezone`, `resample`) and per variable (`ingest` true/false = monitored but kept out
+  of the DB, `variable_id`, `min`/`max` → flag 2, `qc_spike` = max delta between
+  consecutive readings → flag 3, `qc_stuck` = N identical readings → flag 4). One form
+  per file posts to `/tratamento/<station>/<file>`. The file form (`file_update`) must
+  keep these per-variable keys when it rebuilds `variables[]` — `carry_treatment` matches
+  by column/ID; don't drop it. Checks live in `processing/checks/{spike,persistence}_check.py`
+  (stateful per station+variable; the ingestion reads each file in order).
+- **Banco tab** (`/banco`, admin): read-only DB view through the API's `/admin/db/*`
+  (overview: size, tables, hypertable chunks/compression, continuous aggregates, jobs,
+  runs, replication slots; coverage: per station/variable period and counts from
+  `measurements_daily`; `query`: SELECT/WITH/EXPLAIN only, one statement, READ ONLY
+  transaction, 20 s timeout, ≤500 rows, keyword blocklist). Never add write paths there.
 - **Config-driven** (`dashboard/config.yaml`, gitignored; example versioned): the UI
   itself edits it via `ConfigStore` (atomic write: tempfile + `os.replace`, under a
   lock). Relative `data_root` resolves against the **config file's directory**, not cwd.

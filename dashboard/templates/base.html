@@ -23,6 +23,8 @@
       {% if is_admin %}
         <a href="{{ url_for('hub.index') }}" class="nav-link{{ ' active' if request.path.startswith('/hub') }}">Coleta</a>
         <a href="{{ url_for('ftp.index') }}" class="nav-link{{ ' active' if request.path.startswith('/ftp') }}">FTP</a>
+        <a href="{{ url_for('pages.treatment') }}" class="nav-link{{ ' active' if request.path.startswith('/tratamento') }}">Tratamento</a>
+        <a href="{{ url_for('pages.banco') }}" class="nav-link{{ ' active' if request.path.startswith('/banco') }}">Banco</a>
         <a href="{{ url_for('pages.api_keys') }}" class="nav-link{{ ' active' if request.path.startswith('/api-keys') }}">API</a>
         <a href="{{ url_for('pages.settings') }}" class="nav-link{{ ' active' if request.path.startswith('/settings') }}">Configurações</a>
       {% endif %}

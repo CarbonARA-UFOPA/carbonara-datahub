@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Tratamento · CARBONARA{% endblock %}
+{% block content %}
+<h1>Tratamento — o que vai para o banco e com quais regras</h1>
+
+<section class="card help-card">
+  Por <strong>arquivo monitorado</strong>: se ele é ingerido, o fuso dos carimbos e a
+  reamostragem. Por <strong>variável</strong>: se entra no banco, o ID da série e as regras
+  de qualidade. As regras nunca alteram o valor — só marcam <code>quality</code>:
+  <code>2</code> fora da faixa física (Mín/Máx) · <code>3</code> salto maior que o aceitável
+  entre leituras seguidas · <code>4</code> valor travado (N leituras iguais seguidas) ·
+  <code>1</code> valor não numérico (parse). Vazio = regra desligada. A ingestão relê estas
+  escolhas a cada ciclo; para reaplicá-las ao histórico já gravado:
+  <code>docker compose exec ingestion python ingest.py --reprocess &lt;estação&gt; --file &lt;arquivo&gt; --apagar</code>.
+</section>
+
+{% if ledger.get('_error') %}
+<div class="flash flash-error">Estado da ingestão indisponível: {{ ledger['_error'] }}</div>
+{% elif not api_ok %}
+<div class="flash flash-error">API não configurada (<a href="{{ url_for('pages.settings') }}">Configurações</a>) — o estado "no banco" não aparece, mas as escolhas são salvas.</div>
+{% endif %}
+
+{% for station in cfg.stations %}
+<section class="card">
+  <div class="page-head">
+    <h2>{{ station.name or station.id }} <small>({{ station.id }})</small></h2>
+    <a class="btn" href="{{ url_for('pages.station_detail', station_id=station.id) }}">Ver estação</a>
+  </div>
+  {% if not station.files %}
+    <p class="empty">Nenhum arquivo monitorado — cadastre em <em>Estações → Editar</em>.</p>
+  {% endif %}
+  {% for f in station.files %}
+    {% set lg = ledger.get((station.id, f.id)) %}
+    <form method="post" id="{{ station.id }}-{{ f.id }}" class="form treat-file"
+          action="{{ url_for('pages.treatment_save', station_id=station.id, file_id=f.id) }}">
+      <h3 style="margin:.6rem 0 .2rem">
+        <span class="file-chip">{{ f.alias or f.id }}</span>
+        <small><code>{{ f.path }}</code></small>
+        {% if f.get('ingest') %}
+          <span class="ingest-chip">🗄 no banco{% if lg %}: {{ '{:,}'.format(lg.n_values).replace(',', '.') }} valor(es)
+            {%- if lg.last_time %} · último {{ lg.last_time[:16] | replace('T', ' ') }} UTC{% endif %}
+            {%- if lg.pending %} · {{ (lg.pending / 1024) | round(0) | int }} kB pendentes{% endif %}
+            {%- if lg.errors %} · <span class="warn">erro: {{ lg.errors[0] }}</span>{% endif %}
+          {%- else %} (ainda sem leitura){% endif %}</span>
+        {% else %}<span class="meta">— fora do banco</span>{% endif %}
+      </h3>
+      <div class="grid-3">
+        <label class="check-row"><input type="checkbox" name="ingest" value="1" {{ 'checked' if f.get('ingest') }}>
+          <span><strong>Ingerir no banco</strong></span></label>
+        <label>Fuso dos carimbos
+          <input name="timezone" list="tz-list" value="{{ f.timezone or '' }}" placeholder="vazio = UTC"></label>
+        <label>Reamostrar
+          {% set rs = f.resample or 'raw' %}
+          <select name="resample">
+            <option value="raw" {{ 'selected' if rs == 'raw' }}>Não — cada registro</option>
+            <option value="1min" {{ 'selected' if rs == '1min' }}>Média por 1 min</option>
+            <option value="30min" {{ 'selected' if rs == '30min' }}>Média por 30 min</option>
+          </select></label>
+      </div>
+      {% if f.variables %}
+      <table class="table treat-vars">
+        <thead><tr><th>Banco</th><th>Variável</th><th>Tipo</th><th>ID no banco</th>
+          <th>Mín</th><th>Máx</th><th title="salto máximo entre leituras seguidas (flag 3)">Salto máx.</th>
+          <th title="nº de leituras iguais seguidas que marca sensor travado (flag 4)">Travado (N)</th></tr></thead>
+        <tbody>
+        {% for v in f.variables %}
+          {% set i = loop.index0 %}
+          {% set vt = v.type or 'numero' %}
+          <tr class="{{ 'meta' if vt == 'texto' }}">
+            <td>{% if vt == 'texto' %}<span class="meta" title="texto não vira série">—</span>
+                {% else %}<input type="checkbox" name="v{{ i }}_ingest" value="1" {{ 'checked' if v.get('ingest') is not false }}>{% endif %}</td>
+            <td>{{ v.label }} {% if v.unit %}<small class="meta">({{ v.unit }})</small>{% endif %}
+                <small class="meta">col {{ v.column }}</small></td>
+            <td><small>{{ vt }}</small></td>
+            <td><input name="v{{ i }}_id" value="{{ v.variable_id or '' }}" placeholder="auto" class="num-input" {{ 'disabled' if vt == 'texto' }}></td>
+            <td><input name="v{{ i }}_min" value="{{ v.min if v.min is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
+            <td><input name="v{{ i }}_max" value="{{ v.max if v.max is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
+            <td><input name="v{{ i }}_spike" value="{{ v.qc_spike if v.qc_spike is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
+            <td><input name="v{{ i }}_stuck" value="{{ v.qc_stuck if v.qc_stuck is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <p class="empty">Sem variáveis mapeadas — mapeie as colunas em
+          <a href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar arquivo</a>.</p>
+      {% endif %}
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Salvar {{ f.alias or f.id }}</button>
+        <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar parse/colunas</a>
+      </div>
+    </form>
+  {% endfor %}
+</section>
+{% endfor %}
+
+<datalist id="tz-list">
+  <option value="UTC"><option value="America/Santarem"><option value="America/Belem">
+  <option value="America/Manaus"><option value="America/Sao_Paulo"><option value="America/Cuiaba">
+</datalist>
+{% endblock %}

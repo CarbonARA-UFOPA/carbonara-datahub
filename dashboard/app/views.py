@@ -524,7 +524,9 @@ def file_update(station_id, file_id):
         for e in errors:
             flash(e, "error")
         return render_template("file_form.html", station=station, fcfg=fcfg), 400
-    # merge sobre a entry existente: chaves adicionadas à mão no YAML sobrevivem à UI
+    # merge sobre a entry existente: chaves adicionadas à mão no YAML sobrevivem à UI;
+    # as escolhas da aba Tratamento por variável também (casadas por coluna/ID).
+    entry["variables"] = config_store.carry_treatment(fcfg.get("variables") or [], entry["variables"])
     station["files"] = [
         {**f, **entry, "id": file_id} if f["id"] == file_id else f
         for f in station["files"]
@@ -601,3 +603,117 @@ def api_keys_revoke(key_id: int):
     except api_client.ApiError as exc:
         flash(f"Não foi possível revogar: {exc}", "error")
     return redirect(url_for("pages.api_keys"))
+
+
+# --- Aba Tratamento --------------------------------------------------------------
+# UM lugar para decidir o que vai para o banco e com quais regras: por estação e
+# arquivo (ingerir? fuso? reamostrar?) e por variável (entra? ID, faixa física, salto
+# máximo, leituras iguais = travado). Grava no MESMO registro que o formulário do
+# arquivo usa — a ingestão relê o config a cada ciclo.
+def _ledger_by_file(cfg: dict) -> dict:
+    """{(station_id, file_key): resumo} do ledger da ingestão, via API (tolerante)."""
+    out: dict = {}
+    if not api_client.configured(cfg):
+        return out
+    try:
+        rows = api_client.get(cfg, "/files", timeout=6) or []
+    except api_client.ApiError as exc:
+        return {"_error": str(exc)}
+    for row in rows:
+        acc = out.setdefault((row["station_id"], row["file_key"]), {
+            "files": 0, "n_values": 0, "pending": 0, "last_time": None, "errors": []})
+        acc["files"] += 1
+        acc["n_values"] += row.get("values_total") or 0
+        acc["pending"] += row.get("pending_bytes") or 0
+        if row.get("last_time") and (acc["last_time"] is None or row["last_time"] > acc["last_time"]):
+            acc["last_time"] = row["last_time"]
+        if row.get("status") == "error":
+            acc["errors"].append(row.get("error"))
+    return out
+
+
+@pages.get("/tratamento")
+@admin_required
+def treatment():
+    cfg = _load()
+    ledger = _ledger_by_file(cfg)
+    return render_template("tratamento.html", cfg=cfg, ledger=ledger,
+                           api_ok=api_client.configured(cfg))
+
+
+@pages.post("/tratamento/<station_id>/<file_id>")
+@admin_required
+def treatment_save(station_id, file_id):
+    cfg = _load()
+    station = _station_or_404(cfg, station_id)
+    fcfg = config_store.get_file(station, file_id)
+    if not fcfg:
+        abort(404)
+    novo, errors = config_store.apply_treatment_form(request.form, station, fcfg)
+    if errors:
+        for e in errors:
+            flash(f"{station_id}/{file_id}: {e}", "error")
+    else:
+        station["files"] = [novo if f["id"] == file_id else f for f in station["files"]]
+        _save(cfg)
+        flash(f"Tratamento de {station_id}/{file_id} salvo"
+              + (" — no banco." if novo.get("ingest") else " — fora do banco."), "ok")
+    return redirect(url_for("pages.treatment") + f"#{station_id}-{file_id}")
+
+
+# --- Aba Banco (visão somente leitura) -------------------------------------------
+_SQL_EXEMPLOS = [
+    ("Últimos valores de uma estação",
+     "SELECT variable_id, time, value, quality FROM measurements\n"
+     "WHERE station_id = 'eddyfarm' ORDER BY time DESC LIMIT 50"),
+    ("Contagem por estação e variável",
+     "SELECT station_id, variable_id, count(*) AS n, min(time), max(time)\n"
+     "FROM measurements GROUP BY 1, 2 ORDER BY 1, 2"),
+    ("Média diária (agregado contínuo)",
+     "SELECT bucket, variable_id, avg_value, n_samples, n_flagged FROM measurements_daily\n"
+     "WHERE station_id = 'eddyfarm' ORDER BY bucket DESC LIMIT 100"),
+    ("Valores com flag de qualidade",
+     "SELECT quality, variable_id, count(*) FROM measurements\n"
+     "WHERE quality <> 0 GROUP BY 1, 2 ORDER BY 3 DESC"),
+    ("Ledger da ingestão",
+     "SELECT station_id, file_key, relpath, size_bytes, bytes_ingested, rows_total, last_time, status\n"
+     "FROM ingest_files ORDER BY station_id, relpath"),
+    ("Tamanho dos chunks da hypertable",
+     "SELECT chunk_name, range_start, range_end, is_compressed FROM timescaledb_information.chunks\n"
+     "WHERE hypertable_name = 'measurements' ORDER BY range_start DESC LIMIT 30"),
+]
+
+
+def _banco_context(cfg: dict) -> dict:
+    ctx = {"overview": None, "coverage": None, "error": None, "exemplos": _SQL_EXEMPLOS,
+           "api_ok": api_client.configured(cfg)}
+    if not ctx["api_ok"]:
+        return ctx
+    try:
+        ctx["overview"] = api_client.get(cfg, "/admin/db/overview", timeout=20)
+        ctx["coverage"] = api_client.get(cfg, "/admin/db/coverage", timeout=20)
+    except api_client.ApiError as exc:
+        ctx["error"] = str(exc)
+    return ctx
+
+
+@pages.get("/banco")
+@admin_required
+def banco():
+    cfg = _load()
+    return render_template("banco.html", cfg=cfg, sql="", result=None, **_banco_context(cfg))
+
+
+@pages.post("/banco/query")
+@admin_required
+def banco_query():
+    cfg = _load()
+    sql = (request.form.get("sql") or "").strip()
+    result = None
+    ctx = _banco_context(cfg)
+    if sql and ctx["api_ok"]:
+        try:
+            result = api_client.post(cfg, "/admin/db/query", {"sql": sql, "max_rows": 200}, timeout=40)
+        except api_client.ApiError as exc:
+            result = {"error": str(exc)}
+    return render_template("banco.html", cfg=cfg, sql=sql, result=result, **ctx)

@@ -22,6 +22,8 @@ auditável — reprovada só significa `quality != 0`.
 | `0`  | ok | — |
 | `1`  | valor inválido no parse (ex.: não numérico) | parser (ingestão) |
 | `2`  | fora da faixa física válida | `range_check` |
+| 3 | salto maior que o aceitável entre leituras consecutivas (`qc_spike` no Tratamento) | `spike_check` |
+| 4 | valor travado: N leituras iguais seguidas (`qc_stuck` no Tratamento) | `persistence_check` |
 | `3+` | reservado (spike, sensor travado, calibração, ...) | regras futuras |
 
 Consumidores devem filtrar por `quality = 0` para usar só dados aprovados.

@@ -10,7 +10,9 @@ Convenção de flags na coluna ``measurements.quality``:
     0  = ok
     1  = valor inválido no parse (atribuído pelo PARSER, ex.: não numérico)
     2  = fora da faixa física válida (range_check)
-    3+ = reservado para regras futuras (spike, sensor travado, calibração, ...)
+    3  = salto maior que o aceitável entre leituras consecutivas (spike_check)
+    4  = valor travado: n leituras iguais seguidas (persistence_check)
+    5+ = reservado para regras futuras (calibração, ...)
 
 O pipeline nunca sobrescreve um flag já atribuído pelo parse (quality != 0) e o
 primeiro check violado decide o flag — ordene os checks no config do mais grave

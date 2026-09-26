@@ -146,7 +146,8 @@ def upsert_monitored_file(cur, station_id: str, fcfg: dict, cols: list[records.C
         "separator", "quotechar", "decimal", "skip_header_lines", "header_line",
         "timestamp", "strip_regex", "truncate_chars", "hour_offset")}
     variables = [{"variable_id": c.variable_id, "label": c.label, "unit": c.unit,
-                  "min": c.vmin, "max": c.vmax, "type": c.vtype, "column": c.column}
+                  "min": c.vmin, "max": c.vmax, "type": c.vtype, "column": c.column,
+                  "qc_spike": c.spike, "qc_stuck": c.stuck}
                  for c in cols]
     cur.execute(
         """
@@ -213,9 +214,15 @@ def build_qc(cols: list[records.ColumnSpec], global_qc: QualityPipeline) -> Qual
             continue
         limites[c.variable_id] = {"min": c.vmin if c.vmin is not None else float("-inf"),
                                   "max": c.vmax if c.vmax is not None else float("inf")}
+    saltos = {c.variable_id: {"max_delta": c.spike} for c in cols if c.spike is not None}
+    travados = {c.variable_id: {"n": c.stuck} for c in cols if c.stuck}
     checks = []
     if limites:
         checks.append(get_check("range_check", {"flag": 2, "variables": limites}))
+    if saltos:
+        checks.append(get_check("spike_check", {"flag": 3, "variables": saltos}))
+    if travados:
+        checks.append(get_check("persistence_check", {"flag": 4, "variables": travados}))
     checks.extend(global_qc.checks)
     return QualityPipeline(checks)
 
