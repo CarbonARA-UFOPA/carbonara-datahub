@@ -164,14 +164,14 @@ async def diagnostics(_who: auth.KeyInfo = Depends(auth.require("admin"))):
     recs = await pool.fetch(
         """
         WITH ult AS (SELECT station_id, variable_id, max(bucket) AS ultimo FROM measurements_daily GROUP BY 1, 2),
-             ing AS (SELECT station_id, max(last_ingested) AS ing FROM ingest_files GROUP BY 1)
-        SELECT u.station_id, u.variable_id, u.ultimo, i.ing AS ultima_ingestao
+             ing AS (SELECT station_id, max(mtime) AS arq FROM ingest_files GROUP BY 1)
+        SELECT u.station_id, u.variable_id, u.ultimo, i.arq AS arquivo_modificado
         FROM ult u JOIN ing i USING (station_id)
-        WHERE u.ultimo < now() - interval '3 days' AND i.ing > now() - interval '1 day'
+        WHERE u.ultimo < now() - interval '3 days' AND i.arq > now() - interval '1 day'
         ORDER BY u.ultimo
         """)
-    cols = ["station_id", "variable_id", "ultimo", "ultima_ingestao"]
-    checks.append(_check("stale_series", "Séries paradas (arquivo chega, variável não avança há 3 dias)", "warn" if recs else "ok",
+    cols = ["station_id", "variable_id", "ultimo", "arquivo_modificado"]
+    checks.append(_check("stale_series", "Séries paradas (arquivo ainda cresce, variável não avança há 3 dias)", "warn" if recs else "ok",
                          f"{len(recs)} série(s) parada(s)" if recs else "séries acompanham a ingestão",
                          rows_of(recs, cols), cols, "Sensor desligado, coluna vazia ou variável removida do arquivo pelo datalogger."))
 
@@ -241,7 +241,8 @@ async def diagnostics(_who: auth.KeyInfo = Depends(auth.require("admin"))):
         """
         SELECT j.job_id, j.proc_name, j.hypertable_name, s.last_run_status, s.last_run_started_at, s.total_failures
         FROM timescaledb_information.jobs j JOIN timescaledb_information.job_stats s USING (job_id)
-        WHERE (s.last_run_status IS NOT NULL AND s.last_run_status <> 'Success') OR s.total_failures > 0
+        WHERE j.proc_name NOT LIKE 'policy_telemetry%'
+          AND ((s.last_run_status IS NOT NULL AND s.last_run_status <> 'Success') OR s.total_failures > 0)
         """)
     cols = ["job_id", "proc_name", "hypertable_name", "last_run_status", "last_run_started_at", "total_failures"]
     checks.append(_check("jobs", "Tarefas automáticas com falha", "warn" if recs else "ok",
