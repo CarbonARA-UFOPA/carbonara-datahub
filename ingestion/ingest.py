@@ -64,6 +64,7 @@ logging.basicConfig(
 log = logging.getLogger("ingestion")
 
 RESAMPLE_SECONDS = {"raw": 0, "1min": 60, "30min": 1800}
+CHUNK_BYTES = int(os.environ.get("INGEST_CHUNK_BYTES", str(8 * 1024 * 1024)))
 
 
 # --- Configuração ---------------------------------------------------------------
@@ -376,33 +377,46 @@ def process_file(conn, station_id: str, fcfg: dict, path: Path, tzname: str | No
         return 0
 
     t0 = time.time()
+    inicio = offset
+    tot_rows = tot_ins = tot_bad = 0
     try:
-        lines, new_offset, stats = read_new_data(path, fcfg, offset, tzname, cols, max_bytes, closed)
-        rows = []
-        for ts, vid, val, qparse in lines:
-            q = qc.evaluate(_M(ts, station_id, vid, val, qparse))
-            rows.append((ts, station_id, vid, val, q, path.name, file_id))
-        with conn.cursor() as cur:
-            inserted = insert_measurements(cur, rows)
-            cur.execute(
-                """
-                UPDATE ingest_files SET
-                    size_bytes = %s, mtime = to_timestamp(%s), head_sha256 = %s,
-                    bytes_ingested = %s, rows_total = rows_total + %s,
-                    values_total = values_total + %s, bad_timestamps = bad_timestamps + %s,
-                    last_time = COALESCE(%s, last_time), status = 'ok', error = NULL,
-                    last_ingested = now()
-                WHERE file_id = %s
-                """,
-                (st.st_size, st.st_mtime, sig, new_offset, stats["rows"], inserted,
-                 stats["bad_ts"], stats["last_time"], file_id),
-            )
-        conn.commit()
-        lidos = new_offset - offset
-        if stats["rows"] or lidos:
+        # Em FATIAS (INGEST_CHUNK_BYTES), cada uma com seu commit: um .dat de dezenas de
+        # MB com dezenas de variáveis viraria milhões de tuplas de uma vez — e o
+        # container tem 1 GB. O offset no ledger avança fatia a fatia, então uma
+        # interrupção no meio retoma de onde parou. max_bytes limita o total por ciclo.
+        while offset < st.st_size and (offset - inicio) < max_bytes:
+            fatia = min(CHUNK_BYTES, max_bytes - (offset - inicio))
+            lines, new_offset, stats = read_new_data(path, fcfg, offset, tzname, cols, fatia, closed)
+            rows = []
+            for ts, vid, val, qparse in lines:
+                q = qc.evaluate(_M(ts, station_id, vid, val, qparse))
+                rows.append((ts, station_id, vid, val, q, path.name, file_id))
+            with conn.cursor() as cur:
+                inserted = insert_measurements(cur, rows)
+                cur.execute(
+                    """
+                    UPDATE ingest_files SET
+                        size_bytes = %s, mtime = to_timestamp(%s), head_sha256 = %s,
+                        bytes_ingested = %s, rows_total = rows_total + %s,
+                        values_total = values_total + %s, bad_timestamps = bad_timestamps + %s,
+                        last_time = COALESCE(%s, last_time), status = 'ok', error = NULL,
+                        last_ingested = now()
+                    WHERE file_id = %s
+                    """,
+                    (st.st_size, st.st_mtime, sig, new_offset, stats["rows"], inserted,
+                     stats["bad_ts"], stats["last_time"], file_id),
+                )
+            conn.commit()
+            tot_rows += stats["rows"]; tot_ins += inserted; tot_bad += stats["bad_ts"]
+            if new_offset <= offset:
+                break                      # nada consumido (bucket aberto / linha parcial)
+            offset = new_offset
+        lidos = offset - inicio
+        if tot_rows or lidos:
             log.info("%s/%s: +%d bytes, %d registro(s), %d valor(es) novo(s), %d carimbo(s) "
-                     "inválido(s), %.1fs", station_id, path.name, lidos, stats["rows"], inserted,
-                     stats["bad_ts"], time.time() - t0)
+                     "inválido(s), %.1fs%s", station_id, path.name, lidos, tot_rows, tot_ins,
+                     tot_bad, time.time() - t0,
+                     " (continua no próximo ciclo)" if offset < st.st_size else "")
         return max(lidos, 0)
     except Exception as exc:  # noqa: BLE001 — isola o arquivo, nunca derruba o loop
         conn.rollback()
