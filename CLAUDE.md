@@ -644,6 +644,15 @@ computes live station status. Viewing is open; edits require the admin login
   **station → data type → file** (a tower has a met datalogger, a flux system, a radiometer,
   a profile… each with files). Editable in the file form and in Tratamento; the Tratamento
   index groups files by type; station detail shows a purple type chip.
+- **`table_name`** (optional, per file; migration 0003; `config_store.table_name_of`): the
+  name of the file's view in the station schema, default = registration id. Needed because
+  a dynamic pattern created from a concrete file inherits a date-bearing id; the API accepts
+  either file_key or table_name in the danger endpoints (`_registration`). Renaming moves the
+  view; the old one is found by the `[<file_key>]` tag in the view comment. Identifiers may
+  start with a digit (quoted everywhere) — `IDENT_RE` allows it.
+- **QC precedence**: a variable with min/max in the registration is REMOVED from the global
+  `processing/config.yaml` range check (`build_qc`), otherwise a generic id such as
+  `pressure` (surface 850–1100 hPa) would flag a radiosonde profile (5–1000 hPa).
 - **Banco tab** (`/banco`, admin, phpMyAdmin-like, through the API's `/admin/db/*`):
   "bancos" = PostgreSQL SCHEMAS. `public` = the system (measurements, stations, ledger…)
   — read-only. **One schema per station AND data type** (`<station>__<data_type>`, e.g.
