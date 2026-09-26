@@ -53,6 +53,7 @@ for cand in (_HERE, _HERE.parent):
         sys.path.insert(0, str(cand))
 
 from carbonara_parse import paths, records  # noqa: E402
+from carbonara_parse.timeparse import valid_timezone  # noqa: E402
 from processing import QualityPipeline  # noqa: E402
 from processing.checks import get_check  # noqa: E402
 
@@ -95,15 +96,23 @@ class DashboardConfig:
             log.warning("config da dashboard não encontrado: %s", self.path)
             return self._cfg
         if mtime != self._mtime:
-            raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+            try:
+                raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+                if not isinstance(raw, dict):
+                    raise ValueError("raiz do YAML não é um mapeamento")
+                stations = [st for st in (raw.get("stations") or []) if isinstance(st, dict) and st.get("id")]
+            except Exception as exc:  # noqa: BLE001 — config quebrado não derruba a ingestão
+                log.error("config da dashboard inválido (%s); mantendo o anterior", exc)
+                self._mtime = mtime
+                return self._cfg
             self._cfg = {
                 "data_root": raw.get("data_root") or "./data",
                 "timezone": raw.get("timezone"),
-                "stations": raw.get("stations") or [],
+                "stations": stations,
                 "_base": str(self.path.parent.resolve()),
             }
             self._mtime = mtime
-            log.info("config da dashboard carregado: %d estação(ões)", len(self._cfg["stations"]))
+            log.info("config da dashboard carregado: %d estação(ões)", len(stations))
         return self._cfg
 
 
@@ -135,8 +144,8 @@ def ensure_variables(cur, cols: list[records.ColumnSpec]) -> None:
         """
         INSERT INTO variables (variable_id, name, unit) VALUES %s
         ON CONFLICT (variable_id) DO UPDATE SET
-            name = EXCLUDED.name,
-            unit = COALESCE(EXCLUDED.unit, variables.unit)
+            name = COALESCE(variables.name, EXCLUDED.name),
+            unit = COALESCE(variables.unit, EXCLUDED.unit)
         """,
         rows,
     )
@@ -238,6 +247,9 @@ def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.Col
     sid = "'" + station_id.replace("'", "''") + "'"
     cur.execute(f"CREATE SCHEMA IF NOT EXISTS {qs}")
     cur.execute(f"COMMENT ON SCHEMA {qs} IS 'carbonara: estação {station_id} · tipo {data_type_of(fcfg)}'")
+    cur.execute("SELECT 1 FROM pg_roles WHERE rolname = 'carbonara_ro'")
+    if cur.fetchone():                      # papel de leitura da caixa SQL (criado pela API)
+        cur.execute(f"GRANT USAGE ON SCHEMA {qs} TO carbonara_ro")
     cur.execute(f"DROP VIEW IF EXISTS {qs}.{qv}")
     cur.execute(
         f"CREATE VIEW {qs}.{qv} AS\nSELECT time,\n  {colunas},\n"
@@ -267,17 +279,20 @@ def insert_measurements(cur, rows: list[tuple]) -> int:
     """Insere em lote, ignorando duplicatas pela chave natural (idempotente)."""
     if not rows:
         return 0
-    execute_values(
-        cur,
-        """
-        INSERT INTO measurements
-            (time, station_id, variable_id, value, quality, source_file, file_id)
-        VALUES %s
-        ON CONFLICT (time, station_id, variable_id) DO NOTHING
-        """,
-        rows, page_size=2000,
-    )
-    return cur.rowcount
+    inserted = 0
+    for i in range(0, len(rows), 5000):       # cur.rowcount só vale para a ÚLTIMA página
+        execute_values(
+            cur,
+            """
+            INSERT INTO measurements
+                (time, station_id, variable_id, value, quality, source_file, file_id)
+            VALUES %s
+            ON CONFLICT (time, station_id, variable_id) DO NOTHING
+            """,
+            rows[i:i + 5000], page_size=5000,
+        )
+        inserted += max(cur.rowcount, 0)
+    return inserted
 
 
 # --- QC ------------------------------------------------------------------------
@@ -331,6 +346,10 @@ def _bucket(ts: datetime, seconds: int) -> datetime:
 def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
                   cols: list[records.ColumnSpec], max_bytes: int, closed: bool
                   ) -> tuple[list[tuple], int, dict]:
+    """Ver abaixo. ``closed`` = o arquivo não cresce mais: a última linha sem quebra final
+    é entregue e, chegando ao FIM do arquivo, todos os intervalos de reamostragem são
+    descarregados (uma fatia interrompida pelo teto de bytes NÃO descarrega — o intervalo
+    cortado voltaria com média parcial e o DO NOTHING a congelaria)."""
     """Lê do offset em diante e devolve (linhas prontas p/ insert sem station/file,
     novo_offset, stats). Linha = (time, variable_id, value, quality_parse).
 
@@ -342,10 +361,11 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
     decimal = fcfg.get("decimal", ".")
     ts_format = (fcfg.get("timestamp") or {}).get("format")
     step = RESAMPLE_SECONDS.get(fcfg.get("resample") or "raw", 0)
-    stats = {"rows": 0, "bad_ts": 0, "last_time": None}
+    stats = {"rows": 0, "bad_ts": 0, "last_time": None, "missing": set()}
     out: list[tuple] = []
     new_offset = offset
     resolved: dict[int, list[records.ColumnSpec]] = {}
+    io_state: dict = {}
 
     # reamostragem: (bucket) -> {vid: [soma, n]}; início (offset) de cada bucket aberto
     acc: dict[datetime, dict[str, list[float]]] = {}
@@ -361,7 +381,9 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
                 idx = records.column_index(c.column, header, n)
                 if idx is not None:
                     lst.append(records.ColumnSpec(c.variable_id, c.label, c.column, idx,
-                                                  c.vtype, c.unit, c.vmin, c.vmax))
+                                                  c.vtype, c.unit, c.vmin, c.vmax, c.spike, c.stuck))
+                else:
+                    stats["missing"].add(f"{c.label} (coluna {c.column!r})")
             resolved[n] = lst
         return resolved[n]
 
@@ -371,7 +393,8 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
                 out.append((bkt, vid, soma / n, 0))
         bucket_start_offset.pop(bkt, None)
 
-    for rec in records.iter_records(path, fcfg, offset, tzname, header, max_bytes):
+    for rec in records.iter_records(path, fcfg, offset, tzname, header, max_bytes,
+                                    final=closed, state=io_state):
         stats["rows"] += 1
         if rec.time is None:
             stats["bad_ts"] += 1
@@ -408,7 +431,7 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
             prev_offset = rec.offset
 
     if step:
-        if closed:
+        if closed and io_state.get("eof"):
             for b in sorted(acc):
                 flush(b)
             new_offset = prev_offset
@@ -420,12 +443,14 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
             new_offset = bucket_start_offset[aberto]
         else:
             new_offset = prev_offset
+    if not step and closed and io_state.get("eof"):
+        new_offset = prev_offset if prev_offset > new_offset else new_offset
     return out, new_offset, stats
 
 
 # --- Ledger --------------------------------------------------------------------
 def ledger_get(cur, station_id: str, relpath: str):
-    cur.execute("SELECT file_id, size_bytes, bytes_ingested, head_sha256, status "
+    cur.execute("SELECT file_id, size_bytes, bytes_ingested, head_sha256, status, head_len "
                 "FROM ingest_files WHERE station_id = %s AND relpath = %s", (station_id, relpath))
     return cur.fetchone()
 
@@ -443,52 +468,76 @@ def process_file(conn, station_id: str, fcfg: dict, path: Path, tzname: str | No
                  max_bytes: int, closed: bool) -> int:
     """Um arquivo real: ledger → leitura incremental → QC → insert → ledger. Devolve os
     bytes lidos neste ciclo (para o orçamento do ciclo)."""
-    st = path.stat()
-    if time.time() - st.st_mtime < settle:
-        return 0                                   # ainda sendo escrito: próximo ciclo
-    relpath = str(path)
-    with conn.cursor() as cur:
-        row = ledger_get(cur, station_id, relpath)
-        if row is None:
-            file_id = ledger_new(cur, station_id, fcfg["id"], relpath)
-            size_old, offset, sig_old = 0, 0, None
-        else:
-            file_id, size_old, offset, sig_old, _status = row
-        conn.commit()
-
-    if st.st_size == size_old and offset > 0 and st.st_size == offset:
-        return 0                                   # nada novo
-    if st.st_size == size_old and offset >= st.st_size and offset > 0:
-        return 0
-
-    sig = records.head_signature(path)
-    reinicio = None
-    if st.st_size < offset:
-        reinicio = "arquivo encolheu"
-    elif sig_old and sig != sig_old:
-        reinicio = "início do arquivo mudou (rotação/recriação)"
-    if reinicio:
-        log.info("%s/%s: %s — reiniciando do zero", station_id, path.name, reinicio)
-        offset = 0
-
-    if st.st_size <= offset:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE ingest_files SET size_bytes=%s, mtime=to_timestamp(%s), "
-                        "head_sha256=%s WHERE file_id=%s", (st.st_size, st.st_mtime, sig, file_id))
-        conn.commit()
-        return 0
-
-    t0 = time.time()
-    inicio = offset
-    tot_rows = tot_ins = tot_bad = 0
     try:
+        st = path.stat()
+    except OSError as exc:                         # sumiu entre o glob e o stat (purge/rotação)
+        log.warning("%s/%s: %s", station_id, path.name, exc)
+        return 0
+    # settle pelo ctime (hora em que o SERVIDOR gravou), não pelo mtime — o rsync preserva o
+    # mtime da estação, e um relógio adiantado lá deixaria o arquivo "em escrita" por horas.
+    if time.time() - st.st_ctime < settle:
+        return 0
+    relpath = str(path)
+    file_id = None
+    try:
+        with conn.cursor() as cur:
+            row = ledger_get(cur, station_id, relpath)
+            if row is None:
+                file_id = ledger_new(cur, station_id, fcfg["id"], relpath)
+                size_old, offset, sig_old, head_len = 0, 0, None, None
+            else:
+                file_id, size_old, offset, sig_old, _status, head_len = row
+            conn.commit()
+
+        if st.st_size == size_old and offset >= st.st_size and offset > 0:
+            return 0                                   # nada novo
+
+        # assinatura do início: comparada sobre o MESMO comprimento da vez anterior
+        n_old = int(head_len or 0)
+        sig, n_now = records.head_signature(path, n_old if 0 < n_old < records.HEAD_SIGNATURE_BYTES
+                                            else records.HEAD_SIGNATURE_BYTES)
+        reinicio = None
+        if st.st_size < offset:
+            reinicio = "arquivo encolheu"
+        elif sig_old and sig != sig_old:
+            reinicio = "início do arquivo mudou (rotação/recriação)"
+        if reinicio:
+            log.info("%s/%s: %s — reiniciando do zero", station_id, path.name, reinicio)
+            offset = 0
+        if n_now < records.HEAD_SIGNATURE_BYTES or n_old != n_now:
+            sig, n_now = records.head_signature(path)   # arquivo cresceu: assinatura mais longa
+
+        if st.st_size <= offset and not (closed and st.st_size > 0 and offset == st.st_size and False):
+            with conn.cursor() as cur:
+                cur.execute("UPDATE ingest_files SET size_bytes=%s, mtime=to_timestamp(%s), "
+                            "head_sha256=%s, head_len=%s WHERE file_id=%s",
+                            (st.st_size, st.st_mtime, sig, n_now, file_id))
+            conn.commit()
+            return 0
+
+        t0 = time.time()
+        inicio = offset
+        tot_rows = tot_ins = tot_bad = 0
+        missing: set = set()
+        fatia = CHUNK_BYTES
         # Em FATIAS (INGEST_CHUNK_BYTES), cada uma com seu commit: um .dat de dezenas de
         # MB com dezenas de variáveis viraria milhões de tuplas de uma vez — e o
         # container tem 1 GB. O offset no ledger avança fatia a fatia, então uma
         # interrupção no meio retoma de onde parou. max_bytes limita o total por ciclo.
         while offset < st.st_size and (offset - inicio) < max_bytes:
-            fatia = min(CHUNK_BYTES, max_bytes - (offset - inicio))
+            fatia = min(fatia, max_bytes - (offset - inicio)) or fatia
             lines, new_offset, stats = read_new_data(path, fcfg, offset, tzname, cols, fatia, closed)
+            missing |= stats["missing"]
+            if new_offset <= offset:
+                # nada consumido: intervalo de reamostragem ainda aberto (normal) ou um
+                # intervalo maior que a fatia (dobra até o teto; se nem assim, avisa)
+                if stats["rows"] and fatia < max_bytes and offset + fatia < st.st_size:
+                    fatia = min(fatia * 2, max_bytes)
+                    continue
+                if stats["rows"] and fatia >= max_bytes and not closed and offset + fatia < st.st_size:
+                    raise RuntimeError(f"intervalo de reamostragem maior que INGEST_MAX_BYTES "
+                                       f"({max_bytes} bytes) a partir do offset {offset}")
+                break
             rows = []
             for ts, vid, val, qparse in lines:
                 q = qc.evaluate(_M(ts, station_id, vid, val, qparse))
@@ -500,35 +549,47 @@ def process_file(conn, station_id: str, fcfg: dict, path: Path, tzname: str | No
                 cur.execute(
                     """
                     UPDATE ingest_files SET
-                        size_bytes = %s, mtime = to_timestamp(%s), head_sha256 = %s,
+                        size_bytes = %s, mtime = to_timestamp(%s), head_sha256 = %s, head_len = %s,
                         bytes_ingested = %s, rows_total = rows_total + %s,
                         values_total = values_total + %s, bad_timestamps = bad_timestamps + %s,
-                        last_time = COALESCE(%s, last_time), status = 'ok', error = NULL,
+                        last_time = COALESCE(%s, last_time), status = 'ok', error = %s,
                         last_ingested = now()
                     WHERE file_id = %s
                     """,
-                    (st.st_size, st.st_mtime, sig, new_offset, stats["rows"], inserted,
-                     stats["bad_ts"], stats["last_time"], file_id),
+                    (st.st_size, st.st_mtime, sig, n_now, new_offset, stats["rows"], inserted,
+                     stats["bad_ts"], stats["last_time"],
+                     ("aviso: colunas não encontradas: " + ", ".join(sorted(missing)))[:500] if missing else None,
+                     file_id),
                 )
             conn.commit()
             tot_rows += stats["rows"]; tot_ins += inserted; tot_bad += stats["bad_ts"]
-            if new_offset <= offset:
-                break                      # nada consumido (bucket aberto / linha parcial)
             offset = new_offset
         lidos = offset - inicio
+        if missing:
+            log.warning("%s/%s: variáveis sem coluna no arquivo (ignoradas): %s",
+                        station_id, path.name, ", ".join(sorted(missing)))
         if tot_rows or lidos:
             log.info("%s/%s: +%d bytes, %d registro(s), %d valor(es) novo(s), %d carimbo(s) "
                      "inválido(s), %.1fs%s", station_id, path.name, lidos, tot_rows, tot_ins,
                      tot_bad, time.time() - t0,
                      " (continua no próximo ciclo)" if offset < st.st_size else "")
         return max(lidos, 0)
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        raise                                          # conexão perdida: o laço principal reconecta
     except Exception as exc:  # noqa: BLE001 — isola o arquivo, nunca derruba o loop
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         log.exception("falha em %s/%s", station_id, path.name)
-        with conn.cursor() as cur:
-            cur.execute("UPDATE ingest_files SET status='error', error=%s WHERE file_id=%s",
-                        (f"{type(exc).__name__}: {exc}"[:500], file_id))
-        conn.commit()
+        if file_id is not None:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE ingest_files SET status='error', error=%s WHERE file_id=%s",
+                                (f"{type(exc).__name__}: {exc}"[:500], file_id))
+                conn.commit()
+            except Exception:  # noqa: BLE001
+                pass
         return 0
 
 
@@ -576,11 +637,64 @@ def refresh_aggregates(conn) -> None:
         conn.autocommit = old_ac
 
 
+_QC_CACHE: dict[tuple, tuple[str, QualityPipeline]] = {}
+CLOSE_AFTER = int(os.environ.get("INGEST_CLOSE_AFTER_SECONDS", str(2 * 3600)))
+LOCK_KEY = "carbonara-ingest"
+
+
+def qc_for(station_id: str, fcfg: dict, cols: list[records.ColumnSpec], global_qc: QualityPipeline) -> QualityPipeline:
+    """Pipeline de QC por registro, PRESERVADO entre ciclos: salto e travado comparam com a
+    leitura anterior — recriá-los a cada ciclo (1 registro novo por ciclo num arquivo de
+    30 min) faria essas regras nunca dispararem. Refeito quando os limites mudam."""
+    sig = "|".join(f"{c.variable_id}:{c.vmin}:{c.vmax}:{c.spike}:{c.stuck}" for c in cols)
+    key = (station_id, fcfg["id"])
+    hit = _QC_CACHE.get(key)
+    if hit and hit[0] == sig:
+        return hit[1]
+    qc = build_qc(cols, global_qc)
+    _QC_CACHE[key] = (sig, qc)
+    return qc
+
+
+def acquire_lock(conn, wait: bool) -> bool:
+    """Só UM processo ingere por vez (o serviço e um `--reprocess` via exec não podem
+    escrever offsets em paralelo). Lock consultivo do PostgreSQL, ligado à sessão."""
+    with conn.cursor() as cur:
+        if wait:
+            cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (LOCK_KEY,))
+            ok = True
+        else:
+            cur.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (LOCK_KEY,))
+            ok = bool(cur.fetchone()[0])
+    conn.commit()
+    return ok
+
+
+def release_lock(conn) -> None:
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (LOCK_KEY,))
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_cycle(conn, cfg: dict, global_qc: QualityPipeline, settle: int, max_bytes: int,
               budget: int) -> dict:
     """Um ciclo completo sobre todos os registros com ingest=true."""
     gastos = 0
     resumo = {"files": 0, "skipped_budget": 0}
+    if not acquire_lock(conn, wait=False):
+        log.info("outro processo está ingerindo (reprocessamento?); ciclo adiado")
+        return resumo
+    try:
+        return _run_cycle_locked(conn, cfg, global_qc, settle, max_bytes, budget, resumo)
+    finally:
+        release_lock(conn)
+
+
+def _run_cycle_locked(conn, cfg, global_qc, settle, max_bytes, budget, resumo) -> dict:
+    gastos = 0
     with conn.cursor() as cur:
         for station in cfg["stations"]:
             if any(f.get("ingest") for f in station.get("files") or []):
@@ -594,6 +708,9 @@ def run_cycle(conn, cfg: dict, global_qc: QualityPipeline, settle: int, max_byte
             if not fcfg.get("ingest") or not fcfg.get("id"):
                 continue
             tzname = fcfg.get("timezone") or station.get("timezone") or cfg.get("timezone")
+            if tzname and not valid_timezone(tzname):
+                log.warning("%s/%s: fuso '%s' inválido — usando UTC", sid, fcfg["id"], tzname)
+                tzname = None
             cols = records.resolve_columns(fcfg, None, 0)   # índices resolvidos por arquivo
             try:
                 with conn.cursor() as cur:
@@ -608,17 +725,24 @@ def run_cycle(conn, cfg: dict, global_qc: QualityPipeline, settle: int, max_byte
                 continue
             if not candidatos:
                 continue
-            qc = build_qc(cols, global_qc)
+            qc = qc_for(sid, fcfg, cols, global_qc)
             step = RESAMPLE_SECONDS.get(fcfg.get("resample") or "raw", 0)
-            # O mais recente primeiro (dado novo aparece antes do backfill); os demais
-            # (dias anteriores de um caminho dinâmico) são fechados: descarregam tudo.
+            # Ordem CRONOLÓGICA (salto/travado comparam com a leitura anterior). Um arquivo
+            # é "fechado" (descarrega o último intervalo, entrega a última linha sem quebra)
+            # quando existe outro mais novo ou quando não muda há CLOSE_AFTER — o rsync
+            # entrega em lotes e preserva o mtime da estação, então "parado há 1 min" não
+            # significa terminado.
             atual = candidatos[-1]
             agora = time.time()
-            for p in reversed(candidatos):
+            for p in candidatos:
                 if gastos >= budget:
                     resumo["skipped_budget"] += 1
                     continue
-                closed = p != atual or (step and agora - p.stat().st_mtime > step + settle + 60)
+                try:
+                    idade = agora - p.stat().st_mtime
+                except OSError:
+                    continue
+                closed = p != atual or idade > max((step + settle + 60) if step else 0, CLOSE_AFTER)
                 gastos += process_file(conn, sid, fcfg, p, tzname, cols, qc, settle,
                                        max_bytes, bool(closed))
                 resumo["files"] += 1
@@ -628,7 +752,9 @@ def run_cycle(conn, cfg: dict, global_qc: QualityPipeline, settle: int, max_byte
 
 def reprocess(conn, cfg: dict, station_id: str, file_key: str | None, apagar: bool) -> None:
     """Zera o offset dos arquivos de uma estação (ou de um registro) e, com --apagar,
-    remove antes as medições que eles geraram."""
+    remove antes as medições que eles geraram. Segura o lock da ingestão enquanto zera e
+    até o ciclo seguinte terminar (o serviço espera)."""
+    _QC_CACHE.clear()
     with conn.cursor() as cur:
         cond = "station_id = %s" + (" AND file_key = %s" if file_key else "")
         args = (station_id, file_key) if file_key else (station_id,)
@@ -669,6 +795,10 @@ def wait_for_schema(retries: int = 60, delay: int = 10):
         except psycopg2.OperationalError as exc:
             log.warning("banco indisponível (%s) — nova tentativa em %ss", str(exc).strip()[:80], delay)
         except psycopg2.errors.UndefinedTable:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
             log.warning("schema ainda não aplicado (rode ./database/migrate.sh) — aguardando %ss", delay)
         time.sleep(delay)
     raise SystemExit("banco/schema não ficaram disponíveis a tempo")
@@ -698,8 +828,13 @@ def main() -> int:
     try:
         cfg = dash.load()
         if args.reprocess:
-            reprocess(conn, cfg, args.reprocess, args.file, args.apagar)
-            run_cycle(conn, cfg, global_qc, settle, max_bytes, budget)
+            acquire_lock(conn, wait=True)
+            try:
+                reprocess(conn, cfg, args.reprocess, args.file, args.apagar)
+                _run_cycle_locked(conn, cfg, global_qc, settle, max_bytes, budget,
+                                  {"files": 0, "skipped_budget": 0})
+            finally:
+                release_lock(conn)
             return 0
         with conn.cursor() as cur:
             cur.execute("INSERT INTO pipeline_runs (pipeline, version, stats) VALUES "
@@ -712,7 +847,16 @@ def main() -> int:
         while True:
             cfg = dash.load()
             t0 = time.time()
-            resumo = run_cycle(conn, cfg, global_qc, settle, max_bytes, budget)
+            try:
+                resumo = run_cycle(conn, cfg, global_qc, settle, max_bytes, budget)
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+                log.warning("conexão com o banco perdida (%s) — reconectando", str(exc).strip()[:80])
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                conn = wait_for_schema()
+                continue
             ciclos += 1
             if resumo["skipped_budget"]:
                 log.info("orçamento do ciclo esgotado: %d arquivo(s) ficam para o próximo",

@@ -20,4 +20,4 @@ ANON_RATE_LIMIT = int(os.environ.get("API_ANON_RATE_LIMIT", "60"))       # req/m
 MAX_RAW_POINTS = int(os.environ.get("API_MAX_RAW_POINTS", "200000"))     # por resposta
 DEFAULT_RAW_POINTS = int(os.environ.get("API_DEFAULT_RAW_POINTS", "20000"))
 MAX_AGG_BUCKETS = int(os.environ.get("API_MAX_AGG_BUCKETS", "100000"))
-KEY_CACHE_SECONDS = 60
+KEY_CACHE_SECONDS = 15      # revogação/expiração valem em até 15 s em cada worker

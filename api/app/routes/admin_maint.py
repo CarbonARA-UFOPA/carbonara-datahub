@@ -284,15 +284,18 @@ async def maintenance(body: MaintIn, who: auth.KeyInfo = Depends(auth.require("a
     pool = db.pool()
     t0 = time.monotonic()
     out: dict = {"action": body.action}
+    import json as _json
+    purged = False
     async with pool.acquire() as conn:
+        ex = lambda q, *a: conn.execute(q, *a, timeout=None)   # manutenção pode passar de 60 s  # noqa: E731
         if body.action == "analyze":
             for t in ("measurements", "stations", "variables", "ingest_files", "monitored_files"):
-                await conn.execute(f"ANALYZE {t}")
+                await ex(f"ANALYZE {t}")
             out["detail"] = "estatísticas do planejador atualizadas (ANALYZE)"
         elif body.action == "vacuum":
-            await conn.execute("VACUUM (ANALYZE) measurements")
+            await ex("VACUUM (ANALYZE) measurements")
             for t in ("stations", "variables", "ingest_files", "monitored_files", "api_keys", "pipeline_runs"):
-                await conn.execute(f"VACUUM (ANALYZE) {t}")
+                await ex(f"VACUUM (ANALYZE) {t}")
             out["detail"] = "VACUUM ANALYZE nas tabelas do sistema"
         elif body.action == "compress":
             recs = await conn.fetch(
@@ -300,19 +303,20 @@ async def maintenance(body: MaintIn, who: auth.KeyInfo = Depends(auth.require("a
                 "WHERE hypertable_name = 'measurements' AND NOT is_compressed AND range_end < now() - interval '30 days'")
             n = 0
             for r in recs:
-                await conn.execute(f"SELECT compress_chunk('{r['c']}'::regclass, if_not_compressed => true)")
+                await ex(f"SELECT compress_chunk('{r['c']}'::regclass, if_not_compressed => true)")
                 n += 1
             out["detail"] = f"{n} chunk(s) comprimido(s)"
         elif body.action == "refresh_aggregates":
             days = max(1, min(body.days, 3650))
             for v in ("measurements_hourly", "measurements_daily"):
-                await conn.execute(f"CALL refresh_continuous_aggregate('{v}', now() - interval '{days} days', now())")
+                await ex(f"CALL refresh_continuous_aggregate('{v}', now() - interval '{days} days', now())")
             out["detail"] = f"agregados horário e diário recalculados para os últimos {days} dias"
         elif body.action == "purge_implausible_times":
-            res = await conn.execute("DELETE FROM measurements WHERE time < $1 OR time > now() + interval '1 day'", PLAUSIBLE_MIN)
+            res = await ex("DELETE FROM measurements WHERE time < $1 OR time > now() + interval '1 day'", PLAUSIBLE_MIN)
             out["detail"] = f"{res.split()[-1]} linha(s) com carimbo implausível removida(s)"
+            purged = True
         elif body.action == "purge_orphans":
-            res = await conn.execute(
+            res = await ex(
                 """
                 WITH ativos AS (
                   SELECT m.station_id, x->>'variable_id' AS variable_id FROM monitored_files m, jsonb_array_elements(m.variables) x
@@ -322,10 +326,16 @@ async def maintenance(body: MaintIn, who: auth.KeyInfo = Depends(auth.require("a
                   SELECT 1 FROM ativos a WHERE a.station_id = me.station_id AND a.variable_id = me.variable_id)
                 """)
             out["detail"] = f"{res.split()[-1]} linha(s) de séries órfãs removida(s)"
+            purged = True
         else:
             raise HTTPException(400, "ação desconhecida")
+        if purged:
+            # os agregados em tempo real continuariam mostrando o que foi apagado
+            for v in ("measurements_hourly", "measurements_daily"):
+                await ex(f"CALL refresh_continuous_aggregate('{v}', NULL, NULL)")
+            out["detail"] += "; agregados recalculados"
         await conn.execute("INSERT INTO pipeline_runs (pipeline, version, finished, status, stats) VALUES "
                            "('maintenance', $1, now(), 'ok', $2::jsonb)", settings.API_VERSION,
-                           '{"action": "%s", "by": "%s"}' % (body.action, who.owner))
+                           _json.dumps({"action": body.action, "by": who.owner}))
     out["elapsed_ms"] = int((time.monotonic() - t0) * 1000)
     return out

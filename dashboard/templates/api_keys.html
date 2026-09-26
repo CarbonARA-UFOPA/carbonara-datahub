@@ -17,7 +17,7 @@
 <div class="flash flash-ok">
   <strong>Chave criada para {{ new_key.owner }}</strong> — copie agora, ela não será mostrada de novo:
   <pre class="key-once" style="user-select:all;word-break:break-all">{{ new_key.key }}</pre>
-  <small>Uso: <code>curl -H "X-API-Key: {{ new_key.key[:12] }}…" {{ api_url or 'http://servidor:8000' }}/series?station=eddyfarm&amp;agg=1h</code></small>
+  <small>Uso: <code>curl -H "X-API-Key: {{ (new_key.key or '')[:12] }}…" {{ api_url or 'http://servidor:8000' }}/series?station=eddyfarm&amp;agg=1h</code></small>
 </div>
 {% endif %}
 

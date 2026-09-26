@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -48,18 +49,27 @@ async def get_series(
     who: auth.KeyInfo = Depends(auth.require("read")),
 ):
     tzi = tzinfo_of(tz)
-    end_dt = parse_when(end, datetime.now(timezone.utc))
+    end_dt = parse_when(end, datetime.now(timezone.utc), tzi)
     default_span = {"raw": timedelta(days=1), "1h": timedelta(days=30), "1d": timedelta(days=365)}[agg]
     if agg == "raw" and order == "desc" and not start:
         default_span = timedelta(days=36500)     # "os últimos N", sem janela
-    start_dt = parse_when(start, end_dt - default_span)
+    start_dt = parse_when(start, end_dt - default_span, tzi)
     if start_dt >= end_dt:
         raise HTTPException(400, "start deve ser anterior a end")
     variables = split_csv(vars)
+    if not await db.pool().fetchval("SELECT 1 FROM stations WHERE station_id = $1", station):
+        raise HTTPException(404, f"estação '{station}' não existe (veja /stations)")
+    unknown = []
+    if variables:
+        known = {r["variable_id"] for r in await db.pool().fetch(
+            "SELECT variable_id FROM variables WHERE variable_id = ANY($1)", variables)}
+        unknown = [v for v in variables if v not in known]
+        if len(unknown) == len(variables):
+            raise HTTPException(404, f"nenhuma das variáveis existe: {', '.join(unknown)} (veja /variables)")
 
     if agg == "raw":
         cap = settings.MAX_RAW_POINTS if who.has("download") else settings.DEFAULT_RAW_POINTS * 5
-        lim = min(limit or settings.DEFAULT_RAW_POINTS, cap)
+        lim = min(limit or settings.DEFAULT_RAW_POINTS, cap)      # TOTAL de pontos (soma das variáveis)
         direction = "DESC" if order == "desc" else "ASC"
         sql = f"""
             SELECT m.time, m.variable_id, m.value, m.quality
@@ -98,7 +108,7 @@ async def get_series(
     names = {m["variable_id"]: (m["name"], m["unit"]) for m in meta}
 
     if format == "csv":
-        return _csv(rows, agg, tzi, station)
+        return _csv(rows, agg, tzi, station, truncated)
 
     series: dict[str, dict] = {}
     for r in rows:
@@ -121,15 +131,26 @@ async def get_series(
             s["max"].append(r["max_value"])
             s["n"].append(r["n_samples"])
             s["n_flagged"].append(r["n_flagged"])
-    return {
+    out = {
         "station": station, "agg": agg, "qc": qc if agg == "raw" else "good",
         "start": iso(start_dt, tzi), "end": iso(end_dt, tzi), "tz": tz or "UTC",
-        "points": len(rows), "truncated": truncated,
+        "points": len(rows), "limit_applied": lim, "truncated": truncated,
         "series": list(series.values()),
     }
+    if rows:
+        # janela realmente devolvida — com truncated, é por aqui que se pagina
+        out["first_time"] = iso(rows[0]["time"], tzi)
+        out["last_time"] = iso(rows[-1]["time"], tzi)
+        if truncated:
+            out["hint"] = ("resposta cortada em limit_applied pontos (total entre as variáveis): "
+                           + ("repita com start=last_time" if order == "asc" else "repita com end=first_time")
+                           + " ou use agg=1h/1d")
+    if unknown:
+        out["unknown_variables"] = unknown
+    return out
 
 
-def _csv(rows, agg: str, tzi, station: str) -> StreamingResponse:
+def _csv(rows, agg: str, tzi, station: str, truncated: bool = False) -> StreamingResponse:
     def gen():
         buf = io.StringIO()
         w = csv.writer(buf)
@@ -146,8 +167,10 @@ def _csv(rows, agg: str, tzi, station: str) -> StreamingResponse:
                 w.writerow([iso(r["time"], tzi), station, r["variable_id"], r["value"],
                             r["min_value"], r["max_value"], r["n_samples"], r["n_flagged"]])
             yield buf.getvalue()
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", station)[:60]
     return StreamingResponse(gen(), media_type="text/csv",
-                             headers={"Content-Disposition": f'attachment; filename="{station}_{agg}.csv"'})
+                             headers={"Content-Disposition": f'attachment; filename="{safe}_{agg}.csv"',
+                                      "X-Truncated": "true" if truncated else "false"})
 
 
 @router.get("/latest", summary="Último valor de cada variável de uma estação")
@@ -155,6 +178,8 @@ async def latest(station: str, vars: str | None = None, tz: str | None = None,
                  _who: auth.KeyInfo = Depends(auth.require("read"))):
     tzi = tzinfo_of(tz)
     variables = split_csv(vars)
+    if not await db.pool().fetchval("SELECT 1 FROM stations WHERE station_id = $1", station):
+        raise HTTPException(404, f"estação '{station}' não existe (veja /stations)")
     rows = await db.pool().fetch(LATEST_SQL, station, variables or None)
     return {"station": station, "tz": tz or "UTC", "values": [
         {"variable_id": r["variable_id"], "name": r["name"], "unit": r["unit"],

@@ -40,7 +40,26 @@ def create_app(config_path: str) -> Flask:
         static_folder="../static",
     )
     app.secret_key = _secret_key(config_path)
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.store = ConfigStore(config_path)
+
+    @app.before_request
+    def _same_origin_only():
+        """Barreira contra CSRF em TODAS as ações (POST/DELETE) de todos os blueprints:
+        o navegador diz de onde veio (Sec-Fetch-Site/Origin); uma página de outro site
+        não consegue disparar "zerar tabela", "revogar chave" ou "aplicar serviços" na
+        sessão do admin. Formulários da própria dashboard passam."""
+        from flask import abort, request
+        if request.method not in ("POST", "PUT", "DELETE", "PATCH"):
+            return None
+        site = request.headers.get("Sec-Fetch-Site")
+        if site and site not in ("same-origin", "none"):
+            abort(403)
+        origin = request.headers.get("Origin")
+        if origin and origin.rstrip("/").split("://", 1)[-1] != request.host:
+            abort(403)
+        return None
 
     from .api import api
     from .ftp_publish import Publisher

@@ -3,11 +3,15 @@
 {% block content %}
 <h1>Guia para pesquisadores — como acessar os dados</h1>
 
+{% if sem_url_publica and is_admin %}
+<div class="flash flash-error">Defina a <strong>URL pública</strong> da API em <a href="{{ url_for('pages.settings') }}">Configurações</a>
+  para este guia mostrar o endereço que os pesquisadores usam (hoje aparece o endereço interno).</div>
+{% endif %}
 <section class="card help-card">
   Os dados das estações chegam a este servidor, passam pelo controle de qualidade e ficam num banco
   de séries temporais (PostgreSQL/TimescaleDB). O acesso é pela <strong>API de dados</strong>
   (<code>{{ api_url }}</code>, documentação interativa em <a href="{{ api_url }}/docs" target="_blank" rel="noopener"><code>{{ api_url }}/docs</code></a>)
-  com uma <strong>chave</strong> pessoal — peça a um administrador (menu <em>API</em>). Cada consulta leva a chave
+  com uma <strong>chave</strong> pessoal — peça a um administrador da plataforma. Cada consulta leva a chave
   no cabeçalho <code>X-API-Key</code>.
 </section>
 

@@ -38,10 +38,13 @@ COLUMN_TYPES = {
     "data_hora": "timestamptz", "data": "date", "json": "jsonb",
 }
 _ALLOWED_START = re.compile(r"^\s*(select|with|explain|show|table|values)\b", re.I)
+# Defesa em profundidade: a consulta roda com um PAPEL SEM PRIVILÉGIOS (db.ro_pool, só
+# leitura, statement_timeout), então a regex só barra o óbvio e o que gasta recurso.
 _FORBIDDEN = re.compile(
-    r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|vacuum|copy|call|do|"
-    r"refresh|reindex|cluster|lock|set\s+(?!local\s+)|reset|begin|commit|rollback|"
-    r"pg_terminate_backend|pg_cancel_backend|pg_sleep|dblink|lo_)\b", re.I)
+    r"(\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|vacuum|copy|call|do|"
+    r"refresh|reindex|cluster|lock|set\s+(?!local\s+)|reset|begin|commit|rollback)\b"
+    r"|pg_terminate_backend|pg_cancel_backend|pg_sleep\w*|dblink\w*|\blo_\w+|pg_drop_replication_slot"
+    r"|pg_read_(binary_)?file|pg_ls_\w+|pg_reload_conf|set_config|pg_stat_file|U&)", re.I)
 
 
 def _q(ident: str) -> str:
@@ -189,13 +192,17 @@ async def query(body: QueryIn, _who: auth.KeyInfo = Depends(auth.require("admin"
         raise HTTPException(400, "só consultas de leitura: comece com SELECT, WITH ou EXPLAIN")
     if _FORBIDDEN.search(sql):
         raise HTTPException(400, "palavra não permitida numa consulta de leitura")
-    wrap = not re.search(r"\blimit\b", sql, re.I) and not sql.lower().startswith("explain")
-    return await _run_readonly(sql + (f" LIMIT {body.max_rows + 1}" if wrap else ""), body.max_rows)
+    if sql.lower().startswith(("explain", "show")):
+        return await _run_readonly(sql, body.max_rows, ro=True)
+    # LIMIT externo SEMPRE (subconsulta): um LIMIT interno num CTE não protege o worker
+    # de materializar milhões de linhas.
+    return await _run_readonly(f"SELECT * FROM ({sql}) _q LIMIT {body.max_rows + 1}", body.max_rows, ro=True)
 
 
-async def _run_readonly(sql: str, max_rows: int, args: tuple = ()) -> dict:
+async def _run_readonly(sql: str, max_rows: int, args: tuple = (), ro: bool = False) -> dict:
     t0 = time.monotonic()
-    async with db.pool().acquire() as conn:
+    pool = db.ro_pool() if ro and db.has_ro_pool() else db.pool()
+    async with pool.acquire() as conn:
         async with conn.transaction(readonly=True):
             await conn.execute(f"SET LOCAL statement_timeout = {QUERY_TIMEOUT_MS}")
             try:
@@ -357,9 +364,10 @@ async def rows(schema: str, table: str, limit: int = 50, offset: int = 0,
         args.append(f"%{q.strip()}%")
         where = " WHERE " + " OR ".join(f'{_q(c)}::text ILIKE $1' for c in cols)
     sel = ", ".join(_q(c) for c in cols)
-    ctid = "ctid::text AS _ctid, " if meta["editable"] else ""
+    ctid = "ctid::text AS _ctid, " if meta["editable"] and not meta["hypertable"] else ""
+    nulls = " NULLS LAST" if direction == "ASC" else ""      # DESC já põe NULL primeiro e casa o índice
     sql = (f"SELECT {ctid}{sel} FROM {_q(schema)}.{_q(table)}{where} "
-           f"ORDER BY {_q(order_col)} {direction} NULLS LAST LIMIT {limit + 1} OFFSET {max(0, offset)}")
+           f"ORDER BY {_q(order_col)} {direction}{nulls} LIMIT {limit + 1} OFFSET {max(0, offset)}")
     res = await _run_readonly(sql, limit, tuple(args))
     res.update({"schema": schema, "table": table, "limit": limit, "offset": offset,
                 "sort": order_col, "dir": direction.lower(), "q": q or "", **meta})
@@ -380,9 +388,10 @@ async def _rows_generated_view(schema: str, table: str, cols: list[str], meta: d
             "note": "view gerada: ordenação por tempo e sem filtro de texto (use a consulta SQL)"}
     if anchor is None:
         return {**empty, **base}
+    station = schema.split("__", 1)[0]          # schema é <estação>__<tipo>
     times = await db.pool().fetch(
         f"SELECT time FROM public.measurements WHERE station_id = $1 AND variable_id = $2 "
-        f"ORDER BY time {direction} LIMIT {limit + 1} OFFSET {max(0, offset)}", schema, anchor)
+        f"ORDER BY time {direction} LIMIT {limit + 1} OFFSET {max(0, offset)}", station, anchor)
     if not times:
         return {**empty, **base}
     ts = [t["time"] for t in times]
@@ -428,6 +437,8 @@ async def create_schema(body: dict, _who: auth.KeyInfo = Depends(auth.require("a
             await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {qn}")
             if comment:
                 await conn.execute(f"COMMENT ON SCHEMA {qn} IS '{comment}'")
+            if db.has_ro_pool():
+                await conn.execute(f"GRANT USAGE ON SCHEMA {qn} TO {db.RO_ROLE}")
     return {"schema": name}
 
 
@@ -451,8 +462,12 @@ async def create_table(body: TableCreate, _who: auth.KeyInfo = Depends(auth.requ
         defs.append(f"{_q(cname)} {COLUMN_TYPES[c.type]}{'' if c.nullable and not c.pk else ' NOT NULL'}")
         if c.pk:
             pks.append(_q(cname))
-    if body.hypertable and "time" not in seen:
-        raise HTTPException(400, "hypertable exige uma coluna 'time' do tipo data_hora")
+    if body.hypertable:
+        tcol = next((c for c in body.columns if c.name.strip().lower() == "time"), None)
+        if tcol is None or tcol.type != "data_hora":
+            raise HTTPException(400, "série temporal exige uma coluna 'time' do tipo 'data e hora'")
+        if pks:
+            raise HTTPException(400, "série temporal não aceita chave primária (a partição é por 'time'); desmarque a chave")
     ddl = f"CREATE TABLE {qs}.{qt} ({', '.join(defs)}"
     if pks and not body.hypertable:
         ddl += f", PRIMARY KEY ({', '.join(pks)})"
@@ -465,7 +480,8 @@ async def create_table(body: TableCreate, _who: auth.KeyInfo = Depends(auth.requ
                 if comment:
                     await conn.execute(f"COMMENT ON TABLE {qs}.{qt} IS '{comment}'")
                 if body.hypertable:
-                    await conn.execute(f"SELECT create_hypertable('{schema}.{table}', 'time', if_not_exists => TRUE)")
+                    await conn.execute("SELECT create_hypertable(format('%I.%I', $1::text, $2::text)::regclass, 'time', if_not_exists => TRUE)",
+                                       schema, table)
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
     return {"schema": schema, "table": table, "ddl": ddl}
@@ -497,7 +513,8 @@ async def insert_row(body: RowIn, _who: auth.KeyInfo = Depends(auth.require("adm
         if v is None or (isinstance(v, str) and v.strip() == ""):
             continue                                  # vazio = NULL/default
         names.append(_q(k))
-        params.append(str(v) if not isinstance(v, str) else v)
+        import json as _json
+        params.append(v if isinstance(v, str) else (_json.dumps(v) if isinstance(v, (dict, list)) else str(v)))
     if not names:
         raise HTTPException(400, "nenhum valor informado")
     # valores entram como texto e o PostgreSQL faz o cast para o tipo da coluna
@@ -522,8 +539,8 @@ class RowDelete(BaseModel):
 async def delete_row(body: RowDelete, _who: auth.KeyInfo = Depends(auth.require("admin"))):
     schema, table = body.schema_name, body.table
     meta = await _table_kind(schema, table)
-    if not meta["editable"]:
-        raise HTTPException(400, "só tabelas de usuário")
+    if not meta["editable"] or meta["hypertable"]:
+        raise HTTPException(400, "só tabelas de usuário comuns (numa hypertable o ctid repete entre chunks; use a consulta SQL)")
     if not re.match(r"^\(\d+,\d+\)$", body.ctid or ""):
         raise HTTPException(400, "ctid inválido")
     n = await db.pool().execute(f"DELETE FROM {_q(schema)}.{_q(table)} WHERE ctid = $1::text::tid", body.ctid)
@@ -567,12 +584,17 @@ class StationVariable(BaseModel):
 
 async def _registration(station: str, key: str):
     """Registro por file_key OU pelo nome da tabela no banco (table_name)."""
-    row = await db.pool().fetchrow(
-        "SELECT file_key, table_name, data_type, variables FROM monitored_files "
+    rows = await db.pool().fetch(
+        "SELECT file_key, table_name, COALESCE(data_type, 'dados') AS data_type, variables FROM monitored_files "
         "WHERE station_id = $1 AND (file_key = $2 OR table_name = $2)", station, key)
-    if not row:
+    if not rows:
         raise HTTPException(404, f"registro {station}/{key} não encontrado no banco")
-    return row
+    if len(rows) > 1:
+        exato = [r for r in rows if r["file_key"] == key]
+        if len(exato) != 1:
+            raise HTTPException(400, f"'{key}' identifica mais de um registro em {station}; use o id do registro")
+        return exato[0]
+    return rows[0]
 
 
 async def _file_variables(station: str, file_key: str) -> list[str]:

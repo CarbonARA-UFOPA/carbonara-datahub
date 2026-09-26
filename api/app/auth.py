@@ -60,6 +60,7 @@ def _take_token(bucket_id: str, per_minute: int) -> float:
     tokens, last = _buckets.get(bucket_id, [float(cap), now])
     tokens = min(cap, tokens + (now - last) * cap / 60.0)
     if tokens >= 1.0:
+        _prune(_buckets, 20000)
         _buckets[bucket_id] = [tokens - 1.0, now]
         return 0.0
     _buckets[bucket_id] = [tokens, now]
@@ -79,7 +80,9 @@ async def _lookup(key: str) -> KeyInfo | None:
     if row and row["revoked_at"] is None and (
             row["expires_at"] is None or row["expires_at"].timestamp() > time.time()):
         info = KeyInfo(row["key_id"], row["owner"], tuple(row["scopes"]), int(row["rate_limit"]))
-    _key_cache[h] = (info, now + settings.KEY_CACHE_SECONDS)
+    if info is not None:                      # negativos não são cacheados (força bruta não enche o cache)
+        _prune(_key_cache, 5000)
+        _key_cache[h] = (info, now + settings.KEY_CACHE_SECONDS)
     return info
 
 
@@ -95,10 +98,17 @@ async def _touch(key_id: int) -> None:
 
 
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """IP do cliente. X-Forwarded-For só é confiável atrás do proxy reverso — o uvicorn
+    já o aplica (--proxy-headers) quando o proxy está em TRUSTED_PROXY_IPS; aqui NÃO se lê
+    o cabeçalho cru, senão qualquer cliente forjaria um IP por requisição e anularia o
+    limite anônimo."""
     return request.client.host if request.client else "?"
+
+
+def _prune(d: dict, max_len: int) -> None:
+    if len(d) > max_len:                      # sem teto, IPs/chaves forjadas incham a memória
+        for k in list(d.keys())[: len(d) - max_len // 2]:
+            d.pop(k, None)
 
 
 def _extract_key(request: Request) -> str | None:
@@ -118,6 +128,9 @@ async def authenticate(request: Request) -> KeyInfo:
     key = _extract_key(request)
     if not key:
         return KeyInfo(0, "anonymous", (), settings.ANON_RATE_LIMIT, anonymous=True)
+    # limite por IP ANTES de consultar o banco: tentativas de chave também contam
+    if _take_token(f"ip:{_client_ip(request)}", settings.ANON_RATE_LIMIT) > 0:
+        raise HTTPException(429, "limite de requisições excedido", headers={"Retry-After": "5"})
     info = await _lookup(key)
     if info is None:
         raise HTTPException(401, "chave de API inválida, expirada ou revogada")

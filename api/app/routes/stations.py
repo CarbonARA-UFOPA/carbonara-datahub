@@ -35,8 +35,8 @@ async def list_stations(_who: auth.KeyInfo = Depends(auth.optional)):
     } for r in rows]
 
 
-@router.get("/stations/{station_id}", summary="Uma estação, com os arquivos ingeridos (aberto)")
-async def get_station(station_id: str, _who: auth.KeyInfo = Depends(auth.optional)):
+@router.get("/stations/{station_id}", summary="Uma estação, com os arquivos ingeridos (aberto; caminhos só com chave)")
+async def get_station(station_id: str, who: auth.KeyInfo = Depends(auth.optional)):
     s = await db.pool().fetchrow("SELECT * FROM stations WHERE station_id = $1", station_id)
     if not s:
         raise HTTPException(404, "estação não encontrada")
@@ -48,10 +48,10 @@ async def get_station(station_id: str, _who: auth.KeyInfo = Depends(auth.optiona
         "longitude": s["longitude"], "elevation_m": s["elevation_m"],
         "forest_type": s["forest_type"], "is_mobile": s["is_mobile"], "timezone": s["timezone"],
         "installed_at": iso(s["installed_at"], tzinfo_of(None)),
-        "metadata": json.loads(s["metadata"]) if isinstance(s["metadata"], str) else s["metadata"],
+        "metadata": (json.loads(s["metadata"]) if isinstance(s["metadata"], str) else s["metadata"]) if not who.anonymous else {},
         "geometry": _geojson(s),
         "files": [{
-            "file_key": f["file_key"], "path": f["path"], "alias": f["alias"],
+            "file_key": f["file_key"], "path": f["path"] if not who.anonymous else None, "alias": f["alias"],
             "dynamic_path": f["dynamic_path"], "timezone": f["timezone"],
             "resample": f["resample"], "ingest": f["ingest"], "data_type": f["data_type"],
             "variables": json.loads(f["variables"]) if isinstance(f["variables"], str) else f["variables"],

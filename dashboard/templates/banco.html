@@ -30,7 +30,7 @@
     <dl class="kv">
       <dt>Tamanho total</dt><dd><strong>{{ d.size }}</strong></dd>
       <dt>Conexões</dt><dd>{{ d.connections }}</dd>
-      <dt>Relógio do banco</dt><dd>{{ d.now[:19] | replace('T', ' ') }} UTC</dd>
+      <dt>Relógio do banco</dt><dd>{{ (d.now or '')[:19] | replace('T', ' ') }} UTC</dd>
       <dt>Replicação</dt><dd>{{ d.wal_level }}{% if d.replication_slots %} — {% for s in d.replication_slots %}{{ s.slot_name }} ({{ 'ativo' if s.active else 'inativo' }}) {% endfor %}{% else %} (pronto; nenhum espelho conectado){% endif %}</dd>
     </dl>
     <div class="table-wrap"><table class="table">

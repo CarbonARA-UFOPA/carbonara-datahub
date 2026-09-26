@@ -9,4 +9,5 @@ COPY api/app/ /app/app/
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 # 2 workers: o host tem 4 vCPU compartilhados com banco, ingestão e dashboard.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# --proxy-headers só confia em TRUSTED_PROXY_IPS (padrão: nenhum → o IP visto é o do cliente/proxy)
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips \"${TRUSTED_PROXY_IPS:-127.0.0.1}\""]

@@ -78,10 +78,10 @@
       <label>Porta <input name="port" value="{{ conn.port }}" class="num-short"></label>
       <label>Banco <input name="name" value="{{ conn.name }}"></label>
       <label>Usuário <input name="user" value="{{ conn.user }}"></label>
-      <label>Senha <input name="password" type="password" autocomplete="new-password" placeholder="{{ 'vazio = manter a atual' if conn.has_password else 'obrigatória' }}"></label>
+      <label>Senha <input name="password" type="password" autocomplete="new-password" placeholder="{{ 'vazio = manter a atual' if conn.has_password else 'informe a senha do banco' }}"></label>
     </div>
     <div class="form-actions">
-      <button class="btn" name="acao" value="testar" type="submit">Testar conexão</button>
+      <button class="btn" name="acao" value="testar" type="submit" onclick="this.textContent='Testando… (até 90 s)'; this.form.submit();">Testar conexão</button>
       <button class="btn btn-primary" name="acao" value="salvar" type="submit"
               onclick="return confirm('Gravar esta conexão no .env? Só passa a valer depois de Aplicar aos serviços.');">Gravar no .env</button>
     </div>

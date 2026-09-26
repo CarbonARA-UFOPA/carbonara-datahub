@@ -882,7 +882,9 @@ def carry_treatment(old_vars: list, new_vars: list) -> list:
     por_col = {str(v.get("column")): v for v in old_vars or []}
     por_id = {v.get("variable_id"): v for v in old_vars or [] if v.get("variable_id")}
     for nv in new_vars:
-        old = por_col.get(str(nv.get("column"))) or por_id.get(nv.get("variable_id"))
+        # pelo ID primeiro: reindexar colunas ("⇊ Todas as colunas") não pode grudar o
+        # salto máximo da temperatura na variável que passou a ocupar a coluna dela
+        old = por_id.get(nv.get("variable_id")) or por_col.get(str(nv.get("column")))
         if not old:
             continue
         for k in ("ingest", "qc_spike", "qc_stuck"):

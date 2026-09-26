@@ -7,9 +7,9 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 
 
-def parse_when(raw: str | None, default: datetime) -> datetime:
-    """ISO 8601 (com ou sem fuso; sem fuso = UTC), ou atalhos relativos 'now', 'now-7d',
-    'now-12h', 'now-30m'."""
+def parse_when(raw: str | None, default: datetime, tzi=None) -> datetime:
+    """ISO 8601 (com fuso; SEM fuso é interpretado em ``tzi`` — o mesmo ``tz=`` da
+    resposta — ou UTC), ou atalhos relativos 'now', 'now-7d', 'now-12h', 'now-30m'."""
     if not raw:
         return default
     s = raw.strip()
@@ -34,7 +34,7 @@ def parse_when(raw: str | None, default: datetime) -> datetime:
     except ValueError as exc:
         raise HTTPException(400, f"instante inválido: '{raw}' (use ISO 8601, ex.: 2026-09-01T00:00:00Z)") from exc
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=tzi or timezone.utc)
     return dt.astimezone(timezone.utc)
 
 

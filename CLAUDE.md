@@ -697,6 +697,36 @@ computes live station status. Viewing is open; edits require the admin login
   optional named action; `/admin/db/maintenance` actions: `analyze`, `vacuum`, `compress`,
   `refresh_aggregates`, `purge_implausible_times`, `purge_orphans` (purges require typing
   APAGAR in the UI; every run is logged in `pipeline_runs`). Never add implicit writes.
+- **Review-driven invariants (26/09/2026 audit)** — keep them:
+  - The free SQL box runs on a dedicated **read-only role** `carbonara_ro` (`db.ensure_ro_pool`:
+    `pg_read_all_data`, `default_transaction_read_only`, 20 s timeout; password derived from
+    `API_KEY_PEPPER`, (re)set at every start under an advisory lock because two uvicorn
+    workers start together). The keyword regex is defense in depth, not the barrier; every
+    query is wrapped in `SELECT * FROM (...) _q LIMIT n+1` (an inner LIMIT does not protect
+    the worker from materializing millions of rows).
+  - **One ingestion process at a time**: `run_cycle` takes `pg_try_advisory_lock('carbonara-ingest')`
+    (skips the cycle if busy); `--reprocess` takes the blocking lock around reset + cycle.
+    Without it the service overwrote the reset offsets with the ones it had read before.
+  - Files are processed in **chronological order** and the QC pipeline per registration is
+    **kept across cycles** (`qc_for`): spike/persistence compare with the previous reading,
+    so rebuilding them each cycle (one new record per cycle) would never fire them.
+  - A file is "closed" (flush the open resample bucket, deliver a last line without `\n`)
+    only when a newer file exists or it has not changed for `INGEST_CLOSE_AFTER_SECONDS`
+    (2 h) — rsync delivers in batches and preserves the station mtime. A slice stopped by
+    the byte cap never flushes (`state['eof']`), or a half bucket would be frozen by
+    `DO NOTHING`. Settle uses `st_ctime` (server write time), not the station mtime.
+  - `head_sha256` is compared over the SAME length (`ingest_files.head_len`, migration
+    0005): a file under 64 kB changed signature at every append and restarted from zero.
+  - `insert_measurements` counts per page (`cur.rowcount` only covers the last page).
+  - Dashboard: **CSRF guard is app-wide** (`app.before_request` in `create_app`,
+    Sec-Fetch-Site/Origin) + `SESSION_COOKIE_SAMESITE=Lax`; `dbconn` passes the DB
+    password through the environment (never argv) and quotes `.env` values.
+  - API rate limit uses `request.client.host` only (uvicorn honours `X-Forwarded-For` just
+    for `TRUSTED_PROXY_IPS`), is applied BEFORE the key lookup, negatives are not cached,
+    caches are pruned; key cache TTL 15 s.
+  - `/series` validates station (404) and variables (`unknown_variables`), reports
+    `limit_applied`/`first_time`/`last_time`/`hint`; naive `start`/`end` are read in `tz`.
+    `/stations/{id}` hides file paths/metadata from anonymous callers.
 - **Zona de perigo** (tab `aba=perigo` on a table page; API `/admin/db/station/{clear,
   drop-variable,drop-table}` and `/admin/db/tables/{truncate,drop-column}`): for a generated
   station table — zerar (delete the file's variables for that station AND reset its ledger

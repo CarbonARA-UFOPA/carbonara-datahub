@@ -165,6 +165,9 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
     ordem = {v["label"]: i for i, v in enumerate(variables_cfg)}
     variables.sort(key=lambda e: ordem.get(e["label"], 999))
 
+    if data.get("truncated"):
+        problems.append(f"o banco devolveu só os últimos {len(ordenados)} instantes (limite da API de "
+                        f"{data.get('limit_applied')} pontos no total das variáveis) — reduza 'Linhas do final'")
     keep = _decimate(len(ordenados))
     return {
         "file": fcfg["id"],

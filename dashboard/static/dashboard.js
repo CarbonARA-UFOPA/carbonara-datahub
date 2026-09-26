@@ -906,7 +906,7 @@ function initFileForm() {
     return next;
   }
 
-  function makeVarRow(col, label = "", unit = "", min = "", max = "", vid = "") {
+  function makeVarRow(col, label = "", unit = "", min = "", max = "", vid = "", type = "numero") {
     const tr = document.createElement("tr");
     tr.innerHTML =
       '<td><input name="var_column" class="num-input" ' +
@@ -930,6 +930,7 @@ function initFileForm() {
     tr.querySelector('[name="var_min"]').value = min;
     tr.querySelector('[name="var_max"]').value = max;
     tr.querySelector('[name="var_id"]').value = vid;
+    tr.querySelector('[name="var_type"]').value = type || "numero";
     return tr;
   }
 
@@ -967,6 +968,7 @@ function initFileForm() {
           min: tr.querySelector('[name="var_min"]').value,
           max: tr.querySelector('[name="var_max"]').value,
           vid: tr.querySelector('[name="var_id"]').value,
+          type: tr.querySelector('[name="var_type"]').value,
         });
       });
       tbody.innerHTML = "";
@@ -977,7 +979,7 @@ function initFileForm() {
         tbody.appendChild(makeVarRow(i,
           prev ? prev.label : (name || `coluna ${i}`),
           prev ? prev.unit : "", prev ? prev.min : "", prev ? prev.max : "",
-          prev ? prev.vid : ""));
+          prev ? prev.vid : "", prev ? prev.type : "numero"));
       }
       area.innerHTML = `<p class="diag" style="color:var(--green)">✓ ${tbody.rows.length} ` +
         "colunas listadas (a do timestamp ficou de fora). Ajuste rótulos, unidades e " +

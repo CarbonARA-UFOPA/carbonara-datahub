@@ -43,7 +43,7 @@
         <td><small>{% if f.get('ingest') and lg %}{{ '{:,}'.format(lg.n_values).replace(',', '.') }} valores
             {%- if lg.last_time %} · até {{ lg.last_time[:16] | replace('T', ' ') }}{% endif %}
             {%- if lg.errors %} · <span class="warn">erro</span>{% endif %}
-          {% elif f.get('ingest') %}<span class="warn" title="{{ f._pendente }}">⏳ sem leitura ainda</span><br><span class="meta">{{ (f._pendente or '')[:70] }}…</span>{% else %}—{% endif %}</small></td>
+          {% elif f.get('ingest') %}<span class="warn" title="{{ f._pendente }}">⏳ sem leitura ainda</span><br><span class="meta">{{ (f._pendente or '')[:70] }}{{ '…' if (f._pendente or '') | length > 70 }}</span>{% else %}—{% endif %}</small></td>
         <td><a class="btn btn-primary" href="{{ url_for('pages.treatment_file', station_id=station.id, file_id=f.id) }}">Tratar</a></td>
       </tr>
     {% endfor %}

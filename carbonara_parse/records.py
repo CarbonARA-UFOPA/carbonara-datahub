@@ -88,14 +88,18 @@ def read_header(path: Path, fcfg: dict) -> list[str] | None:
     return rows[0] if rows else None
 
 
-def head_signature(path: Path, nbytes: int = HEAD_SIGNATURE_BYTES) -> str:
-    """SHA-256 dos primeiros ``nbytes`` — identifica o arquivo além do nome: um arquivo
-    rotacionado/recriado com o mesmo nome tem outro início, e a ingestão recomeça do zero
-    em vez de ler um offset que agora aponta para o meio de outra coisa."""
+def head_signature(path: Path, nbytes: int = HEAD_SIGNATURE_BYTES) -> tuple[str, int]:
+    """(SHA-256 dos primeiros ``nbytes``, quantos bytes entraram) — identifica o arquivo
+    além do nome: um arquivo rotacionado/recriado com o mesmo nome tem outro início, e a
+    ingestão recomeça do zero em vez de ler um offset que agora aponta para o meio de
+    outra coisa. Devolver o comprimento importa: num arquivo menor que ``nbytes`` a
+    assinatura tem de ser recomparada sobre o MESMO comprimento, senão cada append
+    pareceria uma rotação."""
     h = hashlib.sha256()
     with open(path, "rb") as fh:
-        h.update(fh.read(nbytes))
-    return h.hexdigest()
+        data = fh.read(nbytes)
+    h.update(data)
+    return h.hexdigest(), len(data)
 
 
 @dataclass
@@ -152,7 +156,9 @@ def convert_cell(cell: str, vtype: str, decimal: str, strip_re, ts_format: str |
         return dt.timestamp() if dt else None
     if vtype == "timestamp":
         dt = timeparse.to_utc(timeparse.parse_datetime_text(cell, ts_format), tzname)
-        return dt.timestamp() if dt else None
+        if dt is None or not (timeparse._EPOCH_MIN_UTC <= dt <= timeparse._EPOCH_MAX_UTC):
+            return None                    # '%H:%M:%S' vira 1900 → não é um instante real
+        return dt.timestamp()
     if vtype == "booleano":
         return tailer.to_bool(cell)
     if vtype == "inteiro":
@@ -160,14 +166,18 @@ def convert_cell(cell: str, vtype: str, decimal: str, strip_re, ts_format: str |
     return tailer.to_float(cell, decimal, strip_re)
 
 
-def iter_lines(path: Path, start_offset: int = 0, max_bytes: int | None = None
-               ) -> Iterator[tuple[int, str]]:
+def iter_lines(path: Path, start_offset: int = 0, max_bytes: int | None = None,
+               final: bool = False, state: dict | None = None) -> Iterator[tuple[int, str]]:
     """Linhas COMPLETAS a partir de ``start_offset``: gera ``(offset_após_a_linha, texto)``.
 
     Para em ``max_bytes`` lidos (o chamador continua no próximo ciclo a partir do último
     offset devolvido) ou no fim do arquivo. Um resto sem ``\\n`` não é entregue — é a
-    linha que o datalogger ainda está escrevendo."""
+    linha que o datalogger ainda está escrevendo — a menos que ``final`` (arquivo que
+    não cresce mais: a última linha de um CSV sem quebra final também vale).
+    ``state['eof']`` diz se o fim do arquivo foi alcançado (e não o teto de bytes)."""
     lidos = 0
+    if state is not None:
+        state["eof"] = False
     with open(path, "rb") as fh:
         fh.seek(start_offset)
         pos = start_offset
@@ -175,11 +185,18 @@ def iter_lines(path: Path, start_offset: int = 0, max_bytes: int | None = None
         while True:
             chunk = fh.read(_CHUNK)
             if not chunk:
+                if state is not None:
+                    state["eof"] = True
+                if final and resto.strip():
+                    pos += len(resto)
+                    yield pos, resto.rstrip(b"\r").decode("utf-8", errors="replace")
                 break
             lidos += len(chunk)
             buf = resto + chunk
             partes = buf.split(b"\n")
             resto = partes.pop()           # última parte: sem \n (pode ser vazia)
+            if pos == 0 and partes and partes[0].startswith(b"\xef\xbb\xbf"):
+                partes[0] = partes[0][3:]  # BOM UTF-8 não faz parte da 1ª coluna
             for parte in partes:
                 pos += len(parte) + 1
                 yield pos, parte.rstrip(b"\r").decode("utf-8", errors="replace")
@@ -195,7 +212,8 @@ class Record:
 
 
 def iter_records(path: Path, fcfg: dict, start_offset: int, tzname: str | None,
-                 header: list[str] | None, max_bytes: int | None = None) -> Iterator[Record]:
+                 header: list[str] | None, max_bytes: int | None = None,
+                 final: bool = False, state: dict | None = None) -> Iterator[Record]:
     """Registros parseados a partir de ``start_offset``, com o carimbo já em UTC.
 
     Com ``start_offset == 0`` pula ``skip_header_lines`` linhas (cabeçalho); linhas em
@@ -209,7 +227,7 @@ def iter_records(path: Path, fcfg: dict, start_offset: int, tzname: str | None,
     ts_format = ts_cfg.get("format") or "%Y-%m-%d %H:%M:%S"
     ts_idx_cache: dict[int, int | None] = {}
 
-    for off, text in iter_lines(path, start_offset, max_bytes):
+    for off, text in iter_lines(path, start_offset, max_bytes, final=final, state=state):
         if skip > 0:
             skip -= 1
             continue

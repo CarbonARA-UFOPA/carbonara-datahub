@@ -9,7 +9,7 @@
   {% if diag %}
   <section class="card">
     <div class="page-head">
-      <h2>Verificações <small>{{ diag.generated_at[:19] | replace('T', ' ') }} UTC · {{ diag.elapsed_ms }} ms</small></h2>
+      <h2>Verificações <small>{{ (diag.generated_at or '')[:19] | replace('T', ' ') }} UTC · {{ diag.elapsed_ms }} ms</small></h2>
       <div class="diag-summary">
         <span class="diag-pill diag-error">{{ diag.summary.error }} erro(s)</span>
         <span class="diag-pill diag-warn">{{ diag.summary.warn }} aviso(s)</span>
@@ -63,8 +63,8 @@
       {% endfor %}
       </tbody>
     </table>
-    <p class="meta">Reingestão de um arquivo (após mudar fuso/ID/regras) continua pela linha de comando:
-      <code>docker compose exec ingestion python ingest.py --reprocess &lt;estação&gt; --file &lt;arquivo&gt; --apagar</code>.</p>
+    <p class="meta">Para reingerir UM arquivo do zero (após mudar fuso, IDs ou regras): abra a tabela dele no banco da
+      estação → aba <em>Zona de perigo</em> → <em>Zerar e reingerir</em>.</p>
   </section>
 </div>
 </div>

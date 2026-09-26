@@ -417,7 +417,8 @@ def station_delete(station_id):
     _station_or_404(cfg, station_id)
     cfg["stations"] = [s for s in cfg["stations"] if s["id"] != station_id]
     _save(cfg)
-    flash(f"Estação '{station_id}' removida (os dados em disco não foram tocados).", "ok")
+    flash(f"Estação '{station_id}' removida da dashboard. Os arquivos em disco e o que já estava no banco "
+          "continuam lá (séries órfãs: Banco → Diagnóstico para remover, se for o caso).", "ok")
     return redirect(url_for("pages.index"))
 
 
@@ -550,7 +551,8 @@ def file_delete(station_id, file_id):
     station = _station_or_404(cfg, station_id)
     station["files"] = [f for f in station.get("files", []) if f["id"] != file_id]
     _save(cfg)
-    flash(f"Arquivo '{file_id}' removido do monitoramento (o arquivo em disco não foi tocado).", "ok")
+    flash(f"Arquivo '{file_id}' removido do monitoramento. O arquivo em disco e o que já estava no banco "
+          "continuam lá (para apagar do banco: Banco → tabela → Zona de perigo, ou Diagnóstico → séries órfãs).", "ok")
     # `back` é um RÓTULO mapeado via url_for (mesma regra dos botões do hub) — nunca
     # uma URL vinda do cliente, para não abrir redirect arbitrário.
     if request.form.get("back") == "edit":
@@ -590,9 +592,12 @@ def api_keys_create():
     body = {"owner": (request.form.get("owner") or "").strip() or "sem-nome",
             "scopes": scopes or ["read"], "rate_limit": rate, "days": days if days > 0 else None}
     try:
-        created = api_client.post(cfg, "/admin/keys", body)
+        created = api_client.post(cfg, "/admin/keys", body) or {}
     except api_client.ApiError as exc:
         flash(f"Não foi possível criar a chave: {exc}", "error")
+        return redirect(url_for("pages.api_keys"))
+    if not created.get("key"):
+        flash("A API não devolveu a chave.", "error")
         return redirect(url_for("pages.api_keys"))
     session["new_api_key"] = {"key": created.get("key"), "owner": created.get("owner"),
                               "prefix": created.get("prefix")}
@@ -617,13 +622,13 @@ def api_keys_revoke(key_id: int):
 # escolhas: ingerir? fuso? reamostrar? e, por variável, entra? ID, faixa (flag 2), salto
 # (flag 3), travado (flag 4). Grava no MESMO registro que o formulário do arquivo usa —
 # a ingestão relê o config a cada ciclo.
-def _ledger_by_file(cfg: dict) -> dict:
+def _ledger_by_file(cfg: dict, station: str | None = None) -> dict:
     """{(station_id, file_key): resumo} do ledger da ingestão, via API (tolerante)."""
     out: dict = {}
     if not api_client.configured(cfg):
         return out
     try:
-        rows = api_client.get(cfg, "/files", timeout=6) or []
+        rows = api_client.get(cfg, "/files", {"station": station} if station else None, timeout=6) or []
     except api_client.ApiError as exc:
         return {"_error": str(exc)}
     for row in rows:
@@ -639,20 +644,22 @@ def _ledger_by_file(cfg: dict) -> dict:
     return out
 
 
-def _monitored_seen(cfg: dict) -> set:
-    """(station_id, file_key) que a ingestão já espelhou em monitored_files."""
+def _monitored_seen(cfg: dict) -> set | None:
+    """(station_id, file_key) que a ingestão já espelhou em monitored_files; None = API fora."""
     if not api_client.configured(cfg):
-        return set()
+        return None
     try:
         return {(r["station_id"], r["file_key"]) for r in api_client.get(cfg, "/monitored", timeout=6) or []}
     except api_client.ApiError:
-        return set()
+        return None
 
 
-def _pending_reason(f: dict, seen: set, station_id: str, ledger: dict) -> str | None:
+def _pending_reason(f: dict, seen: set | None, station_id: str, ledger: dict) -> str | None:
     """Por que um arquivo marcado para o banco ainda não tem leitura."""
     if not f.get("ingest") or ledger.get((station_id, f.get("id"))):
         return None
+    if seen is None or ledger.get("_error"):
+        return "estado indisponível: a API não respondeu (Configurações → API de dados)"
     if (station_id, f.get("id")) not in seen:
         return ("a ingestão ainda não leu este registro — ela relê o config a cada ciclo (30 s); "
                 "se persistir, o serviço ingestion não está enxergando o config.yaml atual")
@@ -693,7 +700,7 @@ def treatment_file(station_id, file_id):
     fcfg = config_store.get_file(station, file_id)
     if not fcfg:
         abort(404)
-    ledger = _ledger_by_file(cfg)
+    ledger = _ledger_by_file(cfg, station_id)
     pendente = _pending_reason(fcfg, _monitored_seen(cfg), station_id, ledger)
     return render_template("tratamento_arquivo.html", cfg=cfg, station=station, f=fcfg,
                            lg=ledger.get((station_id, file_id)), resumo=_treat_summary(fcfg), pendente=pendente,
@@ -741,6 +748,22 @@ _COLUMN_TYPES = [("texto", "Texto"), ("numero", "Número (decimal)"), ("inteiro"
                  ("data", "Data"), ("json", "JSON")]
 
 
+_SCHEMAS_CACHE: dict = {"t": 0.0, "url": None, "data": None}
+_SCHEMAS_TTL = 20.0
+
+
+def _schemas_cached(cfg: dict) -> list:
+    """Lista de bancos da barra lateral: uma chamada a cada 20 s, não uma por página."""
+    import time as _t
+    agora = _t.time()
+    url = api_client.base_url(cfg)
+    if _SCHEMAS_CACHE["data"] is not None and _SCHEMAS_CACHE["url"] == url and agora - _SCHEMAS_CACHE["t"] < _SCHEMAS_TTL:
+        return _SCHEMAS_CACHE["data"]
+    data = api_client.get(cfg, "/admin/db/schemas", timeout=10) or []
+    _SCHEMAS_CACHE.update({"t": agora, "url": url, "data": data})
+    return data
+
+
 def _banco_base(cfg: dict) -> dict:
     """Contexto comum das páginas do banco: lista de bancos (barra lateral)."""
     ctx = {"api_ok": api_client.configured(cfg), "schemas": [], "error": None,
@@ -748,7 +771,7 @@ def _banco_base(cfg: dict) -> dict:
     if not ctx["api_ok"]:
         return ctx
     try:
-        ctx["schemas"] = api_client.get(cfg, "/admin/db/schemas", timeout=20) or []
+        ctx["schemas"] = _schemas_cached(cfg)
     except api_client.ApiError as exc:
         ctx["error"] = str(exc)
     return ctx
@@ -828,7 +851,7 @@ def banco_new_schema():
 def banco_schema(schema):
     cfg = _load()
     ctx = _banco_base(cfg)
-    tables = _api_or_flash(cfg, api_client.get, "/admin/db/tables", {"schema": schema}, timeout=30) or []
+    tables = [] if ctx["error"] else (_api_or_flash(cfg, api_client.get, "/admin/db/tables", {"schema": schema}, timeout=30) or [])
     info = next((s for s in ctx["schemas"] if s["schema"] == schema), None)
     if info is None and ctx["api_ok"] and not ctx["error"]:
         abort(404)
@@ -866,9 +889,9 @@ def banco_table(schema, table):
     ctx = _banco_base(cfg)
     tab = request.args.get("aba") or "dados"
     params = {"schema": schema, "table": table, "limit": 50,
-              "offset": int(request.args.get("offset") or 0), "sort": request.args.get("sort"),
+              "offset": max(0, request.args.get("offset", 0, type=int) or 0), "sort": request.args.get("sort"),
               "dir": request.args.get("dir") or "desc", "q": request.args.get("q") or ""}
-    structure = _api_or_flash(cfg, api_client.get, "/admin/db/columns", {"schema": schema, "table": table}, timeout=30)
+    structure = None if ctx["error"] else _api_or_flash(cfg, api_client.get, "/admin/db/columns", {"schema": schema, "table": table}, timeout=30)
     data = None
     if structure and tab == "dados":
         data = _api_or_flash(cfg, api_client.get, "/admin/db/rows", params, timeout=60)
@@ -991,7 +1014,7 @@ _MAINT_ACTIONS = {
 def banco_diagnostico():
     cfg = _load()
     ctx = _banco_base(cfg)
-    diag = _api_or_flash(cfg, api_client.get, "/admin/db/diagnostics", timeout=120) if ctx["api_ok"] else None
+    diag = _api_or_flash(cfg, api_client.get, "/admin/db/diagnostics", timeout=120) if ctx["api_ok"] and not ctx["error"] else None
     return render_template("banco_diagnostico.html", cfg=cfg, diag=diag, actions=_MAINT_ACTIONS,
                            current="diagnostico", **ctx)
 
@@ -1050,8 +1073,9 @@ def banco_export(schema, table):
     except api_client.ApiError as exc:
         flash(f"Exportação falhou: {exc}", "error")
         return redirect(url_for("pages.banco_table", schema=schema, table=table))
+    from werkzeug.utils import secure_filename
     resp = Response(data, mimetype="text/csv")
-    resp.headers["Content-Disposition"] = f'attachment; filename="{schema}_{table}.csv"'
+    resp.headers["Content-Disposition"] = f'attachment; filename="{secure_filename(schema + "_" + table)}.csv"'
     return resp
 
 
@@ -1065,14 +1089,17 @@ def guia():
             stations = api_client.get(cfg, "/stations", timeout=10) or []
         except api_client.ApiError:
             stations = []
-    return render_template("guia.html", cfg=cfg, stations=stations, api_url=api_client.public_url(cfg) or "http://<servidor>:8000")
+    return render_template("guia.html", cfg=cfg, stations=stations,
+                           api_url=api_client.public_url(cfg) or "http://<servidor>:8000",
+                           sem_url_publica=not (cfg.get("api") or {}).get("public_url"))
 
 
 # --- Banco: zona de perigo (sempre com texto de confirmação, validado também na API) -------
-def _danger(cfg, path, body, ok_msg, back):
+def _danger(cfg, path, body, ok_msg, back, **extra):
+    import collections
     try:
-        res = api_client.post(cfg, path, body, timeout=600)
-        flash(ok_msg.format(**res), "ok")
+        res = api_client.post(cfg, path, body, timeout=600) or {}
+        flash(ok_msg.format_map(collections.defaultdict(lambda: "?", {**res, **extra})), "ok")
     except api_client.ApiError as exc:
         flash(str(exc), "error")
     return redirect(back)
@@ -1101,7 +1128,7 @@ def banco_station_drop_variable(schema, table):
     vid = (request.form.get("variable_id") or "").strip()
     return _danger(cfg, "/admin/db/station/drop-variable",
                    {"station": _station_of(schema), "variable_id": vid, "confirm": request.form.get("confirm", "")},
-                   "Variável '" + vid + "' apagada: {deleted} valor(es). {note}.", back)
+                   "Variável '{vid}' apagada: {deleted} valor(es). {note}.", back, vid=vid)
 
 
 @pages.post("/banco/<schema>/<table>/apagar-tabela")
@@ -1116,9 +1143,10 @@ def banco_station_drop_table(schema, table):
         return redirect(url_for("pages.banco_table", schema=schema, table=table, aba="perigo"))
     # Desliga a ingestão no REGISTRO da dashboard também — senão o próximo ciclo recria a view.
     station = config_store.get_station(cfg, _station_of(schema))
+    fk = res.get("file_key") or table
     if station:
         for f in station.get("files") or []:
-            if f.get("id") == table:
+            if f.get("id") == fk or config_store.table_name_of(f) == table:
                 f["ingest"] = False
         _save(cfg)
     flash(f"Tabela {schema}.{table} apagada: {res.get('deleted')} valor(es) removido(s), view removida e ingestão "

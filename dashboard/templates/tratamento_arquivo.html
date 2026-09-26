@@ -45,11 +45,11 @@
     seguidas, na unidade da variável (flag 3) · <strong>Travado (N)</strong> = N leituras iguais seguidas
     marcam sensor travado (flag 4). Vazio = regra desligada.</p>
   <div class="treat-tools">
-    <input type="search" id="treat-filter" placeholder="filtrar variáveis (rótulo, ID, coluna)…">
+    <input type="search" id="treat-filter" aria-label="filtrar variáveis" placeholder="filtrar variáveis (rótulo, ID, coluna)…">
     <span class="meta" id="treat-count"></span>
-    <button type="button" class="btn" id="treat-all">Todas no banco</button>
-    <button type="button" class="btn" id="treat-none">Nenhuma no banco</button>
-    <button type="button" class="btn" id="treat-invert">Inverter (só as visíveis)</button>
+    <button type="button" class="btn" id="treat-all">Marcar visíveis</button>
+    <button type="button" class="btn" id="treat-none">Desmarcar visíveis</button>
+    <button type="button" class="btn" id="treat-invert">Inverter visíveis</button>
   </div>
   <div class="treat-wrap">
   <table class="table treat-vars" id="treat-table">
@@ -76,12 +76,13 @@
   </table>
   </div>
   {% if not f.variables %}<p class="empty">Sem variáveis mapeadas — mapeie as colunas em <em>Editar parse/colunas</em>.</p>{% endif %}
-  <div class="form-actions">
+  <div class="form-actions sticky-actions">
     <button class="btn btn-primary" type="submit">Salvar tratamento</button>
     <a class="btn" href="{{ url_for('pages.treatment') }}">Cancelar</a>
+    <span class="meta" id="treat-dirty" hidden>alterações não salvas</span>
   </div>
-  <p class="meta">Para reaplicar regras ao histórico já gravado:
-    <code>docker compose exec ingestion python ingest.py --reprocess {{ station.id }} --file {{ f.id }} --apagar</code></p>
+  <p class="meta">Para reaplicar estas regras ao histórico já gravado: no banco da estação, abra a tabela deste arquivo
+    → <em>Zona de perigo</em> → <em>Zerar e reingerir</em>.</p>
 </form>
 
 <datalist id="tz-list">
@@ -108,6 +109,11 @@
     document.getElementById("treat-invert").addEventListener("click", function () { marca(function (v) { return !v; }); });
     rows.forEach(function (r) { var c = r.querySelector(".treat-chk"); if (c) c.addEventListener("change", atualiza); });
     atualiza();
+    /* aviso de alterações não salvas (a página é longa e o Salvar fica no fim) */
+    var form = filtro.closest("form"), sujo = false, dirty = document.getElementById("treat-dirty");
+    form.addEventListener("input", function () { sujo = true; if (dirty) dirty.hidden = false; });
+    form.addEventListener("submit", function () { sujo = false; });
+    window.addEventListener("beforeunload", function (e) { if (sujo) { e.preventDefault(); e.returnValue = ""; } });
   })();
 </script>
 {% endblock %}

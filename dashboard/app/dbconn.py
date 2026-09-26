@@ -53,16 +53,22 @@ def write_env(updates: dict) -> None:
     Escrita atômica, preservando o modo (600)."""
     p = env_path()
     lines = p.read_text(encoding="utf-8").splitlines() if p.is_file() else []
+    def fmt(v) -> str:
+        v = "" if v is None else str(v)
+        if re.fullmatch(r"[A-Za-z0-9_./:@,+=-]*", v):
+            return v
+        # compose lê .env com aspas duplas e escapes: senha com $, #, espaço ou aspas
+        return '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("$", "$$") + '"'
     pending = dict(updates)
     out = []
     for ln in lines:
         m = _LINE.match(ln)
         if m and not ln.lstrip().startswith("#") and m.group(1) in pending:
-            out.append(f"{m.group(1)}={pending.pop(m.group(1))}")
+            out.append(f"{m.group(1)}={fmt(pending.pop(m.group(1)))}")
         else:
             out.append(ln)
     for k, v in pending.items():
-        out.append(f"{k}={v}")
+        out.append(f"{k}={fmt(v)}")
     mode = p.stat().st_mode & 0o777 if p.is_file() else 0o600
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".env-", suffix=".tmp")
     try:
@@ -106,10 +112,10 @@ def docker_ok() -> tuple[bool, str]:
     return True, r.stdout.strip()
 
 
-def _compose(args: list[str], timeout: int = 300) -> tuple[bool, str]:
+def _compose(args: list[str], timeout: int = 300, extra_env: dict | None = None) -> tuple[bool, str]:
     try:
         r = subprocess.run(["docker", "compose", *args], cwd=str(repo_root()), capture_output=True,
-                           text=True, timeout=timeout)
+                           text=True, timeout=timeout, env={**os.environ, **(extra_env or {})})
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
     txt = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
@@ -147,9 +153,10 @@ def test_connection(host: str, port: str, name: str, user: str, password: str | 
             "    print('OK:', v.split(',')[0], '| timescaledb', t, '| measurements:', 'sim' if n else 'NÃO (schema ausente)')\n"
             "    await c.close()\n"
             "asyncio.run(m())")
+    # a senha vai pelo AMBIENTE (-e W sem valor = herda), nunca na linha de comando (ps)
     args = ["run", "--rm", "--no-deps", "-T", "-e", f"H={host}", "-e", f"P={port}", "-e", f"D={name}",
-            "-e", f"U={user}", "-e", f"W={pw}", "api", "python", "-c", code]
-    ok, out = _compose(args, timeout=90)
+            "-e", f"U={user}", "-e", "W", "api", "python", "-c", code]
+    ok, out = _compose(args, timeout=90, extra_env={"W": pw})
     if ok and "OK:" in out:
         return True, next((ln for ln in out.splitlines() if ln.startswith("OK:")), out)
     # falha: só a última linha útil (a exceção), não o traceback inteiro

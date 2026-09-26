@@ -11,9 +11,8 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from . import db, settings
 from .routes import admin_db, admin_maint, files, health, keys, series, stations, variables
@@ -22,6 +21,7 @@ from .routes import admin_db, admin_maint, files, health, keys, series, stations
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.connect()
+    await db.ensure_ro_pool()
     try:
         yield
     finally:
@@ -46,7 +46,3 @@ for r in (health.router, stations.router, variables.router, series.router,
           files.router, keys.router, admin_db.router, admin_maint.router):
     app.include_router(r)
 
-
-@app.exception_handler(ValueError)
-async def _value_error(_request: Request, exc: ValueError):
-    return JSONResponse({"detail": str(exc)}, status_code=400)

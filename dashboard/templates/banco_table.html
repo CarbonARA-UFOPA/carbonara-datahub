@@ -45,16 +45,17 @@
       {% if data and data.rows %}
       {% set cols = data.columns | reject('equalto', '_ctid') | list %}
       <div class="db-grid"><table class="table">
-        <thead><tr>{% if structure.editable %}<th></th>{% endif %}
+        <thead><tr>{% if can_del %}<th></th>{% endif %}
           {% for c in cols %}<th>{% if structure.generated or structure.hypertable %}{{ c }}{% if c == 'time' %} {{ '▲' if data.dir == 'asc' else '▼' }}{% endif %}{% else %}<a href="{{ url_for('pages.banco_table', schema=schema, table=table, sort=c, dir=('asc' if data.sort == c and data.dir == 'desc' else 'desc'), q=params.q) }}">{{ c }}{% if data.sort == c %} {{ '▲' if data.dir == 'asc' else '▼' }}{% endif %}</a>{% endif %}</th>{% endfor %}
         </tr></thead>
+        {% set can_del = structure.editable and not structure.hypertable %}
         <tbody>{% for row in data.rows %}
-          {% set ctid = row[0] if structure.editable else none %}
-          <tr>{% if structure.editable %}
+          {% set ctid = row[0] if can_del else none %}
+          <tr>{% if can_del %}
             <td><form method="post" action="{{ url_for('pages.banco_delete_row', schema=schema, table=table) }}" onsubmit="return confirm('Apagar esta linha?');">
               <input type="hidden" name="ctid" value="{{ ctid }}"><input type="hidden" name="offset" value="{{ params.offset }}"><input type="hidden" name="q" value="{{ params.q }}">
-              <button class="btn btn-danger" type="submit" title="apagar linha">×</button></form></td>{% endif %}
-            {% for v in (row[1:] if structure.editable else row) %}<td class="{{ 'null' if v is none }}">{{ 'NULL' if v is none else v }}</td>{% endfor %}
+              <button class="btn btn-danger" type="submit" title="apagar linha" aria-label="apagar linha">×</button></form></td>{% endif %}
+            {% for v in (row[1:] if can_del else row) %}<td class="{{ 'null' if v is none }}">{{ 'NULL' if v is none else v }}</td>{% endfor %}
           </tr>
         {% endfor %}</tbody>
       </table></div>
