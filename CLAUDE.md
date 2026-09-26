@@ -26,10 +26,24 @@ docker compose ps                                 # all should be healthy/runnin
 docker compose logs -f ingestion
 ```
 
-Compose services: `db`, `ingestion` (with the QA/QC library from `processing/` built in),
-and `ftp` (now read-only distribution). Collection is
+Compose services: `db` (TimescaleDB-HA image, pinned tag, PostGIS included, bind-mounted
+`PG_DATA_DIR` on the data disk, tuned for the 7.6 GB host, `wal_level=replica` for a future
+mirror) and `ingestion` (with the QA/QC library from `processing/` built in) — the latter
+sits behind the `ingestao` **profile** and does NOT start with a plain `up -d`: the current
+`ingest.py` MOVES files out of `incoming/`, which breaks the collection (append-only `.dat`s,
+dashboard tailing) — it is rewritten in phase 1 of `docs/estrategia-dados.md` (incremental,
+driven by the dashboard's monitored files/variables, never moving anything). The old
+`ftp` compose service is gone (native vsftpd). Collection is
 **not** a Compose service — it's the `rsync-hub` script running natively on the host (see the
 collection layer below); prep the host with `sudo ./collection/rsync-hub install`.
+**Host prep for the database** is `sudo ./database/setup-db-host.sh` (phase 0): installs
+Docker with `data-root` on the data disk (`/mnt/data_8tb` — the root disk is ~80 % full,
+nothing may land there), creates `PG_DATA_DIR`, generates `.env` (never overwrites), limits
+journald; `--subir` also brings `db` up and checks health/wal_level. Production facts
+(26/09/2026): 4 vCPU, 7.6 GB RAM, BASE `/mnt/data_8tb/carbonara-data-hub`, no RAID, no
+backup by design (the DB only holds data that passed through the flow and is rebuilt by
+idempotent re-ingestion), API planned on **8000/TCP** with API keys, per-file timezone with
+the DB always in UTC.
 
 Notes:
 - `.env.example` is referenced but **not committed** — compose requires `FTP_USER_PASS`,

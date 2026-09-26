@@ -336,12 +336,13 @@ Revoke a station at any time with `sudo rsync-hub remove flona01`.
 ## Quick start
 
 ```bash
-cp .env.example .env                                     # set passwords and FTP_PUBLIC_HOST
+sudo ./database/setup-db-host.sh                         # once: Docker on the data disk + .env
+docker compose up -d                                     # brings up the database only
+docker compose ps                                        # carbonara-db healthy
+# ingestion is gated behind the `ingestao` profile until phase 1 (docs/estrategia-dados.md):
 cp ingestion/config.example.yaml ingestion/config.yaml   # CSV column → variable mapping
 cp processing/config.example.yaml processing/config.yaml # valid physical ranges per variable
-# generate the FTP TLS certificate (see ftp/README.md)
-docker compose up -d
-docker compose ps                                        # db, ingestion, ftp
+docker compose --profile ingestao up -d --build ingestion
 ```
 
 End-to-end test without a real station: drop a sample CSV into the landing directory

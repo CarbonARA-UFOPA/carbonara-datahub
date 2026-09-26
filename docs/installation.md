@@ -209,69 +209,70 @@ desfaz uma pausa individual. O estado fica em marcadores `<raiz>/pause/` (`_toda
 
 ---
 
-## Parte B — Dados (Docker Compose)
+## Parte B — Banco de dados (Docker Compose)
 
-### B1. Configurar o ambiente (`.env`)
+O desenho completo (o que entra no banco, tratamento, API, fases) está em
+[`estrategia-dados.md`](estrategia-dados.md). Esta parte cobre a **fase 0**: o banco no ar,
+no disco de dados, pronto para ser espelhado.
 
-Crie o `.env` (use `.env.example` como base, se presente) com, no mínimo:
+### B1. Preparar o host (uma vez, como root)
 
 ```bash
-CARBONARA_ROOT=/srv/carbonara     # MESMA raiz usada pelo rsync-hub
-DB_USER=carbonara
-DB_PASSWORD=troque-esta-senha
-DB_NAME=carbonara
-FTP_USER_NAME=carbonara           # usuário de leitura da distribuição FTP
-FTP_USER_PASS=troque-esta-senha
-FTP_PUBLIC_HOST=10.1.90.246       # IP/hostname da workstation (para o modo passivo do FTP)
+sudo ./database/setup-db-host.sh            # disco padrão /mnt/data_8tb; --disco para outro
+sudo ./database/setup-db-host.sh --subir    # idem, e já sobe o banco ao final
 ```
 
-`CARBONARA_ROOT` é o que faz os containers montarem `incoming/`, `archive/` e `quarantine/` da
-mesma raiz que a coleta usa. Sem defini-lo, o Compose cai no default de desenvolvimento (`./data`).
+O script instala o Docker com o `data-root` **no disco de dados** (o disco root da
+workstation está quase cheio — nada do banco pode ir para lá), cria
+`<disco>/carbonara-db/pgdata`, põe seu usuário no grupo `docker`, limita o journald e
+gera o `.env` com senhas aleatórias (nunca sobrescreve um `.env` existente). Saia e entre
+de novo para o grupo `docker` valer. Ele não toca na coleta, na dashboard nem no FTP.
 
-### B2. Configurar a ingestão e o processamento (QA/QC)
+O `.env` gerado tem `CARBONARA_ROOT` (a MESMA raiz do rsync-hub, lida de
+`/etc/rsync-hub.conf`), `PG_DATA_DIR`, `DB_*`, `REPLICATION_PASSWORD`, `API_PORT` e
+`API_KEY_PEPPER` — modelo em `.env.example`.
+
+### B2. Subir e verificar o banco
 
 ```bash
-cp ingestion/config.example.yaml ingestion/config.yaml
-# Ajuste o mapa coluna->variável (bloco `columns:`) conforme os dataloggers reais.
-
-cp processing/config.example.yaml processing/config.yaml
-# Faixas físicas válidas por variável — o QC roda DENTRO da ingestão, antes do
-# insert (ver processing/README.md).
+docker compose up -d          # sobe só o db (a ingestão fica no perfil `ingestao`, ver abaixo)
+docker compose ps             # carbonara-db deve ficar "healthy"
+docker exec -it carbonara-db psql -U carbonara -d carbonara -c "\dt"
+docker exec -it carbonara-db psql -U carbonara -d carbonara \
+  -c "SELECT * FROM timescaledb_information.hypertables;" \
+  -c "SHOW wal_level;"        # replica — pronto para o espelho
 ```
 
-### B3. Gerar o certificado TLS do FTP (FTPS)
+No **primeiro** start (diretório `PG_DATA_DIR` vazio), o container executa
+`database/init/01_*.sql`, `02_*.sql`, `03_*.sql` (extensões, schema, hypertable) e
+`04_replication.sh` (papel `replicator` + `pg_hba`). Para reaplicar o schema em dev:
+`docker compose down` e esvaziar `PG_DATA_DIR` (destrói os dados).
+
+O PostgreSQL escuta só em `127.0.0.1:5432` (`DB_BIND`). Quando o espelho existir, libere
+a porta para o IP dele e rode lá `pg_basebackup -h <hub> -U replicator -R -X stream`.
+
+### B3. Ingestão e processamento (QA/QC)
+
+A ingestão **não sobe por padrão**: a versão atual move arquivos de `incoming/`, o que
+é incompatível com a coleta (os `.dat` crescem por append e a dashboard faz tail neles).
+Ela é reescrita na fase 1 para ler só os arquivos monitorados, de forma incremental.
+Para testes em dev (raiz `./data`, nunca em produção):
 
 ```bash
-mkdir -p ftp/tls
-openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 3650 \
-  -keyout ftp/tls/pure-ftpd.pem -out ftp/tls/pure-ftpd.pem -subj "/CN=carbonara-ftp"
-chmod 600 ftp/tls/pure-ftpd.pem
-```
-> Detalhes e variante com CA real em [`../ftp/README.md`](../ftp/README.md).
-
-### B4. Subir os serviços
-
-```bash
-docker compose up -d
-docker compose ps          # db, ingestion e ftp devem ficar "healthy"/"running"
+cp ingestion/config.example.yaml ingestion/config.yaml     # mapa coluna->variável
+cp processing/config.example.yaml processing/config.yaml   # faixas físicas (QC)
+docker compose --profile ingestao up -d --build ingestion
 docker compose logs -f ingestion
 ```
 
-No **primeiro** start, o container do banco executa `database/init/01_*.sql`, `02_*.sql` e
-`03_*.sql` automaticamente (extensões, schema e hypertable).
+### B4. Porta da API
 
-### B5. Verificar o banco
+A API de dados (fase 0/1) escuta em `API_PORT` (padrão **8000/TCP**). Peça ao STI a
+liberação de **entrada** dessa porta no servidor; o 5432 não precisa (fica local). Sem
+domínio/certificado a API sai em HTTP; quando houver, o apache2 já instalado faz o proxy
+com TLS. O acesso é por chave de API (`X-API-Key`), gerida pela dashboard.
 
-```bash
-docker exec -it carbonara-db psql -U carbonara -d carbonara -c "\dt"
-docker exec -it carbonara-db psql -U carbonara -d carbonara \
-  -c "SELECT * FROM timescaledb_information.hypertables;"
-```
-
-### B6. Distribuição pelo FTP
-
-O serviço `ftp` **não recebe** dados — serve `archive/` como **somente leitura**. Consumidores
-baixam com o usuário `FTP_USER_NAME`/`FTP_USER_PASS` (via FTPS). Nada de upload por aqui.
+### B5. Distribuição pelo FTP
 
 **Servidor com vsftpd nativo** (o caso da workstation de produção — instalação em
 [`ftp-native-install.md`](ftp-native-install.md)): as contas e as **publicações** (o que do

@@ -1,61 +1,81 @@
-# docker-compose.yml — serviços centrais do CARBONARA na workstation.
-# Sobe: (1) TimescaleDB, (2) ingestão (com QA/QC embutido, biblioteca processing/),
-# (3) FTP de distribuição (read-only).
-# A COLETA das estações NÃO é feita aqui: é rsync-over-SSH nativo no host, pelo script
-# `rsync-hub` (que também monitora as conexões). O FTP virou só ponto de saída.
-# Uso: cp .env.example .env && docker compose up -d
+# docker-compose.yml — serviços de DADOS do CARBONARA na workstation.
+# Sobe: (1) db — PostgreSQL 16 + TimescaleDB (+ PostGIS, para a fase geo), no disco de
+#           dados; (2) ingestion — ingestão com QA/QC embutido (perfil `ingestao`: NÃO
+#           sobe por padrão — a versão atual MOVE arquivos de incoming/, o que é
+#           incompatível com a coleta; ver docs/estrategia-dados.md, fase 1).
+# NÃO estão aqui: a coleta (rsync-hub, nativo), a dashboard (Flask, nativa) e o FTP de
+# distribuição (vsftpd nativo — docs/ftp-native-install.md). O pure-ftpd foi removido.
 #
-# CARBONARA_ROOT (default ./data em dev; /srv/carbonara em produção, onde o rsync-hub
-# escreve incoming/) é a raiz dos volumes de dados, compartilhada entre os serviços.
+# Uso: sudo ./database/setup-db-host.sh   (uma vez: Docker no disco de dados + .env)
+#      docker compose up -d                (sobe só o db)
+#
+# CARBONARA_ROOT (default ./data em dev; em produção a raiz do rsync-hub, onde chega
+# incoming/) é a raiz dos volumes de dados. PG_DATA_DIR é o diretório do cluster no
+# disco de dados (o setup cria <disco>/carbonara-db/pgdata) — bind mount, não volume
+# nomeado, para que o banco viva no MESMO disco que o datahub e fora do disco root.
 
 name: carbonara-server
 
 services:
   # ---------------------------------------------------------------------------
-  # FTP/FTPS de DISTRIBUIÇÃO (read-only) — NÃO recebe mais dados das estações.
-  # A coleta agora é rsync-over-SSH (ver rsync-hub). Aqui o FTP só disponibiliza os
-  # dados já processados (archive/) para consumidores; monta archive/ como read-only.
-  # ---------------------------------------------------------------------------
-  ftp:
-    image: stilliard/pure-ftpd:hardened
-    container_name: carbonara-ftp
-    restart: unless-stopped
-    ports:
-      - "${FTP_PORT:-21}:21"
-      - "${FTP_PASV_PORT_RANGE:-30000-30009}:30000-30009"
-    environment:
-      PUBLICHOST: "${FTP_PUBLIC_HOST:-localhost}"
-      FTP_USER_NAME: "${FTP_USER_NAME:-carbonara}"
-      FTP_USER_PASS: "${FTP_USER_PASS:?defina FTP_USER_PASS no .env}"
-      FTP_USER_HOME: /home/ftpusers/carbonara
-      FTP_PASSIVE_PORTS: "${FTP_PASV_PORT_RANGE:-30000:30009}"
-      ADDED_FLAGS: "--tls=1"            # exige TLS (FTPS); ver ftp/README.md p/ cert
-    volumes:
-      # Distribuição: expõe os dados processados como somente-leitura (sem upload).
-      - ${CARBONARA_ROOT:-./data}/archive:/home/ftpusers/carbonara:ro
-      - ./ftp/tls:/etc/ssl/private:ro  # coloque o pure-ftpd.pem aqui (ver ftp/README.md)
-    healthcheck:
-      test: ["CMD", "sh", "-c", "netstat -ltn | grep -q ':21 '"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  # ---------------------------------------------------------------------------
-  # Banco de dados — PostgreSQL + TimescaleDB. Roda os scripts de init/ no 1º start.
+  # Banco de dados — PostgreSQL 16 + TimescaleDB + PostGIS. Roda database/init/* no
+  # PRIMEIRO start (diretório do cluster vazio): 01_/02_/03_*.sql + 04_replication.sh.
+  # Imagem FIXADA (não `latest`): trocar de versão é uma decisão, não um `pull`.
+  # Só escuta em DB_BIND (127.0.0.1): a API e a ingestão falam com ele pela rede do
+  # compose; um espelho futuro entra liberando a porta para o IP dele.
+  # Memória dimensionada para o host de 7,6 GB (ver docs/estrategia-dados.md, 2.6).
   # ---------------------------------------------------------------------------
   db:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb-ha:pg16.15-ts2.30.1
     container_name: carbonara-db
     restart: unless-stopped
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "${DB_BIND:-127.0.0.1}:${DB_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: "${DB_USER:?defina DB_USER no .env}"
       POSTGRES_PASSWORD: "${DB_PASSWORD:?defina DB_PASSWORD no .env}"
       POSTGRES_DB: "${DB_NAME:-carbonara}"
+      REPLICATION_PASSWORD: "${REPLICATION_PASSWORD:-}"
+      TZ: UTC
+      PGTZ: UTC
+    command:
+      - postgres
+      # memória (host de 7,6 GB compartilhado com dashboard, ingestão e API)
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-1536MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-3GB}
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_connections=40
+      - -c
+      - max_worker_processes=8
+      - -c
+      - max_parallel_workers=2
+      - -c
+      - timescaledb.max_background_workers=4
+      # pronto para o espelho (streaming replication) — ver database/init/04_replication.sh
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=3
+      - -c
+      - max_replication_slots=3
+      - -c
+      - wal_keep_size=2GB
+      # o banco guarda e mostra UTC; o fuso de cada arquivo é tratado na ingestão
+      - -c
+      - timezone=UTC
+      - -c
+      - log_timezone=UTC
     volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./database/init:/docker-entrypoint-initdb.d:ro   # 01_/02_/03_*.sql
+      - ${PG_DATA_DIR:-./data/pgdata}:/home/postgres/pgdata/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    shm_size: 512m
+    mem_limit: ${DB_MEM_LIMIT:-3g}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME:-carbonara}"]
       interval: 10s
@@ -68,8 +88,13 @@ services:
   # TimescaleDB. Só conhece o diretório onde os arquivos pousam; é independente de
   # COMO chegaram (rsync-over-SSH hoje). incoming/ vira /data/landing no container.
   # Build context = raiz do repo, para a imagem incluir processing/.
+  #
+  # PERFIL `ingestao`: fica fora do `docker compose up -d` até a fase 1 (ingestão
+  # incremental dirigida pelos arquivos monitorados na dashboard, sem mover nada).
+  # Para subir de propósito: docker compose --profile ingestao up -d --build ingestion
   # ---------------------------------------------------------------------------
   ingestion:
+    profiles: ["ingestao"]
     build:
       context: .
       dockerfile: ingestion/Dockerfile
@@ -85,6 +110,7 @@ services:
       DB_PASSWORD: "${DB_PASSWORD}"
       DB_NAME: "${DB_NAME:-carbonara}"
       INGEST_POLL_SECONDS: "${INGEST_POLL_SECONDS:-30}"
+    mem_limit: ${INGEST_MEM_LIMIT:-1g}
     volumes:
       - ${CARBONARA_ROOT:-./data}/incoming:/data/landing
       - ${CARBONARA_ROOT:-./data}/archive:/data/archive
@@ -94,6 +120,3 @@ services:
 
 # A coleta (rsync-over-SSH) e o monitor rodam NATIVOS no host, pelo script
 # `collection/rsync-hub` (não são serviços do compose). Ver o README.
-
-volumes:
-  db_data:
