@@ -2,6 +2,13 @@
 
 # Estudo: estratégia de banco de dados e plataforma de dados do CARBONARA
 
+> **Estado (26/09/2026):** fases 0, 1 e 2 implementadas — banco no wrkst02, pacote
+> `carbonara_parse/`, campos de ingestão no registro da dashboard, ingestão incremental
+> (`ingestion/ingest.py`), migrações (`database/migrations/`), API (`api/`) com chaves e
+> limite de taxa, dashboard lendo do banco e gerindo chaves, PostGIS + `stations.geom`.
+> Pendentes: espelho do banco (sem destino ainda), TLS (sem domínio), fase 3 (pgSTAC/COG/
+> COPC quando houver dados de satélite/LiDAR).
+
 ## Contexto
 
 O CARBONARA já resolveu a **coleta** (rsync-hub em produção, 10 estações enviando) e a

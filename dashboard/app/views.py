@@ -24,7 +24,7 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
-from . import config_store, hub, series, status
+from . import api_client, config_store, hub, series, status
 
 pages = Blueprint("pages", __name__)
 
@@ -200,6 +200,7 @@ def settings_save():
     cfg["connections_log"] = updated["connections_log"]
     cfg["timezone"] = updated["timezone"]
     cfg["stale_fallback_seconds"] = updated["stale_fallback_seconds"]
+    cfg["api"] = updated["api"]
     new_abs = str(config_store.data_root(cfg))
     rewritten = 0
     if new_abs not in old_bases:
@@ -350,11 +351,29 @@ def station_detail(station_id):
             live_names[f["id"]] = caminho.name
         except (ValueError, OSError, KeyError):
             pass
+    # Estado da ingestão por arquivo registrado (ledger, via API). Tolerante: sem API
+    # ou com ela fora do ar a página nasce igual, só sem o resumo "no banco".
+    ingest_state = {}
+    if api_client.configured(cfg) and any(f.get("ingest") for f in station.get("files", [])):
+        try:
+            for row in api_client.get(cfg, "/files", {"station": station_id}, timeout=4) or []:
+                acc = ingest_state.setdefault(row["file_key"], {
+                    "files": 0, "n_values": 0, "pending": 0, "last_time": None, "errors": []})
+                acc["files"] += 1
+                acc["n_values"] += row.get("values_total") or 0
+                acc["pending"] += row.get("pending_bytes") or 0
+                if row.get("last_time") and (acc["last_time"] is None or row["last_time"] > acc["last_time"]):
+                    acc["last_time"] = row["last_time"]
+                if row.get("status") == "error":
+                    acc["errors"].append(f"{row.get('path', '').rsplit('/', 1)[-1]}: {row.get('error')}")
+        except api_client.ApiError as exc:
+            ingest_state = {"_error": str(exc)}
     return render_template(
         "station_detail.html",
         station=station,
         st=status.station_status(cfg, station),
         live_names=live_names,
+        ingest_state=ingest_state,
     )
 
 
@@ -411,7 +430,7 @@ def file_new(station_id):
 def file_create(station_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
-    entry, errors = config_store.validate_file_entry(request.form)
+    entry, errors = config_store.validate_file_entry(request.form, station=station)
     if errors:
         for e in errors:
             flash(e, "error")
@@ -499,7 +518,8 @@ def file_update(station_id, file_id):
     fcfg = config_store.get_file(station, file_id)
     if not fcfg:
         abort(404)
-    entry, errors = config_store.validate_file_entry(request.form)
+    entry, errors = config_store.validate_file_entry(request.form, station=station,
+                                                     file_id=file_id)
     if errors:
         for e in errors:
             flash(e, "error")
@@ -527,3 +547,57 @@ def file_delete(station_id, file_id):
     if request.form.get("back") == "edit":
         return redirect(url_for("pages.station_edit", station_id=station_id))
     return redirect(url_for("pages.station_detail", station_id=station_id))
+
+
+# --- Chaves da API de dados ---------------------------------------------------------
+# A dashboard não guarda chaves nem fala com o banco: tudo passa pela própria API,
+# com a chave de serviço da dashboard (escopo admin). A chave nova aparece UMA vez.
+@pages.get("/api-keys")
+@admin_required
+def api_keys():
+    cfg = _load()
+    keys, error = [], None
+    if api_client.configured(cfg):
+        try:
+            keys = api_client.get(cfg, "/admin/keys") or []
+        except api_client.ApiError as exc:
+            error = str(exc)
+    new_key = session.pop("new_api_key", None)
+    return render_template("api_keys.html", cfg=cfg, keys=keys, error=error,
+                           new_key=new_key, api_url=api_client.public_url(cfg))
+
+
+@pages.post("/api-keys")
+@admin_required
+def api_keys_create():
+    cfg = _load()
+    scopes = [s for s in request.form.getlist("scopes") if s in ("read", "download", "admin")]
+    try:
+        days = int(request.form.get("days") or 365)
+        rate = int(request.form.get("rate_limit") or 120)
+    except ValueError:
+        flash("Validade e limite devem ser números.", "error")
+        return redirect(url_for("pages.api_keys"))
+    body = {"owner": (request.form.get("owner") or "").strip() or "sem-nome",
+            "scopes": scopes or ["read"], "rate_limit": rate, "days": days if days > 0 else None}
+    try:
+        created = api_client.post(cfg, "/admin/keys", body)
+    except api_client.ApiError as exc:
+        flash(f"Não foi possível criar a chave: {exc}", "error")
+        return redirect(url_for("pages.api_keys"))
+    session["new_api_key"] = {"key": created.get("key"), "owner": created.get("owner"),
+                              "prefix": created.get("prefix")}
+    flash(f"Chave criada para '{created.get('owner')}'. Copie-a AGORA: ela não será mostrada de novo.", "ok")
+    return redirect(url_for("pages.api_keys"))
+
+
+@pages.post("/api-keys/<int:key_id>/revoke")
+@admin_required
+def api_keys_revoke(key_id: int):
+    cfg = _load()
+    try:
+        api_client.delete(cfg, f"/admin/keys/{key_id}")
+        flash(f"Chave #{key_id} revogada.", "ok")
+    except api_client.ApiError as exc:
+        flash(f"Não foi possível revogar: {exc}", "error")
+    return redirect(url_for("pages.api_keys"))

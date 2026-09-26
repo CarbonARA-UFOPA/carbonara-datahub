@@ -474,34 +474,53 @@ guarantee and risk the collection.
 
 ## Ingestion service (`ingestion/`)
 
-Single polling loop in `ingest.py` — no watchers, no queue. `main()` loops every
-`INGEST_POLL_SECONDS`, calls `discover_files()` (skips hidden entries at ANY path level —
-covers dotfiles and dot-dirs like `.rsync-parcial/`, where clients park interrupted
-uploads via `--partial-dir` — and files modified within `settle_seconds`, to avoid
-picking up partial uploads), then `process_file()` per file.
+Single polling loop in `ingest.py` — no watchers, no queue, **no parsers registry any
+more** (the old `ingestion/parsers/` + `ingestion/config.yaml` were removed). The
+ingestion is **driven by the dashboard's registrations**: it reads `dashboard/config.yaml`
+(mounted read-only as `/app/dashboard-config.yaml`, reloaded when its mtime changes) and
+ingests ONLY the files with `ingest: true`, and ONLY their `variables[]` (types other than
+`texto`). That registration IS the ingestion config (separator, header, timestamp
+column/format, `timezone`, `resample`, per-variable `variable_id`/`min`/`max`/`type`).
 
 Key invariants when editing:
-- The **first path component** under `landing/` is the `station_id` (`data/landing/flona01/…`
-  → `flona01`). Unknown stations are auto-registered with minimal metadata via `ensure_station`.
-- **Idempotent by design**: inserts use `ON CONFLICT (time, station_id, variable_id) DO NOTHING`,
-  so reprocessing the same file inserts no duplicates. Preserve this natural key.
-- **Per-file error isolation**: any exception in `process_file` rolls back the transaction,
-  logs, and moves the file to `quarantine/` — it must never crash the loop.
-- One long-lived DB connection is shared across the loop; `conn.rollback()` on failure is what
-  keeps it usable.
-
-### Adding a new file format = new parser
-
-Parsers are a plugin registry (`ingestion/parsers/base.py`). To add one:
-1. Subclass `Parser`, implement `parse(path, station_id) -> Iterable[Measurement]`, decorate
-   with `@register("your_name")`.
-2. Import it in `ingestion/parsers/__init__.py` (the import triggers `@register` as a side
-   effect — a parser not imported there is invisible to the registry).
-3. Reference it in `ingestion/config.yaml` under `default_parser` or per-station `stations:`.
-
-`ingest.py` itself does not change. A parser must **raise on invalid input** — that is what
-routes the file to quarantine. The included `csv_generic` parser is config-driven: `columns:`
-maps CSV column → `variable_id`, non-numeric values become `NULL` with `quality=1`.
+- **`incoming/` is never touched.** The container mounts `CARBONARA_ROOT` at the SAME
+  absolute path, read-only. Nothing is moved to `archive/`/`quarantine/` (those dirs no
+  longer exist in the flow). Errors are recorded in the ledger (`ingest_files.status/error`).
+- **Incremental by byte offset** (`carbonara_parse.records.iter_records`): the ledger
+  `ingest_files` keeps, per REAL file (a dynamic path yields one row per day), `bytes_ingested`
+  = where the next read starts, plus `head_sha256` of the first 64 kB. Only complete lines
+  (ending in `\n`) are consumed. A file that shrank or whose head changed restarts from 0
+  ("rotação"). Files modified within `INGEST_SETTLE_SECONDS` are skipped this cycle.
+- **Parse is the shared package `carbonara_parse/`** (repo root; also imported by the
+  dashboard via a `sys.path` insert in `dashboard/app/__init__.py`, and copied into the
+  ingestion image). Never re-implement a parser: what the dashboard preview shows is what
+  enters the DB. `variable_id_of(var)` = stored `variable_id` or `variable_slug(label)`.
+- **Timezone**: each file declares the tz of its timestamps (`timezone`, IANA; empty =
+  UTC; station/global tz as fallback); the DB always stores UTC (`timeparse.to_utc`).
+  Epoch timestamps are UTC by definition and ignore the field.
+- **`resample`** (`raw` | `1min` | `30min`): averages per bucket before insert (for 10–20 Hz
+  files). Only COMPLETE buckets are emitted; the returned offset is the start of the still
+  open bucket, re-read next cycle. Older files of a dynamic set (and files idle for
+  > bucket+settle+60 s) are "closed" and flush everything.
+- **QC**: `build_qc` = `range_check` with the registration's min/max (flag 2) + global
+  checks from `processing/config.yaml`. Flag only, never modify.
+- **Idempotent**: `ON CONFLICT (time, station_id, variable_id) DO NOTHING`; `file_id`
+  (ledger row) is the provenance column. `python ingest.py --reprocess <station> [--file
+  <key>] [--apagar]` resets offsets (and with `--apagar` deletes the rows those files
+  produced) — that is the DB rebuild mechanism (there is no DB backup by design).
+- The registration is mirrored into `monitored_files` every cycle (so the API/SQL know what
+  is ingested without reading YAML); `ensure_station`/`ensure_variables` upsert from it.
+- Budgets: `INGEST_MAX_BYTES` per file per cycle (64 MB) and `INGEST_CYCLE_BUDGET_BYTES`
+  per cycle (512 MB); the newest file of a dynamic set is read first (fresh data before
+  backfill). Per-file error isolation: exception → rollback + ledger `status='error'`,
+  never crash the loop.
+- Schema changes go in `database/migrations/NNNN_*.sql` (idempotent SQL; continuous
+  aggregates cannot run inside a transaction) applied by `./database/migrate.sh` on an
+  existing DB and by `database/init/05_migrations.sh` on first start — both record
+  `schema_migrations`. `0001` added PostGIS (`stations.geom` generated from lat/lon),
+  `monitored_files`, `ingest_files`, `pipeline_runs`, `api_keys`, `measurements.file_id`,
+  and recreated `measurements_hourly` + `measurements_daily` as real-time aggregates over
+  `quality = 0` only (with `n_flagged`).
 
 ## Processing library (`processing/`)
 
@@ -587,6 +606,17 @@ computes live station status. Viewing is open; edits require the admin login
   secondary. No `/proc` (non-Linux) → `available: false` and the widget hides. This is
   the HOST's throughput, not per-station bandwidth: real per-station accounting would
   need conntrack/nftables per IP or rsyncd log parsing — deliberately out of scope.
+- **Database integration** (`app/api_client.py`, config block `api: {url, key,
+  public_url}` edited in *Configurações*): a file registered with `ingest: true` gets its
+  charts from the API (`series.series_from_api`, same JSON contract as the file path;
+  labels shown in the file's `timezone`), falling back to the file tail on any API error
+  (noted in `problems`). Per-file form fields `ingest`, `timezone`, `resample` and
+  per-variable `variable_id` ("ID no banco": slug of the label if empty; unique within the
+  file AND across the station's ingested files — validated server-side in
+  `validate_file_entry(form, station=, file_id=)`, since the DB key is
+  (time, station, variable)). `station_detail` shows a "no banco" chip per ingested file
+  from `/files`. `/api-keys` (admin) lists/creates/revokes keys via the API. The dashboard
+  is the ONLY place that decides what enters the DB — keep it that way.
 - **Config-driven** (`dashboard/config.yaml`, gitignored; example versioned): the UI
   itself edits it via `ConfigStore` (atomic write: tempfile + `os.replace`, under a
   lock). Relative `data_root` resolves against the **config file's directory**, not cwd.
@@ -820,6 +850,23 @@ privilege model as the collection layer:
   polled by the page. The FTP root is also browsable as area `ftp` in `hub.AREAS`
   (`area_root` special-cases it through `ftp.ftp_root`). macOS ships openrsync, so
   the publisher cannot be validated locally — test rsync behavior on the Linux server.
+
+## Data API (`api/`)
+
+FastAPI + asyncpg, container `api` on `API_PORT` (8000; ask the STI to open it — 5432
+stays on 127.0.0.1). Endpoints: `/stations`, `/stations/{id}`, `/variables`, `/healthz`
+(open, per-IP rate limit) and, with a key, `/series` (`agg=raw|1h|1d`, `qc=good|all`,
+`order=desc` = the LAST N points — what the dashboard uses, `tz=`, `format=json|csv`),
+`/latest`, `/stations/{id}/variables`, `/files` (ledger), `/admin/keys`. Docs at `/docs`.
+- **Keys** (`api/app/auth.py`): `X-API-Key` (or Bearer / `?api_key=`); DB stores only
+  `sha256(API_KEY_PEPPER + key)` + `prefix`; scopes `read` / `download` / `admin` (admin
+  implies all); `expires_at`, `revoked_at`, `last_used_at`; token-bucket rate limit per key
+  (`rate_limit`/min — with 2 uvicorn workers the effective limit is ~2×). The clear-text key
+  is returned ONCE (creation). First key: `docker compose exec api python -m app.keys_cli
+  create --owner dashboard --scopes read,admin`; then the dashboard manages keys at
+  `/api-keys` through the API (it never touches the DB).
+- Aggregates come from the continuous aggregates (real-time, quality=0 only); raw reads
+  are capped (`API_DEFAULT_RAW_POINTS`/`API_MAX_RAW_POINTS`, higher with `download`).
 
 ## Data model (TimescaleDB)
 

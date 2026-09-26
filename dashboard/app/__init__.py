@@ -2,11 +2,20 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
-from flask import Flask
+# O parse dos arquivos (tailer, carimbos, caminhos com data/hora) vive no pacote
+# compartilhado `carbonara_parse/`, na raiz do repositório — o mesmo código que a
+# ingestão usa. A dashboard roda de dashboard/ (run.py, .venv), então a raiz entra no
+# sys.path aqui, ANTES de qualquer import do app.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if (_REPO_ROOT / "carbonara_parse").is_dir() and str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-from .config_store import ConfigStore
+from flask import Flask  # noqa: E402
+
+from .config_store import ConfigStore  # noqa: E402
 
 
 def _secret_key(config_path: str) -> bytes:

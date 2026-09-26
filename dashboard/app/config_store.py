@@ -7,17 +7,22 @@ temporário + os.replace) e serializada por lock, para nunca corromper o YAML.
 from __future__ import annotations
 
 import copy
-import glob
 import os
 import re
 import tempfile
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 
+from carbonara_parse.records import VARIABLE_ID_RE, variable_slug
 from .tailer import COLUMN_TYPES
+
+# Reamostragem antes de gravar no banco: 'raw' grava cada registro; '1min'/'30min'
+# gravam a média (por variável) de cada intervalo — para arquivos de alta frequência
+# (10–20 Hz), que em linhas cruas explodiriam o banco sem utilidade.
+RESAMPLE_OPTIONS = ("raw", "1min", "30min")
 
 try:  # py3.9+
     from zoneinfo import ZoneInfo
@@ -42,6 +47,9 @@ DEFAULT_CONFIG: dict = {
     # PUBLICAÇÕES (regras hub → FTP executadas pelo publicador da dashboard).
     "ftp": {"root": None, "vsftpd_conf": None, "ftp_hub_bin": None,
             "public_host": None, "publications": []},
+    # API de dados (serviço `api` do compose): url interna que a dashboard chama, chave
+    # de serviço (escopos read+admin, criada com `keys_cli`) e a url pública a mostrar.
+    "api": {"url": None, "key": None, "public_url": None},
     "stations": [],
 }
 
@@ -66,6 +74,8 @@ class ConfigStore:
         if isinstance(raw.get("ftp"), dict):
             cfg["ftp"].update({k: v for k, v in raw["ftp"].items() if v is not None})
             cfg["ftp"]["publications"] = list(raw["ftp"].get("publications") or [])
+        if isinstance(raw.get("api"), dict):
+            cfg["api"].update({k: v for k, v in raw["api"].items() if v is not None})
         # Base para caminhos relativos: o diretório do próprio config.yaml —
         # independe do cwd de quem invocou o run.py.
         cfg["_base"] = str(self.path.parent.resolve())
@@ -96,216 +106,18 @@ def get_file(station: dict, file_id: str) -> dict | None:
     return next((f for f in station.get("files", []) if f.get("id") == file_id), None)
 
 
-def data_root(cfg: dict) -> Path:
-    """Raiz de dados absoluta. data_root relativo é resolvido contra a pasta do config."""
-    root = Path(cfg["data_root"]).expanduser()
-    if not root.is_absolute():
-        root = Path(cfg.get("_base", ".")) / root
-    return root.resolve()
-
-
-def resolve_data_path(cfg: dict, path: str) -> Path:
-    """Caminho absoluto é usado como está; relativo é resolvido sob data_root
-    (com checagem anti-traversal: `../` não pode escapar da raiz)."""
-    p = Path(path).expanduser()
-    if p.is_absolute():
-        return p
-    root = data_root(cfg)
-    resolved = (root / p).resolve()
-    if root not in resolved.parents and resolved != root:
-        raise ValueError(f"caminho relativo escapa de data_root: {path}")
-    return resolved
-
-
-# --- Caminho com data/hora (strftime) ---------------------------------------------
-# Dataloggers costumam rotacionar o arquivo pelo relógio (dados_20260821.dat,
-# 2026/08/21/torre.csv). Marcando "caminho com data/hora" no cadastro, o caminho vira um
-# PADRÃO strftime resolvido com o horário DO SERVIDOR a cada leitura — assim um cadastro
-# só acompanha o arquivo do dia/hora corrente, sem ninguém editar o caminho.
-
-# Quanto cada campo strftime ocupa, para montar o glob do resgate. O que não estiver
-# aqui (%b, %A, %p…) vira '*' — casa igual, só menos preciso.
-_TIME_TOKEN_WIDTH = {"Y": 4, "y": 2, "m": 2, "d": 2, "H": 2, "I": 2, "M": 2, "S": 2,
-                     "j": 3, "U": 2, "W": 2, "u": 1, "w": 1}
-_TIME_TOKEN_RE = re.compile(r"%[A-Za-z]")
-
-
-# Apelidos "humanos" para os campos strftime. Quem escreve o padrão à mão tende a usar
-# %YYYY/%mm/%DD (como se lê a data), e no strftime isso NÃO dá erro: '%YYYY' vira
-# '2026YYY' silenciosamente — arquivo que nunca existe e gráfico vazio sem explicação.
-# Normalizamos na entrada; o que fica gravado é sempre strftime canônico.
-_TIME_ALIASES = (("%YYYY", "%Y"), ("%yyyy", "%Y"), ("%YY", "%y"), ("%mm", "%m"),
-                 ("%DD", "%d"), ("%dd", "%d"), ("%HH", "%H"), ("%MM", "%M"), ("%SS", "%S"))
-
-
-def normalize_time_tokens(path: str) -> str:
-    """Converte os apelidos (%YYYY, %mm, %DD…) para strftime (%Y, %m, %d…)."""
-    out = path or ""
-    for alias, canon in _TIME_ALIASES:      # os mais longos primeiro (ver tupla)
-        out = out.replace(alias, canon)
-    return out
-
-
-# Carimbo de tempo em Unix epoch: o "formato" deixa de ser strftime e passa a significar
-# "número de segundos desde 1970-01-01 UTC". Fica aqui (e não em series.py) porque
-# series já importa config_store — o contrário seria import circular.
-EPOCH_MARKERS = {"epoch", "unix", "unixtime", "posix", "%s", "epoch_s"}
-
-
-def is_epoch_format(fmt: str | None) -> bool:
-    return (fmt or "").strip().lower() in EPOCH_MARKERS
-
-
-def has_time_tokens(path: str) -> bool:
-    """True se o caminho tem algum campo strftime (%Y, %m, %d, %H…)."""
-    return bool(_TIME_TOKEN_RE.search(path or ""))
-
-
-GLOB_CHARS = "*?["
-
-
-def has_glob(path: str) -> bool:
-    """O caminho traz curinga escrito pelo usuário?"""
-    return any(c in (path or "") for c in GLOB_CHARS)
-
-
-def time_path_glob(pattern: str, keep_wildcards: bool = False) -> str:
-    """Converte o padrão strftime num glob: cada campo vira '?' na largura certa
-    (``%Y`` → ``????``), o resto do caminho é escapado para não virar curinga sem
-    querer. É o que permite achar o arquivo mais recente quando o do momento ainda
-    não foi criado. Com ``keep_wildcards``, os curingas ESCRITOS no padrão são
-    preservados — é o que faz ``%Y-%m-%d__*.sfo`` casar o arquivo de hoje seja qual for
-    a hora no nome (o equipamento nomeia o arquivo pelo instante em que o criou)."""
-    out: list[str] = []
-    i = 0
-    while i < len(pattern):
-        ch = pattern[i]
-        if ch == "%" and i + 1 < len(pattern):
-            tok = pattern[i + 1]
-            if tok == "%":
-                out.append("%")
-            else:
-                w = _TIME_TOKEN_WIDTH.get(tok)
-                out.append("?" * w if w else "*")
-            i += 2
-        else:
-            manter = keep_wildcards and ch in GLOB_CHARS
-            out.append(ch if manter else (glob.escape(ch) if ch in GLOB_CHARS else ch))
-            i += 1
-    return "".join(out)
-
-
-def truncate_pattern(path: str, n: int) -> str:
-    """Truncamento do fim do nome: corta os ``n`` últimos caracteres do NOME do
-    arquivo (nunca do diretório) e completa com ``*``. Roda a cada leitura em cima
-    do padrão ORIGINAL — o caminho gravado nunca muda, então desligar o truncamento
-    devolve o padrão fixo intacto. Um corte que cai no meio de um campo strftime
-    deixaria um ``%`` pendurado (strftime inválido na expansão): a paridade dos
-    ``%`` finais detecta isso e o ``%`` partido é removido junto."""
-    dirpart, sep, nome = (path or "").rpartition("/")
-    nome = nome[:-n] if 0 < n < len(nome) else ""
-    if (len(nome) - len(nome.rstrip("%"))) % 2 == 1:
-        nome = nome[:-1]
-    if not nome.endswith("*"):
-        nome += "*"
-    return f"{dirpart}{sep}{nome}"
-
-
-def _glob_files(padrao: str) -> list[Path]:
-    """Arquivos (só arquivos) que casam com um glob já pronto."""
-    try:
-        hits = [Path(p) for p in glob.glob(padrao)]
-    except OSError:
-        return []
-    return [p for p in hits if p.is_file()]
-
-
-def _newest_glob(padrao: str) -> Path | None:
-    """Arquivo mais recente (mtime) que casa com um glob já pronto."""
-    files = _glob_files(padrao)
-    return max(files, key=lambda p: p.stat().st_mtime) if files else None
-
-
-def _newest_matching(pattern: str, keep_wildcards: bool = False) -> Path | None:
-    """Arquivo mais recente (mtime) que casa com o padrão de tempo. None se nenhum."""
-    try:
-        hits = [Path(p) for p in glob.glob(time_path_glob(pattern, keep_wildcards))]
-    except OSError:
-        return None
-    files = [p for p in hits if p.is_file()]
-    if not files:
-        return None
-    return max(files, key=lambda p: p.stat().st_mtime)
-
-
-def resolve_file_path(cfg: dict, fcfg: dict) -> tuple[Path, dict]:
-    """Caminho REAL a ler de um arquivo monitorado, e um dicionário de contexto.
-
-    Sem ``dynamic_path`` é o de sempre (``resolve_data_path``). Com ele, o padrão é
-    expandido pelo relógio do servidor; se o arquivo do momento ainda não existir
-    (o caso clássico: logo depois da virada do dia/hora), cai no mais recente que casa
-    com o padrão — em vez de o gráfico simplesmente sumir. O contexto devolvido
-    (``pattern``/``expanded``/``fallback``) é o que a UI mostra para o usuário saber
-    exatamente qual arquivo foi lido."""
-    raw = (fcfg.get("path") or "").strip()
-    # Truncamento do fim do nome (truncate_chars): aplicado AQUI, a cada resolução,
-    # sobre o padrão original — o path gravado fica intacto (padrão fixo preservado).
-    # O '*' que ele acrescenta torna o caminho um glob, então cai no fluxo de curinga
-    # normal: quando mais de um arquivo casa, vale o mais recente (mtime) — nunca
-    # dois arquivos para a mesma entrada.
-    trunc = fcfg.get("truncate_chars")
-    if fcfg.get("dynamic_path") and trunc:
-        raw = truncate_pattern(raw, int(trunc))
-    # Curinga sozinho (sem campo de tempo) também é caminho dinâmico: "o arquivo mais
-    # recente desta pasta" é um pedido legítimo.
-    if not fcfg.get("dynamic_path") or not (has_time_tokens(raw) or has_glob(raw)):
-        return resolve_data_path(cfg, raw), {}
-    pattern = resolve_data_path(cfg, raw)
-    # Deslocamento de horas (hour_offset, ±N): soma ao relógio do servidor ANTES de
-    # expandir o padrão — o timedelta cuida da virada (23h com +2 vira 01h do DIA
-    # SEGUINTE, mudando %d/%m/%Y junto; nunca existe "25h"). Se o arquivo do horário
-    # deslocado ainda não existir, o fallback lá embaixo pega o mais recente que casa
-    # com o padrão — o "último arquivo mais próximo existente".
-    agora = datetime.now()
-    offset = fcfg.get("hour_offset")
-    if fcfg.get("dynamic_path") and offset:
-        agora += timedelta(hours=int(offset))
-    expanded = Path(agora.strftime(str(pattern)))
-    if not Path(raw).expanduser().is_absolute():
-        # Campos de formato locais (%x, %c) podem expandir com '/': revalida que o
-        # resultado continua sob a raiz de dados, como faz resolve_data_path.
-        root = data_root(cfg)
-        if root not in expanded.resolve().parents and expanded.resolve() != root:
-            raise ValueError(f"caminho com data/hora escapa de data_root: {expanded}")
-    info = {"dynamic": True, "pattern": str(pattern), "expanded": str(expanded)}
-    if trunc and fcfg.get("dynamic_path"):
-        info["truncate_chars"] = int(trunc)
-    if offset and fcfg.get("dynamic_path"):
-        info["hour_offset"] = int(offset)
-    curinga = has_glob(str(expanded))
-    if curinga:
-        # Curinga no padrão: o "arquivo do momento" é o mais recente que casa com a
-        # data de HOJE — o equipamento nomeia o arquivo com o instante em que o criou
-        # (2026-08-25__07-13-05.sfo), então exigir a hora exata nunca acertaria.
-        candidatos = _glob_files(str(expanded))
-        if candidatos:
-            hoje = max(candidatos, key=lambda p: p.stat().st_mtime)
-            info["matched"] = str(hoje)
-            if len(candidatos) > 1:
-                # Mais de um arquivo casa com o padrão do período: só o mais recente
-                # é lido, mas a UI avisa — normalmente é sinal de truncamento curto
-                # demais (padrão frouxo), não de rotação legítima.
-                info["matches"] = len(candidatos)
-            return hoje, info
-    elif expanded.is_file():
-        return expanded, info
-    # Nada para hoje: cai no mais recente de QUALQUER dia — tipicamente o arquivo de
-    # ontem, que é onde a estação ainda está gravando até virar para o próximo.
-    newest = _newest_matching(str(pattern), keep_wildcards=curinga)
-    if newest is not None:
-        info["fallback"] = str(newest)
-        return newest, info
-    return expanded, info
+# --- Caminhos e carimbos: implementação no pacote compartilhado ------------------
+# data_root / resolve_data_path / caminho com data/hora (strftime + curinga) e o
+# marcador de epoch vivem em carbonara_parse (a ingestão resolve os MESMOS caminhos).
+# Reexportados aqui para os demais módulos da dashboard.
+from carbonara_parse.paths import (  # noqa: E402,F401
+    GLOB_CHARS, data_root, has_glob, has_time_tokens, normalize_time_tokens,
+    resolve_data_path, resolve_file_path, time_path_glob, truncate_pattern,
+)
+from carbonara_parse.paths import glob_files as _glob_files  # noqa: E402,F401
+from carbonara_parse.paths import newest_glob as _newest_glob  # noqa: E402,F401
+from carbonara_parse.paths import newest_matching as _newest_matching  # noqa: E402,F401
+from carbonara_parse.timeparse import EPOCH_MARKERS, is_epoch_format, valid_timezone  # noqa: E402,F401
 
 
 def heartbeat_path(cfg: dict, station: dict) -> Path:
@@ -568,6 +380,11 @@ def default_file_entry(path: str, alias: str | None = None) -> dict:
         "header_line": 2,
         "timestamp": {"column": 0, "format": "%Y-%m-%d %H:%M:%S"},
         "variables": [],
+        # Banco de dados: só entra o que for marcado explicitamente (ingest) — e só as
+        # variáveis listadas. timezone = fuso dos carimbos do ARQUIVO (IANA; vazio = UTC).
+        "ingest": False,
+        "timezone": None,
+        "resample": "raw",
     }
 
 
@@ -604,9 +421,21 @@ def validate_settings(form: dict, cfg: dict) -> tuple[dict, list[str]]:
         except ValueError:
             errors.append("Fallback de offline: use segundos entre 60 e 86400.")
 
+    # API de dados: url interna (a que a dashboard chama), chave (vazio = mantém a
+    # atual; "-" = remove) e url pública opcional (só exibição).
+    api_old = cfg.get("api") or {}
+    api_url = (form.get("api_url") or "").strip().rstrip("/") or None
+    if api_url and not (api_url.startswith("http://") or api_url.startswith("https://")):
+        errors.append("URL da API inválida: comece com http:// ou https:// (ex.: http://127.0.0.1:8000).")
+        api_url = api_old.get("url")
+    api_key_raw = (form.get("api_key") or "").strip()
+    api_key = api_old.get("key") if api_key_raw == "" else (None if api_key_raw == "-" else api_key_raw)
+    api_public = (form.get("api_public_url") or "").strip().rstrip("/") or None
+
     return {"data_root": root or cfg.get("data_root"), "connections_log": connections_log,
             "timezone": timezone, "stale_fallback_seconds": stale,
-            "data_root_adjusted": adjusted}, errors
+            "data_root_adjusted": adjusted,
+            "api": {"url": api_url, "key": api_key, "public_url": api_public}}, errors
 
 
 def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list[str]]:
@@ -662,10 +491,17 @@ def _parse_separator(raw: str) -> str:
     return raw.strip() or ","
 
 
-def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[dict, list[str]]:
+def validate_file_entry(form: dict, *, require_variables: bool = True,
+                        station: dict | None = None, file_id: str | None = None
+                        ) -> tuple[dict, list[str]]:
     """Valida o formulário de arquivo. ``require_variables=False`` (usado pelo preview)
     dispensa a exigência de ≥1 variável — o preview só precisa ler e dividir o arquivo
-    em colunas, é justamente a etapa ANTES de mapear as variáveis."""
+    em colunas, é justamente a etapa ANTES de mapear as variáveis.
+
+    ``station``/``file_id`` (quando informados) permitem checar que os ``variable_id``
+    de um arquivo INGERIDO não colidem com os de outro arquivo ingerido da mesma
+    estação: a chave no banco é (time, station_id, variable_id), então dois arquivos
+    gravando 'record' para a mesma estação se sobreporiam em silêncio."""
     errors: list[str] = []
     path = (form.get("path") or "").strip()
     if not path:
@@ -800,6 +636,18 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
             errors.append(f"{what}: valor inválido ('{raw}').")
             return None
 
+    # --- Banco de dados ---------------------------------------------------------
+    ingest = bool(form.get("ingest"))
+    tzname = (form.get("timezone") or "").strip() or None
+    if tzname and not valid_timezone(tzname):
+        errors.append(f"Fuso horário inválido: '{tzname}' (ex.: UTC, America/Santarem).")
+        tzname = None
+    resample = (form.get("resample") or "raw").strip().lower() or "raw"
+    if resample not in RESAMPLE_OPTIONS:
+        errors.append(f"Reamostragem inválida ('{resample}') — use uma de: "
+                      + ", ".join(RESAMPLE_OPTIONS) + ".")
+        resample = "raw"
+
     variables = []
     cols = _getlist("var_column")
     labels = _getlist("var_label")
@@ -807,6 +655,8 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
     units = _getlist("var_unit")
     mins = _getlist("var_min")
     maxs = _getlist("var_max")
+    vids = _getlist("var_id")
+    seen_ids: set[str] = set()
     for i, col in enumerate(cols):
         col = (col or "").strip()
         if not col:
@@ -830,10 +680,36 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
         vmax = _float_or_none(maxs[i] if i < len(maxs) else "", f"Limite máximo de '{label}'")
         if vmin is not None and vmax is not None and vmin > vmax:
             errors.append(f"'{label}': limite mínimo ({vmin}) maior que o máximo ({vmax}).")
+        # ID no banco: o informado (normalizado) ou o slug do rótulo. É a chave da série
+        # em measurements — precisa ser único dentro do arquivo.
+        vid_raw = (vids[i] if i < len(vids) else "").strip()
+        vid = variable_slug(vid_raw) if vid_raw else variable_slug(label)
+        if not vid:
+            vid = variable_slug(f"col_{column}")
+        if vid_raw and not VARIABLE_ID_RE.match(vid):
+            errors.append(f"ID no banco inválido para '{label}' ('{vid_raw}'): use letras "
+                          "minúsculas, números e '_' (começando por letra, até 64).")
+        if vid in seen_ids:
+            errors.append(f"ID no banco repetido: '{vid}' ('{label}') — cada variável do "
+                          "arquivo precisa de um ID único.")
+        seen_ids.add(vid)
         variables.append({"column": column, "label": label, "unit": unit,
-                          "min": vmin, "max": vmax, "type": vtype})
+                          "min": vmin, "max": vmax, "type": vtype, "variable_id": vid})
     if require_variables and not variables:
         errors.append("Defina pelo menos uma variável (coluna + rótulo).")
+    if ingest and station is not None:
+        # Colisão com outro arquivo INGERIDO da mesma estação (mesma chave no banco).
+        for other in station.get("files") or []:
+            if other.get("id") == file_id or not other.get("ingest"):
+                continue
+            outros = {(v.get("variable_id") or variable_slug(v.get("label") or ""))
+                      for v in other.get("variables") or []}
+            colisao = sorted(seen_ids & outros)
+            if colisao:
+                errors.append(
+                    f"ID(s) no banco já usados pelo arquivo '{other.get('id')}' desta "
+                    f"estação: {', '.join(colisao)} — dois arquivos ingeridos não podem "
+                    "gravar a mesma variável (mude o ID aqui ou desmarque a ingestão).")
 
     entry = {
         "path": path,
@@ -852,6 +728,9 @@ def validate_file_entry(form: dict, *, require_variables: bool = True) -> tuple[
         "header_line": header_line,
         "timestamp": {"column": ts_column, "format": ts_format},
         "variables": variables,
+        "ingest": ingest,
+        "timezone": tzname,
+        "resample": resample,
     }
     if strip_regex:
         entry["strip_regex"] = strip_regex

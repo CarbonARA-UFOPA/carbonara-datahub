@@ -906,12 +906,14 @@ function initFileForm() {
     return next;
   }
 
-  function makeVarRow(col, label = "", unit = "", min = "", max = "") {
+  function makeVarRow(col, label = "", unit = "", min = "", max = "", vid = "") {
     const tr = document.createElement("tr");
     tr.innerHTML =
       '<td><input name="var_column" class="num-input" ' +
       'title="Índice da coluna (0 = primeira, -1 = última) ou o nome dela"></td>' +
       '<td><input name="var_label"></td>' +
+      '<td><input name="var_id" class="num-input" placeholder="auto" ' +
+      'title="Identificador da série no banco (gerado do rótulo se vazio)"></td>' +
       '<td><select name="var_type">' +
       '<option value="numero">Número</option><option value="inteiro">Inteiro</option>' +
       '<option value="booleano">Booleano</option>' +
@@ -927,6 +929,7 @@ function initFileForm() {
     tr.querySelector('[name="var_unit"]').value = unit;
     tr.querySelector('[name="var_min"]').value = min;
     tr.querySelector('[name="var_max"]').value = max;
+    tr.querySelector('[name="var_id"]').value = vid;
     return tr;
   }
 
@@ -963,6 +966,7 @@ function initFileForm() {
           unit: tr.querySelector('[name="var_unit"]').value,
           min: tr.querySelector('[name="var_min"]').value,
           max: tr.querySelector('[name="var_max"]').value,
+          vid: tr.querySelector('[name="var_id"]').value,
         });
       });
       tbody.innerHTML = "";
@@ -972,7 +976,8 @@ function initFileForm() {
         const prev = existing.get(String(i)) || (name && existing.get(name)) || null;
         tbody.appendChild(makeVarRow(i,
           prev ? prev.label : (name || `coluna ${i}`),
-          prev ? prev.unit : "", prev ? prev.min : "", prev ? prev.max : ""));
+          prev ? prev.unit : "", prev ? prev.min : "", prev ? prev.max : "",
+          prev ? prev.vid : ""));
       }
       area.innerHTML = `<p class="diag" style="color:var(--green)">✓ ${tbody.rows.length} ` +
         "colunas listadas (a do timestamp ficou de fora). Ajuste rótulos, unidades e " +

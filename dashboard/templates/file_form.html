@@ -77,6 +77,43 @@
            placeholder="ex.: Torre Norte — nome de exibição nos gráficos">
   </label>
 
+  <h2>Banco de dados</h2>
+  <p class="meta">Só entra no banco o que for marcado aqui — e só as variáveis da tabela
+    abaixo (as de tipo <em>Texto</em> ficam de fora). O arquivo em disco nunca é
+    movido nem alterado; a ingestão lê só o que cresceu desde a última leitura.</p>
+  <label class="check-row">
+    <input type="checkbox" name="ingest" value="1" id="ingest-chk"
+           {{ 'checked' if fcfg and fcfg.get('ingest') else '' }}>
+    <span><strong>Ingerir este arquivo no banco de dados</strong> — as variáveis
+      selecionadas passam a ser gravadas em <code>measurements</code> e servidas pela
+      API. Os limites Mín/Máx físicos viram a regra de qualidade (fora deles, o valor
+      entra com <code>quality=2</code>).</span>
+  </label>
+  <div class="form-row" id="ingest-opts">
+    <label>Fuso horário dos carimbos do arquivo
+      <input name="timezone" list="tz-list"
+             value="{{ fcfg.timezone if fcfg and fcfg.get('timezone') else '' }}"
+             placeholder="vazio = UTC">
+      <datalist id="tz-list">
+        <option value="UTC"><option value="America/Santarem"><option value="America/Belem">
+        <option value="America/Manaus"><option value="America/Sao_Paulo">
+        <option value="America/Cuiaba"><option value="America/Rio_Branco">
+      </datalist>
+      <small>Cada equipamento grava no seu fuso (UTC ou local); o banco guarda sempre
+        UTC. Carimbo em <em>Unix epoch</em> já é UTC e ignora este campo.</small>
+    </label>
+    <label>Reamostrar antes de gravar
+      {% set rs = (fcfg.resample if fcfg and fcfg.get('resample') else 'raw') %}
+      <select name="resample">
+        <option value="raw" {{ 'selected' if rs == 'raw' }}>Não — cada registro</option>
+        <option value="1min" {{ 'selected' if rs == '1min' }}>Média por 1 minuto</option>
+        <option value="30min" {{ 'selected' if rs == '30min' }}>Média por 30 minutos</option>
+      </select>
+      <small>Para arquivos de alta frequência (10–20 Hz, 1 s): grava a média de cada
+        intervalo em vez de cada leitura. Arquivos de 30 min ficam em "cada registro".</small>
+    </label>
+  </div>
+
   <details class="adv" id="adv-parse">
     <summary>Ajuste fino do parse e do período</summary>
 
@@ -146,7 +183,7 @@
     <em>⇊ Todas as colunas do arquivo</em> para trazer as colunas detectadas de uma vez.</p>
 
   <table class="table" id="vars-table">
-    <thead><tr><th>Índice</th><th>Rótulo</th><th>Tipo</th><th>Unidade</th>
+    <thead><tr><th>Índice</th><th>Rótulo</th><th>ID no banco</th><th>Tipo</th><th>Unidade</th>
       <th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
     <tbody>
     {% for v in (fcfg.variables if fcfg and fcfg.variables else [{'column': 1, 'label': '', 'unit': ''}]) %}
@@ -154,6 +191,8 @@
         <td><input name="var_column" value="{{ v.column }}" class="num-input"
                    title="Índice da coluna (0 = primeira, -1 = última) ou o nome dela"></td>
         <td><input name="var_label" value="{{ v.label }}"></td>
+        <td><input name="var_id" value="{{ v.variable_id or '' }}" class="num-input"
+                   placeholder="auto" title="Identificador da série no banco (gerado do rótulo se vazio; não mude depois de ingerir)"></td>
         <td>
           {% set vt = v.type or 'numero' %}
           <select name="var_type">
@@ -186,6 +225,10 @@
         vem com o próximo índice livre. Não pode repetir índice nem usar a coluna do
         timestamp — o servidor recusa e diz qual é.</li>
       <li><em>Rótulo</em> — título do gráfico. <em>Unidade</em> — só exibição na legenda.</li>
+      <li><em>ID no banco</em> — chave da série em <code>measurements</code>
+        (<code>[a-z0-9_]</code>). Vazio = gerado do rótulo (<code>Rad1_A(1)</code> →
+        <code>rad1_a_1</code>). Único dentro do arquivo e entre os arquivos ingeridos
+        da mesma estação. Trocar o ID depois de ingerir inicia OUTRA série.</li>
       <li><em>Tipo</em> — como o valor da coluna é lido:
         <strong>Número</strong> (padrão) · <strong>Inteiro</strong> (sem casas
         decimais) · <strong>Booleano</strong> (0/1, também aceita

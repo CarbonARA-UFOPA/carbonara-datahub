@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Chaves da API · CARBONARA{% endblock %}
+{% block content %}
+<h1>API de dados — chaves de acesso</h1>
+
+<section class="card help-card">
+  A API serve o que a ingestão gravou no banco (séries, últimos valores, estado da
+  ingestão). <code>/stations</code>, <code>/variables</code> e <code>/healthz</code> são
+  abertos; o resto exige uma chave no cabeçalho <code>X-API-Key</code>. Cada chave tem
+  <em>escopos</em> (<code>read</code> = consultar · <code>download</code> = exportar em
+  massa · <code>admin</code> = gerir chaves), validade e limite de requisições por minuto.
+  {% if api_url %}<br>Documentação interativa: <a href="{{ api_url }}/docs" target="_blank" rel="noopener"><code>{{ api_url }}/docs</code></a>{% endif %}
+</section>
+
+{% if new_key %}
+<div class="flash flash-ok">
+  <strong>Chave criada para {{ new_key.owner }}</strong> — copie agora, ela não será mostrada de novo:
+  <pre class="key-once" style="user-select:all;word-break:break-all">{{ new_key.key }}</pre>
+  <small>Uso: <code>curl -H "X-API-Key: {{ new_key.key[:12] }}…" {{ api_url or 'http://servidor:8000' }}/series?station=eddyfarm&amp;agg=1h</code></small>
+</div>
+{% endif %}
+
+{% if error %}
+<div class="flash flash-error">Não foi possível falar com a API: {{ error }}
+  <br><small>Confira em <a href="{{ url_for('pages.settings') }}">Configurações</a> a URL interna
+  e a chave de serviço da dashboard (escopo <code>admin</code>).</small></div>
+{% elif not cfg.api or not cfg.api.url %}
+<div class="flash flash-error">API não configurada. Em <a href="{{ url_for('pages.settings') }}">Configurações</a>
+  informe a URL interna (ex.: <code>http://127.0.0.1:8000</code>) e a chave de serviço criada com
+  <code>docker compose exec api python -m app.keys_cli create --owner dashboard --scopes read,admin</code>.</div>
+{% endif %}
+
+<section class="card">
+  <div class="page-head"><h2>Chaves</h2></div>
+  {% if not keys %}
+    <p class="empty">Nenhuma chave cadastrada.</p>
+  {% else %}
+    <table class="table">
+      <thead><tr><th>#</th><th>Prefixo</th><th>Dono</th><th>Escopos</th><th>Limite/min</th>
+        <th>Validade</th><th>Último uso</th><th>Estado</th><th></th></tr></thead>
+      <tbody>
+      {% for k in keys %}
+        <tr>
+          <td>{{ k.key_id }}</td>
+          <td><code>{{ k.prefix }}…</code></td>
+          <td>{{ k.owner }}</td>
+          <td>{{ k.scopes | join(', ') }}</td>
+          <td>{{ k.rate_limit }}</td>
+          <td>{{ (k.expires_at or 'sem prazo')[:10] }}</td>
+          <td>{{ (k.last_used_at or '—')[:16] | replace('T', ' ') }}</td>
+          <td>{% if k.revoked_at %}<span class="warn">revogada</span>
+              {% elif not k.active %}<span class="warn">expirada</span>
+              {% else %}<span style="color:var(--green)">ativa</span>{% endif %}</td>
+          <td>{% if k.active %}
+            <form method="post" action="{{ url_for('pages.api_keys_revoke', key_id=k.key_id) }}"
+                  onsubmit="return confirm('Revogar a chave #{{ k.key_id }} ({{ k.owner }})? Quem a usa perde o acesso na hora.');">
+              <button class="btn btn-danger" type="submit">Revogar</button>
+            </form>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+
+{% if cfg.api and cfg.api.url and not error %}
+<form method="post" class="card form" action="{{ url_for('pages.api_keys_create') }}">
+  <h2>Nova chave</h2>
+  <div class="form-row">
+    <label>Dono (pessoa ou serviço)
+      <input name="owner" required placeholder="ex.: maria@ufopa, modelo-wrf, parceiro-x">
+    </label>
+    <label>Validade (dias)
+      <input name="days" type="number" min="0" max="3650" value="365" class="num-short">
+      <small>0 = sem prazo (evite).</small>
+    </label>
+    <label>Limite (requisições/min)
+      <input name="rate_limit" type="number" min="1" max="100000" value="120" class="num-short">
+    </label>
+  </div>
+  <label class="check-row"><input type="checkbox" name="scopes" value="read" checked>
+    <span><strong>read</strong> — consultar séries, últimos valores e o estado da ingestão</span></label>
+  <label class="check-row"><input type="checkbox" name="scopes" value="download">
+    <span><strong>download</strong> — exportações grandes (CSV, limites altos de pontos)</span></label>
+  <label class="check-row"><input type="checkbox" name="scopes" value="admin">
+    <span><strong>admin</strong> — criar e revogar chaves (só para a própria dashboard/operadores)</span></label>
+  <div class="form-actions">
+    <button class="btn btn-primary" type="submit">Criar chave</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

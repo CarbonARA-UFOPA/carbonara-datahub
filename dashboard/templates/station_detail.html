@@ -95,6 +95,16 @@
         últimas <strong>{{ f.tail_lines }}</strong> linhas ·
         separador <code>{{ '\\t' if f.separator == '\t' else ('\\s' if f.separator == ' ' else f.separator) }}</code> ·
         {{ f.variables | length }} variável(is)
+        {% if f.get('ingest') %}
+          {% set ig = ingest_state.get(f.id) if ingest_state else None %}
+          · <span class="ingest-chip" title="Este arquivo é ingerido no banco de dados{{ ' (fuso ' ~ f.timezone ~ ')' if f.timezone }}{{ ' · média por ' ~ f.resample if f.resample and f.resample != 'raw' }}">
+            🗄 no banco{% if ig %}: {{ '{:,}'.format(ig['n_values']).replace(',', '.') }} valor(es)
+              {%- if ig.last_time %} · último {{ ig.last_time[:16] | replace('T', ' ') }} UTC{% endif %}
+              {%- if ig.pending %} · {{ (ig.pending / 1024) | round(0) | int }} kB pendentes{% endif %}
+              {%- if ig.errors %} · <span class="warn">erro: {{ ig.errors[0] }}</span>{% endif %}
+            {%- elif ingest_state and ingest_state.get('_error') %} <span class="warn">(API: {{ ingest_state['_error'] }})</span>
+            {%- else %} (ainda sem leitura){% endif %}</span>
+        {% endif %}
         <span class="series-info"></span>
       </span>
     </summary>

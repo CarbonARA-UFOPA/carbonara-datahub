@@ -1,29 +1,31 @@
 # docker-compose.yml — serviços de DADOS do CARBONARA na workstation.
-# Sobe: (1) db — PostgreSQL 16 + TimescaleDB (+ PostGIS, para a fase geo), no disco de
-#           dados; (2) ingestion — ingestão com QA/QC embutido (perfil `ingestao`: NÃO
-#           sobe por padrão — a versão atual MOVE arquivos de incoming/, o que é
-#           incompatível com a coleta; ver docs/estrategia-dados.md, fase 1).
+# Sobe: (1) db — PostgreSQL 16 + TimescaleDB + PostGIS, no disco de dados;
+#       (2) ingestion — ingestão INCREMENTAL dirigida pelos arquivos monitorados na
+#           dashboard (lê a raiz de dados somente leitura; nunca move nada);
+#       (3) api — API de dados (FastAPI) na porta API_PORT (8000), com chaves de acesso.
 # NÃO estão aqui: a coleta (rsync-hub, nativo), a dashboard (Flask, nativa) e o FTP de
-# distribuição (vsftpd nativo — docs/ftp-native-install.md). O pure-ftpd foi removido.
+# distribuição (vsftpd nativo — docs/ftp-native-install.md).
 #
 # Uso: sudo ./database/setup-db-host.sh   (uma vez: Docker no disco de dados + .env)
-#      docker compose up -d                (sobe só o db)
+#      docker compose up -d --build
+#      ./database/migrate.sh              (schema num banco já existente)
 #
-# CARBONARA_ROOT (default ./data em dev; em produção a raiz do rsync-hub, onde chega
-# incoming/) é a raiz dos volumes de dados. PG_DATA_DIR é o diretório do cluster no
-# disco de dados (o setup cria <disco>/carbonara-db/pgdata) — bind mount, não volume
-# nomeado, para que o banco viva no MESMO disco que o datahub e fora do disco root.
+# CARBONARA_ROOT (caminho ABSOLUTO — em produção a raiz do rsync-hub, onde chega
+# incoming/; em dev, o ./data do repositório por extenso) é montada no MESMO caminho dentro dos containers — os caminhos absolutos do
+# config.yaml da dashboard (heartbeat_file, files[].path) valem sem tradução.
+# PG_DATA_DIR é o diretório do cluster no disco de dados (bind mount, fora do disco root).
 
 name: carbonara-server
 
 services:
   # ---------------------------------------------------------------------------
   # Banco de dados — PostgreSQL 16 + TimescaleDB + PostGIS. Roda database/init/* no
-  # PRIMEIRO start (diretório do cluster vazio): 01_/02_/03_*.sql + 04_replication.sh.
-  # Imagem FIXADA (não `latest`): trocar de versão é uma decisão, não um `pull`.
-  # Só escuta em DB_BIND (127.0.0.1): a API e a ingestão falam com ele pela rede do
-  # compose; um espelho futuro entra liberando a porta para o IP dele.
-  # Memória dimensionada para o host de 7,6 GB (ver docs/estrategia-dados.md, 2.6).
+  # PRIMEIRO start (diretório do cluster vazio): 01_/02_/03_*.sql, 04_replication.sh e
+  # 05_migrations.sh (aplica database/migrations/ — o mesmo que migrate.sh aplica num
+  # banco existente). Imagem FIXADA (não `latest`).
+  # Só escuta em DB_BIND (127.0.0.1): ingestão e API falam com ele pela rede do compose;
+  # um espelho futuro entra liberando a porta para o IP dele.
+  # Memória dimensionada para o host de 7,6 GB (docs/estrategia-dados.md, 2.6).
   # ---------------------------------------------------------------------------
   db:
     image: timescale/timescaledb-ha:pg16.15-ts2.30.1
@@ -74,6 +76,7 @@ services:
     volumes:
       - ${PG_DATA_DIR:-./data/pgdata}:/home/postgres/pgdata/data
       - ./database/init:/docker-entrypoint-initdb.d:ro
+      - ./database/migrations:/migrations:ro
     shm_size: 512m
     mem_limit: ${DB_MEM_LIMIT:-3g}
     healthcheck:
@@ -83,18 +86,13 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------------------
-  # Serviço de ingestão — observa incoming/, faz parse, aplica o QA/QC em memória
-  # (biblioteca processing/, flag calculado ANTES do insert) e carrega no
-  # TimescaleDB. Só conhece o diretório onde os arquivos pousam; é independente de
-  # COMO chegaram (rsync-over-SSH hoje). incoming/ vira /data/landing no container.
-  # Build context = raiz do repo, para a imagem incluir processing/.
-  #
-  # PERFIL `ingestao`: fica fora do `docker compose up -d` até a fase 1 (ingestão
-  # incremental dirigida pelos arquivos monitorados na dashboard, sem mover nada).
-  # Para subir de propósito: docker compose --profile ingestao up -d --build ingestion
+  # Ingestão — lê SÓ os arquivos com "Ingerir no banco" marcado na dashboard (e só as
+  # variáveis registradas), de forma incremental por offset, aplica o QC e grava no
+  # banco. A raiz de dados entra SOMENTE LEITURA: por construção este serviço não
+  # consegue mover, apagar ou alterar um arquivo das estações.
+  # Build context = raiz do repo (inclui processing/ e carbonara_parse/).
   # ---------------------------------------------------------------------------
   ingestion:
-    profiles: ["ingestao"]
     build:
       context: .
       dockerfile: ingestion/Dockerfile
@@ -110,13 +108,46 @@ services:
       DB_PASSWORD: "${DB_PASSWORD}"
       DB_NAME: "${DB_NAME:-carbonara}"
       INGEST_POLL_SECONDS: "${INGEST_POLL_SECONDS:-30}"
+      INGEST_SETTLE_SECONDS: "${INGEST_SETTLE_SECONDS:-5}"
+      INGEST_MAX_BYTES: "${INGEST_MAX_BYTES:-67108864}"
+      INGEST_CYCLE_BUDGET_BYTES: "${INGEST_CYCLE_BUDGET_BYTES:-536870912}"
+      TZ: UTC
     mem_limit: ${INGEST_MEM_LIMIT:-1g}
     volumes:
-      - ${CARBONARA_ROOT:-./data}/incoming:/data/landing
-      - ${CARBONARA_ROOT:-./data}/archive:/data/archive
-      - ${CARBONARA_ROOT:-./data}/quarantine:/data/quarantine
-      - ./ingestion/config.yaml:/app/config.yaml:ro
+      - ${CARBONARA_ROOT:?defina CARBONARA_ROOT no .env (caminho ABSOLUTO)}:${CARBONARA_ROOT}:ro
+      - ./dashboard/config.yaml:/app/dashboard-config.yaml:ro
       - ./processing/config.yaml:/app/processing/config.yaml:ro
+
+  # ---------------------------------------------------------------------------
+  # API de dados — FastAPI/uvicorn. Porta API_PORT no host (liberar no STI); acesso por
+  # chave (X-API-Key). Primeira chave: docker compose exec api python -m app.keys_cli
+  # create --owner dashboard --scopes read,admin
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: carbonara-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${API_BIND:-0.0.0.0}:${API_PORT:-8000}:8000"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: "${DB_USER}"
+      DB_PASSWORD: "${DB_PASSWORD}"
+      DB_NAME: "${DB_NAME:-carbonara}"
+      API_KEY_PEPPER: "${API_KEY_PEPPER:?defina API_KEY_PEPPER no .env}"
+      TZ: UTC
+    mem_limit: ${API_MEM_LIMIT:-1g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 # A coleta (rsync-over-SSH) e o monitor rodam NATIVOS no host, pelo script
 # `collection/rsync-hub` (não são serviços do compose). Ver o README.

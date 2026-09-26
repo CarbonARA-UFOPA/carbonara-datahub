@@ -337,12 +337,12 @@ Revoke a station at any time with `sudo rsync-hub remove flona01`.
 
 ```bash
 sudo ./database/setup-db-host.sh                         # once: Docker on the data disk + .env
-docker compose up -d                                     # brings up the database only
-docker compose ps                                        # carbonara-db healthy
-# ingestion is gated behind the `ingestao` profile until phase 1 (docs/estrategia-dados.md):
-cp ingestion/config.example.yaml ingestion/config.yaml   # CSV column → variable mapping
-cp processing/config.example.yaml processing/config.yaml # valid physical ranges per variable
-docker compose --profile ingestao up -d --build ingestion
+cp processing/config.example.yaml processing/config.yaml # optional global QC checks
+docker compose up -d --build                             # db + ingestion + api
+./database/migrate.sh                                    # schema migrations (existing DB)
+docker compose exec api python -m app.keys_cli create --owner dashboard --scopes read,admin
+# paste the key in the dashboard (Configurações → API de dados); then mark files with
+# "Ingerir no banco" — only those (and their selected variables) enter the database.
 ```
 
 End-to-end test without a real station: drop a sample CSV into the landing directory

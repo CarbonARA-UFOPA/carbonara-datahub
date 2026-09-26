@@ -62,6 +62,26 @@
     </label>
   </details>
 
+  <h2>API de dados</h2>
+  <p class="meta">Serviço <code>api</code> do Docker Compose (porta 8000). A dashboard usa a
+    <em>URL interna</em> para ler as séries dos arquivos marcados com "Ingerir no banco" e
+    para gerir as chaves; a <em>URL pública</em> é só o que se mostra aos usuários.</p>
+  <div class="form-row">
+    <label>URL interna da API
+      <input name="api_url" value="{{ cfg.api.url if cfg.api and cfg.api.url else '' }}"
+             placeholder="ex.: http://127.0.0.1:8000">
+    </label>
+    <label>Chave de serviço da dashboard
+      <input name="api_key" autocomplete="off"
+             placeholder="{{ 'configurada (' ~ cfg.api.key[:12] ~ '…) — vazio mantém, - remove' if cfg.api and cfg.api.key else 'cole a chave (escopos read,admin)' }}">
+      <small>Crie com <code>docker compose exec api python -m app.keys_cli create --owner dashboard --scopes read,admin</code>.</small>
+    </label>
+    <label>URL pública (opcional)
+      <input name="api_public_url" value="{{ cfg.api.public_url if cfg.api and cfg.api.public_url else '' }}"
+             placeholder="ex.: http://200.x.y.z:8000">
+    </label>
+  </div>
+
   <div class="form-actions">
     <button class="btn btn-primary" type="submit">Salvar configuração master</button>
     <a class="btn" href="{{ url_for('pages.index') }}">Voltar</a>

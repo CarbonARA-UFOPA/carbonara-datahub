@@ -251,26 +251,41 @@ No **primeiro** start (diretório `PG_DATA_DIR` vazio), o container executa
 O PostgreSQL escuta só em `127.0.0.1:5432` (`DB_BIND`). Quando o espelho existir, libere
 a porta para o IP dele e rode lá `pg_basebackup -h <hub> -U replicator -R -X stream`.
 
-### B3. Ingestão e processamento (QA/QC)
+### B3. Ingestão — dirigida pelos arquivos monitorados
 
-A ingestão **não sobe por padrão**: a versão atual move arquivos de `incoming/`, o que
-é incompatível com a coleta (os `.dat` crescem por append e a dashboard faz tail neles).
-Ela é reescrita na fase 1 para ler só os arquivos monitorados, de forma incremental.
-Para testes em dev (raiz `./data`, nunca em produção):
+A ingestão **só grava o que a dashboard registrou** com "Ingerir este arquivo no banco de
+dados" marcado, e só as variáveis da tabela do registro. Ela lê a raiz de dados **somente
+leitura**, de forma incremental (offset por arquivo), e nunca move nem altera nada em
+`incoming/`. Fluxo:
+
+1. Suba tudo: `docker compose up -d --build` (db, ingestion, api). Num banco que já
+   existia, aplique o schema novo: `./database/migrate.sh` (num banco novo o init já faz).
+2. Crie a chave de serviço da dashboard:
+   `docker compose exec api python -m app.keys_cli create --owner dashboard --scopes read,admin`
+   e cole-a em **Configurações → API de dados** (URL interna `http://127.0.0.1:8000`).
+3. Em **Estações → arquivo → Editar**, marque *Ingerir no banco*, informe o **fuso dos
+   carimbos** do arquivo (vazio = UTC), escolha a **reamostragem** (média por 1/30 min para
+   arquivos de alta frequência) e confira o **ID no banco** de cada variável. Salve.
+4. Acompanhe: `docker compose logs -f ingestion` e o chip "no banco" na página da estação.
+
+Reprocessar (ex.: depois de corrigir o fuso ou um ID):
+`docker compose exec ingestion python ingest.py --reprocess <estação> [--file <id>] --apagar`.
+QC global opcional (além dos limites Mín/Máx do registro): `cp processing/config.example.yaml
+processing/config.yaml` e `docker compose up -d --build ingestion`.
+
+### B4. API de dados e chaves
+
+A API escuta em `API_PORT` (padrão **8000/TCP**; peça ao STI a liberação de entrada — o
+5432 fica local). Documentação interativa em `http://<servidor>:8000/docs`.
+`/stations`, `/variables` e `/healthz` são abertos; o resto exige `X-API-Key`. As chaves
+(escopos `read`/`download`/`admin`, validade, limite por minuto) são geridas na dashboard
+em **API** (menu de admin) — a chave aparece uma única vez. Sem domínio/certificado a API
+sai em HTTP; quando houver, o apache2 já instalado faz o proxy com TLS.
 
 ```bash
-cp ingestion/config.example.yaml ingestion/config.yaml     # mapa coluna->variável
-cp processing/config.example.yaml processing/config.yaml   # faixas físicas (QC)
-docker compose --profile ingestao up -d --build ingestion
-docker compose logs -f ingestion
+curl -H "X-API-Key: cbk_..." "http://servidor:8000/series?station=eddyfarm&agg=1h&start=now-7d"
+curl -H "X-API-Key: cbk_..." "http://servidor:8000/latest?station=eddyfarm&tz=America/Santarem"
 ```
-
-### B4. Porta da API
-
-A API de dados (fase 0/1) escuta em `API_PORT` (padrão **8000/TCP**). Peça ao STI a
-liberação de **entrada** dessa porta no servidor; o 5432 não precisa (fica local). Sem
-domínio/certificado a API sai em HTTP; quando houver, o apache2 já instalado faz o proxy
-com TLS. O acesso é por chave de API (`X-API-Key`), gerida pela dashboard.
 
 ### B5. Distribuição pelo FTP
 

@@ -1,165 +1,25 @@
 """Monta as séries dos gráficos (e o preview do formulário) a partir do tail do arquivo."""
 from __future__ import annotations
 
-import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config_store, tailer
+from . import api_client, config_store, tailer
 
 MAX_POINTS = 500  # decimação: acima disso o gráfico fica pesado sem ganho visual
 
 
-def _compile_strip(fcfg: dict):
-    """Compila a regex de limpeza dos valores (fcfg['strip_regex']); None se ausente/ inválida."""
-    pat = (fcfg.get("strip_regex") or "").strip()
-    if not pat:
-        return None
-    try:
-        return re.compile(pat)
-    except re.error:
-        return None
-
-
-def _column_index(spec, header: list[str] | None, row_len: int) -> int | None:
-    """Resolve coluna por índice (int) ou por nome (str, exige header_line)."""
-    if isinstance(spec, int):
-        return spec if -row_len <= spec < row_len else None
-    if header is None:
-        return None
-    cleaned = [h.strip().strip('"') for h in header]
-    return cleaned.index(spec) if spec in cleaned else None
-
-
-# Exibição de carimbo de tempo: data completa SEMPRE, e a resolução do relógio ACOMPANHA
-# a cadência real dos dados. Um datalogger de 30 min não precisa de segundos (poluem o
-# eixo); um arquivo com registros a cada segundo — ou frações, como os .sfo — fica
-# ilegível sem eles: linhas diferentes viravam o mesmo rótulo. Por isso o formato é
-# escolhido por leitura, não fixado.
-TS_DISPLAY = "%d/%m/%Y %H:%M"            # cadência de 1 min ou mais
-TS_DISPLAY_S = "%d/%m/%Y %H:%M:%S"       # cadência de 1 s a 1 min
-TS_DISPLAY_MS = "%d/%m/%Y %H:%M:%S.%f"   # abaixo de 1 s (cortado em milissegundos)
-
-
-def ts_display_format(dts: list[datetime | None]) -> str:
-    """Formato de exibição adequado à cadência da série.
-
-    Usa o MENOR intervalo entre carimbos consecutivos (não a média): se dois registros
-    quaisquer estão a 1 s um do outro, os segundos importam para todos. Sem nenhum
-    intervalo positivo — todos os carimbos iguais, o sintoma clássico de ter escolhido
-    uma coluna de tempo que não avança a cada registro — mostra a resolução máxima,
-    que é justamente o que deixa o problema visível."""
-    xs = sorted(d for d in dts if d is not None)
-    passos = [(b - a).total_seconds() for a, b in zip(xs, xs[1:]) if b > a]
-    if not passos:
-        return TS_DISPLAY_MS
-    menor = min(passos)
-    if menor >= 60:
-        return TS_DISPLAY
-    if menor >= 1:
-        return TS_DISPLAY_S
-    return TS_DISPLAY_MS
-
-
-def fmt_ts(dt: datetime, fmt: str) -> str:
-    """Aplica o formato; em milissegundos corta os microssegundos do strftime (%f dá 6
-    casas — 3 bastam para ler, e o valor cru continua visível no preview)."""
-    out = dt.strftime(fmt)
-    return out[:-3] if fmt.endswith(".%f") else out
-
-
-_EPOCH_MIN = datetime(1990, 1, 1)     # antes disto não há estação deste projeto
-_EPOCH_MAX = datetime(2100, 1, 1)
-
-
-def parse_epoch(raw: str) -> datetime | None:
-    """Unix epoch → datetime (fuso do processo, como os carimbos de texto dos arquivos).
-
-    Aceita fração de segundo — ``1787542188.433029`` são 6 casas, precisão de
-    microssegundo, preservada no datetime. A ESCALA é deduzida da ordem de grandeza,
-    porque a mesma coluna aparece em segundos, ms, µs ou ns conforme o equipamento:
-    hoje o epoch em segundos tem ~1,8e9, em ms ~1,8e12, em µs ~1,8e15 e em ns ~1,8e18 —
-    as faixas não se sobrepõem em nenhum momento plausível deste século."""
-    try:
-        v = float((raw or "").strip().strip('"').replace(",", "."))
-    except (TypeError, ValueError):
-        return None
-    a = abs(v)
-    if a >= 1e17:
-        v /= 1e9        # nanossegundos
-    elif a >= 1e14:
-        v /= 1e6        # microssegundos
-    elif a >= 1e11:
-        v /= 1e3        # milissegundos
-    try:
-        dt = datetime.fromtimestamp(v)
-    except (OverflowError, OSError, ValueError):
-        return None
-    # Faixa plausível: apontar o eixo de tempo para uma coluna que NÃO é epoch (um
-    # ângulo '359', uma temperatura '26.43') converteria em silêncio para 01/01/1970 e o
-    # gráfico ficaria com datas absurdas em vez de dizer que a coluna está errada.
-    if not (_EPOCH_MIN <= dt <= _EPOCH_MAX):
-        return None
-    return dt
-
-
-def parse_timestamp(raw: str, fmt: str | None) -> datetime | None:
-    """Parse TOLERANTE do timestamp. Dataloggers Campbell/TOA5 gravam fração de segundo
-    ('2026-07-23 17:00:03.607'), que o formato padrão '%Y-%m-%d %H:%M:%S' não casa. Aqui
-    tentamos o formato como está e, se falhar, uma variante: com '.%f' anexado quando o
-    formato não a declara, ou sem ela quando o valor não tem fração. Assim o padrão da
-    dashboard funciona com ou sem os milissegundos, sem o usuário ter que ajustar nada."""
-    # Unix epoch vale para QUALQUER coluna escolhida como eixo de tempo — o marcador
-    # está no FORMATO, não na posição da coluna.
-    if config_store.is_epoch_format(fmt):
-        return parse_epoch(raw)
-    raw = (raw or "").strip().strip('"')
-    fmt = fmt or "%Y-%m-%d %H:%M:%S"
-    candidates = [fmt]
-    if "%f" not in fmt:
-        candidates.append(fmt + ".%f")
-    else:
-        candidates.append(fmt.replace(".%f", "").replace("%f", "").rstrip("."))
-    for f in candidates:
-        try:
-            return datetime.strptime(raw, f)
-        except ValueError:
-            continue
-    return None
-
-
-# Formatos tentados para uma coluna do tipo "timestamp" (data/hora em TEXTO). Não há
-# formato por variável no cadastro — seria um campo a mais em cada linha da tabela —,
-# então tentamos o do arquivo (quando não é epoch) e depois os usuais. parse_timestamp
-# já cobre, para cada um, a variante com fração de segundo.
-_TEXT_TS_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M",
-                    "%Y-%m-%d", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
-                    "%Y%m%d%H%M%S", "%Y%m%d", "%H:%M:%S", "%H:%M")
-
-
-def parse_datetime_text(raw: str, prefer: str | None = None) -> datetime | None:
-    """Data/hora em texto, descobrindo o formato entre os usuais (o do arquivo primeiro)."""
-    tentativas = []
-    if prefer and not config_store.is_epoch_format(prefer):
-        tentativas.append(prefer)
-    tentativas.extend(f for f in _TEXT_TS_FORMATS if f != prefer)
-    for f in tentativas:
-        dt = parse_timestamp(raw, f)
-        if dt is not None:
-            return dt
-    return None
-
-
-def _read_header(path, fcfg) -> list[str] | None:
-    hl = fcfg.get("header_line")
-    if not hl:
-        return None
-    lines = tailer.head_lines(path, hl)
-    if len(lines) < hl:
-        return None
-    rows = tailer.parse_rows([lines[hl - 1]], fcfg.get("separator", ","), fcfg.get("quotechar", '"'))
-    return rows[0] if rows else None
+# Parse de carimbos, resolução de colunas e cabeçalho: implementação no pacote
+# compartilhado carbonara_parse (a ingestão usa EXATAMENTE as mesmas funções — o que o
+# preview mostra é o que entra no banco). Nomes locais mantidos para os chamadores.
+from carbonara_parse.records import column_index as _column_index  # noqa: E402
+from carbonara_parse.records import compile_strip as _compile_strip  # noqa: E402
+from carbonara_parse.records import read_header as _read_header  # noqa: E402
+from carbonara_parse.timeparse import (  # noqa: E402,F401
+    TS_DISPLAY, TS_DISPLAY_MS, TS_DISPLAY_S, fmt_ts, parse_datetime_text, parse_epoch,
+    parse_timestamp, ts_display_format,
+)
 
 
 def _decimate(indices_len: int) -> list[int]:
@@ -195,6 +55,119 @@ def column_display(cells: list[str], vtype: str, ts_format: str | None,
 
 
 def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
+    """Série de um arquivo monitorado. Arquivo INGERIDO no banco (ingest=true) com a
+    API configurada → lê do banco (o que a API serve é o que o resto do mundo vê);
+    qualquer falha aí volta ao tail do arquivo, avisando em ``problems``."""
+    if fcfg.get("ingest") and api_client.configured(cfg):
+        try:
+            return series_from_api(cfg, station, fcfg)
+        except Exception as exc:  # noqa: BLE001 — a API nunca derruba o gráfico
+            out = build_series_from_file(cfg, station, fcfg)
+            out.setdefault("problems", []).insert(
+                0, f"banco indisponível ({exc}) — lendo o arquivo diretamente")
+            return out
+    return build_series_from_file(cfg, station, fcfg)
+
+
+def _display_tz(cfg: dict, fcfg: dict):
+    """Fuso em que os carimbos do banco (UTC) são mostrados: o do arquivo — assim os
+    rótulos batem com o que está escrito no arquivo — ou o global da dashboard."""
+    from datetime import timezone as _tz
+    name = fcfg.get("timezone") or cfg.get("timezone")
+    if not name:
+        return _tz.utc
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:  # noqa: BLE001
+        return _tz.utc
+
+
+def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
+    """Mesmo contrato de ``build_series_from_file``, com os dados vindos da API
+    (``/series?order=desc``: os últimos ``tail_lines`` registros)."""
+    from carbonara_parse.records import variable_id_of
+    from datetime import datetime as _dt
+
+    variables_cfg = fcfg.get("variables") or []
+    numericas = [(v, variable_id_of(v)) for v in variables_cfg
+                 if (v.get("type") or "numero") != "texto"]
+    vids = [vid for _v, vid in numericas]
+    tail_lines = int(fcfg.get("tail_lines") or 100)
+    params = {"station": station["id"], "vars": ",".join(vids), "agg": "raw", "qc": "all",
+              "order": "desc", "limit": max(1, tail_lines) * max(1, len(vids))}
+    window_hours = fcfg.get("window_hours")
+    if window_hours:
+        params["start"] = f"now-{int(window_hours)}h"
+    data = api_client.get(cfg, "/series", params)
+
+    tz = _display_tz(cfg, fcfg)
+    por_var = {s["variable_id"]: s for s in data.get("series", [])}
+    # Eixo comum: união dos instantes de todas as variáveis (ordenado).
+    instantes: set[str] = set()
+    for s in por_var.values():
+        instantes.update(s["times"])
+    ordenados = sorted(instantes)
+    dts = [_dt.fromisoformat(t.replace("Z", "+00:00")).astimezone(tz).replace(tzinfo=None)
+           for t in ordenados]
+    ts_fmt = ts_display_format(dts)
+    idx = {t: i for i, t in enumerate(ordenados)}
+
+    problems: list[str] = []
+    variables = []
+    for v, vid in numericas:
+        vtype = v.get("type") or "numero"
+        entry = {"label": v["label"], "unit": v.get("unit"), "min": v.get("min"),
+                 "max": v.get("max"), "type": vtype, "values": [None] * len(ordenados)}
+        s = por_var.get(vid)
+        if s:
+            for t, val, q in zip(s["times"], s["values"], s.get("quality", [])):
+                entry["values"][idx[t]] = val
+            if vtype in ("epoch", "timestamp"):
+                dts_var = [_dt.fromtimestamp(x, tz).replace(tzinfo=None)
+                           for x in s["values"] if x is not None]
+                f = ts_display_format(dts_var)
+                entry["ts_res"] = "ms" if f == TS_DISPLAY_MS else "s" if f == TS_DISPLAY_S else "min"
+        else:
+            problems.append(f"'{v['label']}' ({vid}) ainda não tem valores no banco")
+        variables.append(entry)
+    # Colunas de texto não vão para o banco: último valor lido do próprio arquivo.
+    textos = [v for v in variables_cfg if (v.get("type") or "numero") == "texto"]
+    if textos:
+        try:
+            tail = build_series_from_file(cfg, station, {**fcfg, "tail_lines": 5})
+            ultimos = {e["label"]: e.get("last_text") for e in tail.get("variables", [])}
+        except Exception:  # noqa: BLE001
+            ultimos = {}
+        for v in textos:
+            variables.append({"label": v["label"], "unit": v.get("unit"), "min": None,
+                              "max": None, "type": "texto", "values": [None] * len(ordenados),
+                              "last_text": ultimos.get(v["label"])})
+    # Ordem original do registro (a página indexa os canvas por posição).
+    ordem = {v["label"]: i for i, v in enumerate(variables_cfg)}
+    variables.sort(key=lambda e: ordem.get(e["label"], 999))
+
+    keep = _decimate(len(ordenados))
+    if data.get("truncated"):
+        problems.append("a API limitou a quantidade de pontos — reduza 'Linhas do final' ou use o período")
+    return {
+        "file": fcfg["id"],
+        "path": str(fcfg.get("path")),
+        "path_info": {"source": "banco"},
+        "rows_read": len(ordenados),
+        "decimated": len(keep) < len(ordenados),
+        "last_reading": fmt_ts(dts[-1], ts_fmt) if dts else None,
+        "timestamps": [fmt_ts(dts[i], ts_fmt) for i in keep],
+        "epochs": [round(_dt.fromisoformat(ordenados[i].replace("Z", "+00:00")).timestamp(), 3)
+                   for i in keep],
+        "variables": [{**v, "values": [v["values"][i] for i in keep]} for v in variables],
+        "problems": problems,
+        "source": "banco",
+        "generated_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+    }
+
+
+def build_series_from_file(cfg: dict, station: dict, fcfg: dict) -> dict:
     # Caminho com data/hora (dynamic_path) é expandido aqui, a cada leitura, pelo
     # relógio do servidor — por isso o gráfico segue o arquivo que rotaciona sozinho.
     try:
