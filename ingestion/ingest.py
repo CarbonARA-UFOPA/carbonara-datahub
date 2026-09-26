@@ -493,6 +493,8 @@ def process_file(conn, station_id: str, fcfg: dict, path: Path, tzname: str | No
             for ts, vid, val, qparse in lines:
                 q = qc.evaluate(_M(ts, station_id, vid, val, qparse))
                 rows.append((ts, station_id, vid, val, q, path.name, file_id))
+            if rows:
+                _touch_range(station_id, min(r[0] for r in rows), max(r[0] for r in rows))
             with conn.cursor() as cur:
                 inserted = insert_measurements(cur, rows)
                 cur.execute(
@@ -531,6 +533,49 @@ def process_file(conn, station_id: str, fcfg: dict, path: Path, tzname: str | No
 
 
 # --- Ciclo ---------------------------------------------------------------------
+_TOUCHED: dict[str, list] = {}   # station_id -> [min_time, max_time] inserido no ciclo
+
+
+def _touch_range(station_id: str, lo, hi) -> None:
+    if lo is None or hi is None:
+        return
+    cur = _TOUCHED.get(station_id)
+    if cur is None:
+        _TOUCHED[station_id] = [lo, hi]
+    else:
+        cur[0] = min(cur[0], lo)
+        cur[1] = max(cur[1], hi)
+
+
+def refresh_aggregates(conn) -> None:
+    """Materializa os agregados contínuos para os períodos que receberam dados NESTE
+    ciclo e são antigos demais para a política automática (ela só cobre as últimas
+    horas): um backfill de meses ficaria só na parte "tempo real" dos agregados e cada
+    consulta 1h/1d recalcularia tudo (6 s em vez de 0,2 s). CALL não roda em transação —
+    usa autocommit temporário."""
+    if not _TOUCHED:
+        return
+    pend = dict(_TOUCHED)
+    _TOUCHED.clear()
+    old_ac = conn.autocommit
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            for sid, (lo, hi) in pend.items():
+                if hi - lo > timedelta(days=3650):
+                    lo = hi - timedelta(days=3650)
+                if lo > datetime.now(timezone.utc) - timedelta(hours=6):
+                    continue                       # a política automática cobre
+                for view in ("measurements_hourly", "measurements_daily"):
+                    cur.execute("CALL refresh_continuous_aggregate(%s, %s, %s)",
+                                (view, lo - timedelta(days=1), hi + timedelta(days=1)))
+                log.info("%s: agregados materializados de %s a %s", sid, lo.date(), hi.date())
+    except Exception:  # noqa: BLE001 — nunca derruba o ciclo; a próxima entrada tenta de novo
+        log.exception("falha ao materializar agregados")
+    finally:
+        conn.autocommit = old_ac
+
+
 def run_cycle(conn, cfg: dict, global_qc: QualityPipeline, settle: int, max_bytes: int,
               budget: int) -> dict:
     """Um ciclo completo sobre todos os registros com ingest=true."""
@@ -577,6 +622,7 @@ def run_cycle(conn, cfg: dict, global_qc: QualityPipeline, settle: int, max_byte
                 gastos += process_file(conn, sid, fcfg, p, tzname, cols, qc, settle,
                                        max_bytes, bool(closed))
                 resumo["files"] += 1
+    refresh_aggregates(conn)
     return resumo
 
 

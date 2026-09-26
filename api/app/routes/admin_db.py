@@ -78,7 +78,10 @@ async def _table_kind(schema: str, table: str) -> dict:
         raise HTTPException(404, f"tabela {schema}.{table} não encontrada")
     kind = {"r": "table", "p": "table", "v": "view", "m": "matview"}[row["relkind"]]
     editable = kind == "table" and schema not in SYSTEM_SCHEMAS
-    return {"kind": kind, "comment": row["comment"], "editable": editable,
+    hyper = bool(await db.pool().fetchval(
+        "SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema = $1 AND hypertable_name = $2",
+        schema, table))
+    return {"kind": kind, "comment": row["comment"], "editable": editable, "hypertable": hyper,
             "generated": (row["comment"] or "").startswith("carbonara:")}
 
 
@@ -271,18 +274,28 @@ async def tables(schema: str, _who: auth.KeyInfo = Depends(auth.require("admin")
         WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m')
         ORDER BY c.relkind, c.relname
         """, schema)
+    hyper = {h["hypertable_name"] for h in await db.pool().fetch(
+        "SELECT hypertable_name FROM timescaledb_information.hypertables WHERE hypertable_schema = $1", schema)}
     out = []
     for r in rows:
         d = dict(r)
         d["editable"] = d["kind"] == "table" and schema not in SYSTEM_SCHEMAS
         d["generated"] = (d["comment"] or "").startswith("carbonara:")
-        if d["kind"] == "table" and (d["rows_estimate"] or 0) < 100000:
+        d["hypertable"] = r["name"] in hyper
+        d["rows_exact"] = None
+        if d["hypertable"]:
+            # count(*) numa hypertable de milhões de linhas leva segundos; a estimativa do
+            # Timescale (estatísticas dos chunks) é instantânea
+            try:
+                d["rows_estimate"] = await db.pool().fetchval(
+                    "SELECT approximate_row_count($1::regclass)", f"{schema}.{r['name']}")
+            except Exception:  # noqa: BLE001
+                pass
+        elif d["kind"] == "table" and (d["rows_estimate"] or 0) < 100000:
             try:
                 d["rows_exact"] = await db.pool().fetchval(f"SELECT count(*) FROM {_q(schema)}.{_q(r['name'])}")
             except Exception:  # noqa: BLE001
-                d["rows_exact"] = None
-        else:
-            d["rows_exact"] = None
+                pass
         out.append(d)
     return out
 
@@ -330,6 +343,14 @@ async def rows(schema: str, table: str, limit: int = 50, offset: int = 0,
     direction = "ASC" if dir.lower() == "asc" else "DESC"
     if meta["generated"] and "time" in cols:
         return await _rows_generated_view(schema, table, cols, meta, limit, offset, direction)
+    if meta["hypertable"]:
+        # Milhões de linhas: filtro de texto e ordenação por valor varreriam a tabela
+        # inteira (timeout). Só paginação por tempo; para filtrar, a consulta SQL.
+        if q and q.strip():
+            raise HTTPException(400, "tabela de séries com milhões de linhas: use a consulta SQL para filtrar "
+                                     "(ex.: WHERE station_id = '...' AND variable_id = '...')")
+        if sort and sort != "time":
+            raise HTTPException(400, "tabela de séries: ordenação só por tempo (use a consulta SQL)")
     where, args = "", []
     if q and q.strip():
         # filtro simples: o texto aparece em qualquer coluna (cast para texto)

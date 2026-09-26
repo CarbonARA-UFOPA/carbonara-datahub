@@ -19,7 +19,7 @@
         <tr><td><a href="{{ url_for('pages.banco_table', schema=schema, table=t.name) }}"><code>{{ t.name }}</code></a></td>
           <td><small>{% if t.generated %}view gerada{% elif t.kind == 'view' %}view{% elif t.kind == 'matview' %}view materializada{% else %}tabela{% endif %}
               {% if t.editable %} · <span class="badge on">editável</span>{% endif %}</small></td>
-          <td>{% if t.rows_exact is not none %}{{ '{:,}'.format(t.rows_exact).replace(',', '.') }}{% elif t.kind == 'table' %}≈ {{ '{:,}'.format(t.rows_estimate).replace(',', '.') }}{% else %}—{% endif %}</td>
+          <td>{% if t.rows_exact is not none %}{{ '{:,}'.format(t.rows_exact).replace(',', '.') }}{% elif t.kind == 'table' %}≈ {{ '{:,}'.format(t.rows_estimate or 0).replace(',', '.') }}{% else %}—{% endif %}</td>
           <td>{{ t.columns }}</td><td>{{ t.size if t.kind != 'view' else '—' }}</td>
           <td><small class="meta">{{ (t.comment or '') | replace('carbonara: view gerada da ingestão — ', '') }}</small></td>
           <td><a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=t.name) }}">Abrir</a></td></tr>
