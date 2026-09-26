@@ -64,7 +64,7 @@ logging.basicConfig(
 log = logging.getLogger("ingestion")
 
 RESAMPLE_SECONDS = {"raw": 0, "1min": 60, "30min": 1800}
-CHUNK_BYTES = int(os.environ.get("INGEST_CHUNK_BYTES", str(8 * 1024 * 1024)))
+CHUNK_BYTES = int(os.environ.get("INGEST_CHUNK_BYTES", str(4 * 1024 * 1024)))
 
 
 # --- Configuração ---------------------------------------------------------------

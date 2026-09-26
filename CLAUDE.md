@@ -512,7 +512,7 @@ Key invariants when editing:
   is ingested without reading YAML); `ensure_station`/`ensure_variables` upsert from it.
 - Budgets: `INGEST_MAX_BYTES` per file per cycle (64 MB) and `INGEST_CYCLE_BUDGET_BYTES`
   per cycle (512 MB); the newest file of a dynamic set is read first (fresh data before
-  backfill). Reads happen in **slices of `INGEST_CHUNK_BYTES` (8 MB), one commit each**
+  backfill). Reads happen in **slices of `INGEST_CHUNK_BYTES` (4 MB), one commit each**
   (ledger offset advances per slice): a 58 MB TOA5 with 62 variables would otherwise be
   millions of tuples in memory at once inside a 1 GB container. Per-file error isolation: exception → rollback + ledger `status='error'`,
   never crash the loop.

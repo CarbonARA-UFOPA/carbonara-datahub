@@ -102,8 +102,10 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
                  if (v.get("type") or "numero") != "texto"]
     vids = [vid for _v, vid in numericas]
     tail_lines = int(fcfg.get("tail_lines") or 100)
+    # limit conta LINHAS (instante × variável); pede-se um instante a mais e corta-se
+    # aos últimos tail_lines instantes aqui — o 'truncated' da API não se aplica.
     params = {"station": station["id"], "vars": ",".join(vids), "agg": "raw", "qc": "all",
-              "order": "desc", "limit": max(1, tail_lines) * max(1, len(vids))}
+              "order": "desc", "limit": (max(1, tail_lines) + 1) * max(1, len(vids))}
     window_hours = fcfg.get("window_hours")
     if window_hours:
         params["start"] = f"now-{int(window_hours)}h"
@@ -115,7 +117,7 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
     instantes: set[str] = set()
     for s in por_var.values():
         instantes.update(s["times"])
-    ordenados = sorted(instantes)
+    ordenados = sorted(instantes)[-max(1, tail_lines):]
     if not ordenados:
         raise _SemDadosNoBanco("o banco ainda não tem valores deste arquivo (a ingestão "
                                "roda a cada ciclo; confira o chip 'no banco' na estação)")
@@ -134,7 +136,8 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
         s = por_var.get(vid)
         if s:
             for t, val, q in zip(s["times"], s["values"], s.get("quality", [])):
-                entry["values"][idx[t]] = val
+                if t in idx:
+                    entry["values"][idx[t]] = val
             if vtype in ("epoch", "timestamp"):
                 dts_var = [_dt.fromtimestamp(x, tz).replace(tzinfo=None)
                            for x in s["values"] if x is not None]
@@ -163,8 +166,6 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
     variables.sort(key=lambda e: ordem.get(e["label"], 999))
 
     keep = _decimate(len(ordenados))
-    if data.get("truncated"):
-        problems.append("a API limitou a quantidade de pontos — reduza 'Linhas do final' ou use o período")
     return {
         "file": fcfg["id"],
         "path": str(fcfg.get("path")),
