@@ -319,6 +319,8 @@ async def rows(schema: str, table: str, limit: int = 50, offset: int = 0,
         raise HTTPException(400, f"coluna de ordenação desconhecida: {sort}")
     order_col = sort or ("time" if "time" in cols else cols[0])
     direction = "ASC" if dir.lower() == "asc" else "DESC"
+    if meta["generated"] and "time" in cols:
+        return await _rows_generated_view(schema, table, cols, meta, limit, offset, direction)
     where, args = "", []
     if q and q.strip():
         # filtro simples: o texto aparece em qualquer coluna (cast para texto)
@@ -331,6 +333,36 @@ async def rows(schema: str, table: str, limit: int = 50, offset: int = 0,
     res = await _run_readonly(sql, limit, tuple(args))
     res.update({"schema": schema, "table": table, "limit": limit, "offset": offset,
                 "sort": order_col, "dir": direction.lower(), "q": q or "", **meta})
+    return res
+
+
+async def _rows_generated_view(schema: str, table: str, cols: list[str], meta: dict,
+                               limit: int, offset: int, direction: str) -> dict:
+    """View larga de um arquivo (GROUP BY time sobre measurements): um ``ORDER BY time
+    LIMIT`` direto agregaria a estação INTEIRA antes de cortar (minutos em milhões de
+    linhas). Paginamos pelo TEMPO: os instantes da página vêm de uma variável-âncora por
+    índice (station_id, variable_id, time) e a view é lida só nessa janela. Por isso a
+    ordenação é sempre por tempo e não há filtro de texto aqui (use a consulta SQL)."""
+    anchor = next((c for c in cols if c not in ("time", "flags")), None)
+    empty = {"columns": cols, "rows": [], "row_count": 0, "truncated": False, "elapsed_ms": 0}
+    base = {"schema": schema, "table": table, "limit": limit, "offset": offset, "sort": "time",
+            "dir": direction.lower(), "q": "", **meta,
+            "note": "view gerada: ordenação por tempo e sem filtro de texto (use a consulta SQL)"}
+    if anchor is None:
+        return {**empty, **base}
+    times = await db.pool().fetch(
+        f"SELECT time FROM public.measurements WHERE station_id = $1 AND variable_id = $2 "
+        f"ORDER BY time {direction} LIMIT {limit + 1} OFFSET {max(0, offset)}", schema, anchor)
+    if not times:
+        return {**empty, **base}
+    ts = [t["time"] for t in times]
+    lo, hi = min(ts), max(ts)
+    sel = ", ".join(_q(c) for c in cols)
+    sql = (f"SELECT {sel} FROM {_q(schema)}.{_q(table)} WHERE time BETWEEN $1 AND $2 "
+           f"ORDER BY time {direction} LIMIT {limit + 1}")
+    res = await _run_readonly(sql, limit, (lo, hi))
+    res["truncated"] = len(times) > limit or res["truncated"]
+    res.update(base)
     return res
 
 

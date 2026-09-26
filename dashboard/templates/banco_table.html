@@ -21,16 +21,21 @@
   {% elif tab == 'dados' %}
     <section class="card">
       <form method="get" class="treat-tools" action="{{ url_for('pages.banco_table', schema=schema, table=table) }}">
+        {% if structure.generated %}
+          <span class="meta">Tabela gerada do arquivo: paginada por tempo (mais recente primeiro); para filtrar ou ordenar por valor use a <a href="{{ url_for('pages.banco') }}#sql-box">consulta SQL</a>.</span>
+          <a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, dir=('asc' if params.dir == 'desc' else 'desc')) }}">{{ 'Mais antigos primeiro' if params.dir == 'desc' else 'Mais recentes primeiro' }}</a>
+        {% else %}
         <input type="search" name="q" value="{{ params.q }}" placeholder="filtrar (texto em qualquer coluna)">
         <input type="hidden" name="sort" value="{{ params.sort or '' }}"><input type="hidden" name="dir" value="{{ params.dir }}">
         <button class="btn" type="submit">Filtrar</button>
+        {% endif %}
         {% if data %}<span class="meta">{{ data.row_count }} linha(s) a partir de {{ params.offset }}{{ ' (há mais)' if data.truncated }} · {{ data.elapsed_ms }} ms · ordenado por <code>{{ data.sort }}</code> {{ data.dir }}</span>{% endif %}
       </form>
       {% if data and data.rows %}
       {% set cols = data.columns | reject('equalto', '_ctid') | list %}
       <div class="db-grid"><table class="table">
         <thead><tr>{% if structure.editable %}<th></th>{% endif %}
-          {% for c in cols %}<th><a href="{{ url_for('pages.banco_table', schema=schema, table=table, sort=c, dir=('asc' if data.sort == c and data.dir == 'desc' else 'desc'), q=params.q) }}">{{ c }}{% if data.sort == c %} {{ '▲' if data.dir == 'asc' else '▼' }}{% endif %}</a></th>{% endfor %}
+          {% for c in cols %}<th>{% if structure.generated %}{{ c }}{% if c == 'time' %} {{ '▲' if data.dir == 'asc' else '▼' }}{% endif %}{% else %}<a href="{{ url_for('pages.banco_table', schema=schema, table=table, sort=c, dir=('asc' if data.sort == c and data.dir == 'desc' else 'desc'), q=params.q) }}">{{ c }}{% if data.sort == c %} {{ '▲' if data.dir == 'asc' else '▼' }}{% endif %}</a>{% endif %}</th>{% endfor %}
         </tr></thead>
         <tbody>{% for row in data.rows %}
           {% set ctid = row[0] if structure.editable else none %}
