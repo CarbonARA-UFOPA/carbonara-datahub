@@ -167,6 +167,45 @@ def upsert_monitored_file(cur, station_id: str, fcfg: dict, cols: list[records.C
     )
 
 
+_VIEW_SIG: dict[tuple[str, str], str] = {}
+
+
+def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.ColumnSpec]) -> None:
+    """"Banco por estação": schema com o id da estação e, nele, UMA VIEW larga por arquivo
+    monitorado (uma coluna por variável, ``flags`` = quantas variáveis daquele instante
+    têm quality <> 0). É o que a aba Banco mostra como "tabela do arquivo" — derivada
+    de measurements, sempre em dia, sem duplicar dado. Recriada só quando a lista de
+    variáveis muda (assinatura em memória) ou quando não existe."""
+    vids = [c.variable_id for c in cols if c.vtype != "texto"]
+    if not vids:
+        return
+    sig = "|".join(vids)
+    key = (station_id, fcfg["id"])
+    cur.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'v'", key)
+    if _VIEW_SIG.get(key) == sig and cur.fetchone():
+        return
+    qs = '"' + station_id.replace('"', '""') + '"'
+    qv = '"' + fcfg["id"].replace('"', '""') + '"'
+    colunas = ",\n  ".join(
+        'max(value) FILTER (WHERE variable_id = %s) AS "%s"' % (
+            "'" + v.replace("'", "''") + "'", v.replace('"', '""')) for v in vids)
+    lista = ", ".join("'" + v.replace("'", "''") + "'" for v in vids)
+    sid = "'" + station_id.replace("'", "''") + "'"
+    cur.execute(f"CREATE SCHEMA IF NOT EXISTS {qs}")
+    cur.execute(f"COMMENT ON SCHEMA {qs} IS 'carbonara: banco da estação {station_id}'")
+    cur.execute(f"DROP VIEW IF EXISTS {qs}.{qv}")
+    cur.execute(
+        f"CREATE VIEW {qs}.{qv} AS\nSELECT time,\n  {colunas},\n"
+        f"  count(*) FILTER (WHERE quality <> 0) AS flags\n"
+        f"FROM public.measurements\nWHERE station_id = {sid} AND variable_id IN ({lista})\n"
+        f"GROUP BY time")
+    alias = (fcfg.get("alias") or fcfg["id"]).replace("'", "''")
+    caminho = str(fcfg.get("path", "")).replace("'", "''")
+    cur.execute(f"COMMENT ON VIEW {qs}.{qv} IS 'carbonara: view gerada da ingestão — {alias} ({caminho})'")
+    _VIEW_SIG[key] = sig
+
+
 def sync_monitored_flags(cur, cfg: dict) -> None:
     """Registros que deixaram de existir ou de ser ingeridos ficam com ingest=false no
     espelho (o histórico em measurements permanece)."""
@@ -459,6 +498,7 @@ def run_cycle(conn, cfg: dict, global_qc: QualityPipeline, settle: int, max_byte
                 with conn.cursor() as cur:
                     ensure_variables(cur, cols)
                     upsert_monitored_file(cur, sid, fcfg, cols)
+                    ensure_station_view(cur, sid, fcfg, cols)
                 conn.commit()
                 candidatos = paths.all_matching_files(cfg, fcfg)
             except Exception:  # noqa: BLE001

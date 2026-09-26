@@ -619,20 +619,33 @@ computes live station status. Viewing is open; edits require the admin login
   (time, station, variable)). `station_detail` shows a "no banco" chip per ingested file
   from `/files`. `/api-keys` (admin) lists/creates/revokes keys via the API. The dashboard
   is the ONLY place that decides what enters the DB — keep it that way.
-- **Tratamento tab** (`/tratamento`, admin; `config_store.apply_treatment_form`): ONE
-  place to decide what enters the DB and with which rules — per file (`ingest`,
-  `timezone`, `resample`) and per variable (`ingest` true/false = monitored but kept out
-  of the DB, `variable_id`, `min`/`max` → flag 2, `qc_spike` = max delta between
-  consecutive readings → flag 3, `qc_stuck` = N identical readings → flag 4). One form
-  per file posts to `/tratamento/<station>/<file>`. The file form (`file_update`) must
-  keep these per-variable keys when it rebuilds `variables[]` — `carry_treatment` matches
-  by column/ID; don't drop it. Checks live in `processing/checks/{spike,persistence}_check.py`
-  (stateful per station+variable; the ingestion reads each file in order).
-- **Banco tab** (`/banco`, admin): read-only DB view through the API's `/admin/db/*`
-  (overview: size, tables, hypertable chunks/compression, continuous aggregates, jobs,
-  runs, replication slots; coverage: per station/variable period and counts from
-  `measurements_daily`; `query`: SELECT/WITH/EXPLAIN only, one statement, READ ONLY
-  transaction, 20 s timeout, ≤500 rows, keyword blocklist). Never add write paths there.
+- **Tratamento tab** (`/tratamento` index + `/tratamento/<station>/<file>` per file;
+  `config_store.apply_treatment_form`): ONE place to decide what enters the DB and with
+  which rules — per file (`ingest`, `timezone`, `resample`) and per variable (`ingest`
+  true/false = monitored but kept out of the DB, `variable_id`, `min`/`max` → flag 2,
+  `qc_spike` = max delta between consecutive readings → flag 3, `qc_stuck` = N identical
+  readings → flag 4). The index is a compact table (station → files, counts); the per-file
+  page has a search filter, "todas/nenhuma/inverter (só as visíveis)" and a sticky header
+  (files have 60–120 variables — never list all variables of all files on one page again).
+  The file form (`file_update`) must keep these per-variable keys when it rebuilds
+  `variables[]` — `carry_treatment` matches by column/ID; don't drop it. Checks live in
+  `processing/checks/{spike,persistence}_check.py` (stateful per station+variable; the
+  ingestion reads each file in order).
+- **Banco tab** (`/banco`, admin, phpMyAdmin-like, through the API's `/admin/db/*`):
+  "bancos" = PostgreSQL SCHEMAS. `public` = the system (measurements, stations, ledger…)
+  — read-only. **One schema per station**, created by the ingestion
+  (`ensure_station_view`), holding one **wide VIEW per monitored file** (one column per
+  variable + `flags`, built from `measurements`, recreated only when the variable list
+  changes) and any user-created tables. "Gerais" schemas hold cross-station user tables.
+  Sidebar = schemas; pages: schema (tables + "nova tabela" with typed columns, optional
+  hypertable), table (tabs Dados with sort/filter/pagination by `ctid`, Estrutura,
+  Inserir; drop with typed confirmation). Writes are allowed ONLY on user tables
+  (`editable` = regular table outside `public`); views and system tables never. The free
+  SQL box stays SELECT/WITH/EXPLAIN, READ ONLY, 20 s, ≤500 rows. This deliberately keeps
+  ONE physical measurements hypertable (API, aggregates, QC, replication all rely on it)
+  — the per-station "databases" are views over it, not separate PostgreSQL databases.
+  asyncpg gotchas met here: `relkind` comes back as bytes (cast `::text`), `format('%I.%I',
+  $1::text, $2::text)`, `ctid = $1::text::tid`.
 - **Config-driven** (`dashboard/config.yaml`, gitignored; example versioned): the UI
   itself edits it via `ConfigStore` (atomic write: tempfile + `os.replace`, under a
   lock). Relative `data_root` resolves against the **config file's directory**, not cwd.

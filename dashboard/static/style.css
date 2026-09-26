@@ -378,3 +378,26 @@ code { background: #eef2f0; padding: .05rem .3rem; border-radius: 4px; font-size
                                border-radius: 7px; font: inherit; background: #fff; }
 .pill-vinculo { background: rgba(138,92,214,.16); color: var(--purple); }
 .h3-sub { font-size: .95rem; margin: 1rem 0 .2rem; }
+
+
+/* --- Aba Banco (estilo phpMyAdmin) e aba Tratamento ------------------------------ */
+.db-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 1rem; align-items: start; }
+.db-side { position: sticky; top: .5rem; }
+.db-side a { display: block; padding: .3rem .5rem; border-radius: 6px; text-decoration: none; color: inherit; }
+.db-side a.active, .db-side a:hover { background: rgba(46, 158, 91, .12); }
+.db-side .db-kind { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: .6rem .5rem .1rem; }
+.db-side small { color: var(--muted); }
+.tabs { display: flex; gap: .3rem; border-bottom: 1px solid var(--line); margin: .4rem 0 .8rem; flex-wrap: wrap; }
+.tabs a { padding: .4rem .8rem; text-decoration: none; color: inherit; border-radius: 6px 6px 0 0; }
+.tabs a.active { background: var(--card); border: 1px solid var(--line); border-bottom-color: var(--card); margin-bottom: -1px; font-weight: 600; }
+.db-grid { overflow-x: auto; max-height: 70vh; overflow-y: auto; }
+.db-grid table { font-size: .82rem; white-space: nowrap; }
+.db-grid thead th { position: sticky; top: 0; z-index: 1; }
+.db-grid td.null { color: var(--muted); font-style: italic; }
+.treat-vars thead th { position: sticky; top: 0; z-index: 1; }
+.treat-vars input { padding: .2rem .35rem; font-size: .85rem; }
+.treat-wrap { max-height: 70vh; overflow: auto; }
+.treat-tools { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+.treat-tools input[type=search] { min-width: 240px; }
+.badge { display: inline-block; padding: .05rem .45rem; border-radius: 999px; font-size: .75rem; background: #eef2f0; }
+.badge.on { background: rgba(46, 158, 91, .18); }

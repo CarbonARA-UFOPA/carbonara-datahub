@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Tratamento · {{ f.alias or f.id }} · CARBONARA{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Tratamento — {{ f.alias or f.id }} <small>{{ station.name or station.id }} · <code>{{ f.path }}</code></small></h1>
+  <div>
+    <a class="btn" href="{{ url_for('pages.treatment') }}">← Todos os arquivos</a>
+    <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar parse/colunas</a>
+  </div>
+</div>
+
+<form method="post" class="card form" action="{{ url_for('pages.treatment_save', station_id=station.id, file_id=f.id) }}">
+  <input type="hidden" name="back" value="file">
+  <div class="grid-3">
+    <label class="check-row"><input type="checkbox" name="ingest" value="1" {{ 'checked' if f.get('ingest') }}>
+      <span><strong>Ingerir este arquivo no banco</strong>
+        {% if lg %}<br><small class="meta">{{ '{:,}'.format(lg.n_values).replace(',', '.') }} valores no banco
+          {%- if lg.last_time %} · até {{ lg.last_time[:16] | replace('T', ' ') }} UTC{% endif %}
+          {%- if lg.pending %} · {{ (lg.pending / 1024) | round(0) | int }} kB pendentes{% endif %}
+          {%- if lg.errors %} · <span class="warn">erro: {{ lg.errors[0] }}</span>{% endif %}</small>{% endif %}</span></label>
+    <label>Fuso dos carimbos do arquivo
+      <input name="timezone" list="tz-list" value="{{ f.timezone or '' }}" placeholder="vazio = UTC">
+      <small>Epoch já é UTC e ignora este campo.</small></label>
+    <label>Reamostrar antes de gravar
+      {% set rs = f.resample or 'raw' %}
+      <select name="resample">
+        <option value="raw" {{ 'selected' if rs == 'raw' }}>Não — cada registro</option>
+        <option value="1min" {{ 'selected' if rs == '1min' }}>Média por 1 min</option>
+        <option value="30min" {{ 'selected' if rs == '30min' }}>Média por 30 min</option>
+      </select></label>
+  </div>
+
+  <h2>Variáveis <small class="meta">{{ resumo.no_banco }} de {{ resumo.total }} no banco</small></h2>
+  <p class="meta">As regras só marcam <code>quality</code>, nunca alteram o valor: <strong>Mín/Máx</strong> =
+    faixa física (flag 2) · <strong>Salto máx.</strong> = maior variação aceitável entre duas leituras
+    seguidas, na unidade da variável (flag 3) · <strong>Travado (N)</strong> = N leituras iguais seguidas
+    marcam sensor travado (flag 4). Vazio = regra desligada.</p>
+  <div class="treat-tools">
+    <input type="search" id="treat-filter" placeholder="filtrar variáveis (rótulo, ID, coluna)…">
+    <span class="meta" id="treat-count"></span>
+    <button type="button" class="btn" id="treat-all">Todas no banco</button>
+    <button type="button" class="btn" id="treat-none">Nenhuma no banco</button>
+    <button type="button" class="btn" id="treat-invert">Inverter (só as visíveis)</button>
+  </div>
+  <div class="treat-wrap">
+  <table class="table treat-vars" id="treat-table">
+    <thead><tr><th>Banco</th><th>Variável</th><th>ID no banco</th><th>Mín</th><th>Máx</th>
+      <th title="salto máximo entre leituras seguidas (flag 3)">Salto máx.</th>
+      <th title="nº de leituras iguais seguidas que marca sensor travado (flag 4)">Travado (N)</th></tr></thead>
+    <tbody>
+    {% for v in f.variables %}
+      {% set i = loop.index0 %}
+      {% set vt = v.type or 'numero' %}
+      <tr data-text="{{ (v.label ~ ' ' ~ (v.variable_id or '') ~ ' ' ~ v.column ~ ' ' ~ vt) | lower }}">
+        <td>{% if vt == 'texto' %}<span class="meta" title="texto não vira série">—</span>
+            {% else %}<input type="checkbox" name="v{{ i }}_ingest" value="1" class="treat-chk" {{ 'checked' if v.get('ingest') is not false }}>{% endif %}</td>
+        <td><strong>{{ v.label }}</strong>{% if v.unit %} <small class="meta">({{ v.unit }})</small>{% endif %}
+            <br><small class="meta">col {{ v.column }} · {{ vt }}</small></td>
+        <td><input name="v{{ i }}_id" value="{{ v.variable_id or '' }}" placeholder="auto" class="num-input" {{ 'disabled' if vt == 'texto' }}></td>
+        <td><input name="v{{ i }}_min" value="{{ v.min if v.min is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
+        <td><input name="v{{ i }}_max" value="{{ v.max if v.max is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
+        <td><input name="v{{ i }}_spike" value="{{ v.qc_spike if v.qc_spike is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
+        <td><input name="v{{ i }}_stuck" value="{{ v.qc_stuck if v.qc_stuck is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if not f.variables %}<p class="empty">Sem variáveis mapeadas — mapeie as colunas em <em>Editar parse/colunas</em>.</p>{% endif %}
+  <div class="form-actions">
+    <button class="btn btn-primary" type="submit">Salvar tratamento</button>
+    <a class="btn" href="{{ url_for('pages.treatment') }}">Cancelar</a>
+  </div>
+  <p class="meta">Para reaplicar regras ao histórico já gravado:
+    <code>docker compose exec ingestion python ingest.py --reprocess {{ station.id }} --file {{ f.id }} --apagar</code></p>
+</form>
+
+<datalist id="tz-list">
+  <option value="UTC"><option value="America/Santarem"><option value="America/Belem">
+  <option value="America/Manaus"><option value="America/Sao_Paulo"><option value="America/Cuiaba">
+</datalist>
+<script>
+  (function () {
+    var rows = Array.from(document.querySelectorAll("#treat-table tbody tr"));
+    var filtro = document.getElementById("treat-filter"), cont = document.getElementById("treat-count");
+    function visiveis() { return rows.filter(function (r) { return !r.hidden; }); }
+    function atualiza() {
+      var marcadas = rows.filter(function (r) { var c = r.querySelector(".treat-chk"); return c && c.checked; }).length;
+      cont.textContent = visiveis().length + " de " + rows.length + " visíveis · " + marcadas + " no banco";
+    }
+    filtro.addEventListener("input", function () {
+      var q = filtro.value.trim().toLowerCase();
+      rows.forEach(function (r) { r.hidden = q && r.dataset.text.indexOf(q) < 0; });
+      atualiza();
+    });
+    function marca(fn) { visiveis().forEach(function (r) { var c = r.querySelector(".treat-chk"); if (c) c.checked = fn(c.checked); }); atualiza(); }
+    document.getElementById("treat-all").addEventListener("click", function () { marca(function () { return true; }); });
+    document.getElementById("treat-none").addEventListener("click", function () { marca(function () { return false; }); });
+    document.getElementById("treat-invert").addEventListener("click", function () { marca(function (v) { return !v; }); });
+    rows.forEach(function (r) { var c = r.querySelector(".treat-chk"); if (c) c.addEventListener("change", atualiza); });
+    atualiza();
+  })();
+</script>
+{% endblock %}

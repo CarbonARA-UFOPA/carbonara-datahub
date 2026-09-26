@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ schema }}.{{ table }} · CARBONARA{% endblock %}
+{% block content %}
+<h1><a href="{{ url_for('pages.banco_schema', schema=schema) }}"><code>{{ schema }}</code></a> . <code>{{ table }}</code>
+  <small>{% if structure %}{% if structure.generated %}view gerada pela ingestão{% elif structure.kind == 'view' %}view{% elif structure.kind == 'matview' %}view materializada{% else %}tabela{% endif %}
+    {% if structure.editable %}· <span class="badge on">editável</span>{% else %}· somente leitura{% endif %}{% endif %}</small></h1>
+<div class="db-layout">
+{% include "_banco_side.html" %}
+<div>
+  <nav class="tabs">
+    <a href="{{ url_for('pages.banco_table', schema=schema, table=table) }}" class="{{ 'active' if tab == 'dados' }}">Dados</a>
+    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='estrutura') }}" class="{{ 'active' if tab == 'estrutura' }}">Estrutura</a>
+    {% if structure and structure.editable %}
+    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='inserir') }}" class="{{ 'active' if tab == 'inserir' }}">Inserir</a>
+    {% endif %}
+    <a href="{{ url_for('pages.banco') }}#sql-box">SQL</a>
+  </nav>
+
+  {% if not structure %}
+    <p class="empty">Tabela indisponível.</p>
+  {% elif tab == 'dados' %}
+    <section class="card">
+      <form method="get" class="treat-tools" action="{{ url_for('pages.banco_table', schema=schema, table=table) }}">
+        <input type="search" name="q" value="{{ params.q }}" placeholder="filtrar (texto em qualquer coluna)">
+        <input type="hidden" name="sort" value="{{ params.sort or '' }}"><input type="hidden" name="dir" value="{{ params.dir }}">
+        <button class="btn" type="submit">Filtrar</button>
+        {% if data %}<span class="meta">{{ data.row_count }} linha(s) a partir de {{ params.offset }}{{ ' (há mais)' if data.truncated }} · {{ data.elapsed_ms }} ms · ordenado por <code>{{ data.sort }}</code> {{ data.dir }}</span>{% endif %}
+      </form>
+      {% if data and data.rows %}
+      {% set cols = data.columns | reject('equalto', '_ctid') | list %}
+      <div class="db-grid"><table class="table">
+        <thead><tr>{% if structure.editable %}<th></th>{% endif %}
+          {% for c in cols %}<th><a href="{{ url_for('pages.banco_table', schema=schema, table=table, sort=c, dir=('asc' if data.sort == c and data.dir == 'desc' else 'desc'), q=params.q) }}">{{ c }}{% if data.sort == c %} {{ '▲' if data.dir == 'asc' else '▼' }}{% endif %}</a></th>{% endfor %}
+        </tr></thead>
+        <tbody>{% for row in data.rows %}
+          {% set ctid = row[0] if structure.editable else none %}
+          <tr>{% if structure.editable %}
+            <td><form method="post" action="{{ url_for('pages.banco_delete_row', schema=schema, table=table) }}" onsubmit="return confirm('Apagar esta linha?');">
+              <input type="hidden" name="ctid" value="{{ ctid }}"><input type="hidden" name="offset" value="{{ params.offset }}"><input type="hidden" name="q" value="{{ params.q }}">
+              <button class="btn btn-danger" type="submit" title="apagar linha">×</button></form></td>{% endif %}
+            {% for v in (row[1:] if structure.editable else row) %}<td class="{{ 'null' if v is none }}">{{ 'NULL' if v is none else v }}</td>{% endfor %}
+          </tr>
+        {% endfor %}</tbody>
+      </table></div>
+      <div class="form-actions">
+        {% if params.offset > 0 %}<a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, offset=[0, params.offset - 50] | max, sort=params.sort, dir=params.dir, q=params.q) }}">← Anteriores</a>{% endif %}
+        {% if data.truncated %}<a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, offset=params.offset + 50, sort=params.sort, dir=params.dir, q=params.q) }}">Próximas 50 →</a>{% endif %}
+      </div>
+      {% elif data %}<p class="empty">Nenhuma linha{{ ' para este filtro' if params.q }}.</p>{% endif %}
+    </section>
+
+  {% elif tab == 'estrutura' %}
+    <section class="card">
+      <table class="table">
+        <thead><tr><th>#</th><th>Coluna</th><th>Tipo</th><th>Nula?</th><th>Padrão</th><th>PK</th><th>Descrição</th></tr></thead>
+        <tbody>{% for c in structure.columns %}
+          <tr><td>{{ loop.index }}</td><td><code>{{ c.name }}</code></td><td>{{ c.type }}</td><td>{{ 'sim' if c.nullable else 'não' }}</td>
+            <td><small>{{ c.default_value or '' }}</small></td><td>{{ '🔑' if c.pk }}</td><td><small class="meta">{{ c.comment or '' }}</small></td></tr>
+        {% endfor %}</tbody>
+      </table>
+      {% if structure.comment %}<p class="meta">{{ structure.comment }}</p>{% endif %}
+      {% if structure.definition %}<details class="adv"><summary>Definição da view (SQL)</summary><pre style="white-space:pre-wrap;font-size:.8rem">{{ structure.definition }}</pre></details>{% endif %}
+    </section>
+    {% if structure.editable %}
+    <form method="post" class="card form" action="{{ url_for('pages.banco_drop_table', schema=schema, table=table) }}"
+          onsubmit="return confirm('Excluir a tabela {{ table }} e TODOS os seus dados?');">
+      <h2 class="warn">Excluir tabela</h2>
+      <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off"></label>
+      <div class="form-actions"><button class="btn btn-danger" type="submit">Excluir tabela</button></div>
+    </form>
+    {% endif %}
+
+  {% elif tab == 'inserir' and structure.editable %}
+    <form method="post" class="card form" action="{{ url_for('pages.banco_insert', schema=schema, table=table) }}">
+      <h2>Inserir linha</h2>
+      <p class="meta">Vazio = NULL (ou o valor padrão). Datas em ISO (<code>2026-09-26 14:30</code> ou <code>2026-09-26T14:30:00Z</code>); sim/não como <code>true</code>/<code>false</code>.</p>
+      <div class="grid-3">
+      {% for c in structure.columns %}
+        <label><code>{{ c.name }}</code> <small class="meta">{{ c.type }}{{ ' · obrigatória' if not c.nullable and not c.default_value }}</small>
+          <input name="col_{{ c.name }}" {{ 'required' if not c.nullable and not c.default_value }} placeholder="{{ c.default_value or '' }}"></label>
+      {% endfor %}
+      </div>
+      <div class="form-actions"><button class="btn btn-primary" type="submit">Inserir</button></div>
+    </form>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

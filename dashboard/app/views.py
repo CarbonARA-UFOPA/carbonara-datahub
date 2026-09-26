@@ -606,10 +606,10 @@ def api_keys_revoke(key_id: int):
 
 
 # --- Aba Tratamento --------------------------------------------------------------
-# UM lugar para decidir o que vai para o banco e com quais regras: por estação e
-# arquivo (ingerir? fuso? reamostrar?) e por variável (entra? ID, faixa física, salto
-# máximo, leituras iguais = travado). Grava no MESMO registro que o formulário do
-# arquivo usa — a ingestão relê o config a cada ciclo.
+# Índice compacto (estação → arquivos, com resumo) e UMA página por arquivo para as
+# escolhas: ingerir? fuso? reamostrar? e, por variável, entra? ID, faixa (flag 2), salto
+# (flag 3), travado (flag 4). Grava no MESMO registro que o formulário do arquivo usa —
+# a ingestão relê o config a cada ciclo.
 def _ledger_by_file(cfg: dict) -> dict:
     """{(station_id, file_key): resumo} do ledger da ingestão, via API (tolerante)."""
     out: dict = {}
@@ -632,12 +632,36 @@ def _ledger_by_file(cfg: dict) -> dict:
     return out
 
 
+def _treat_summary(f: dict) -> dict:
+    vs = [v for v in f.get("variables") or [] if (v.get("type") or "numero") != "texto"]
+    no_banco = [v for v in vs if v.get("ingest") is not False]
+    return {"total": len(vs), "no_banco": len(no_banco),
+            "faixa": sum(1 for v in no_banco if v.get("min") is not None or v.get("max") is not None),
+            "salto": sum(1 for v in no_banco if v.get("qc_spike") is not None),
+            "travado": sum(1 for v in no_banco if v.get("qc_stuck"))}
+
+
 @pages.get("/tratamento")
 @admin_required
 def treatment():
     cfg = _load()
     ledger = _ledger_by_file(cfg)
-    return render_template("tratamento.html", cfg=cfg, ledger=ledger,
+    resumo = {(s["id"], f["id"]): _treat_summary(f) for s in cfg["stations"] for f in s.get("files") or []}
+    return render_template("tratamento.html", cfg=cfg, ledger=ledger, resumo=resumo,
+                           api_ok=api_client.configured(cfg))
+
+
+@pages.get("/tratamento/<station_id>/<file_id>")
+@admin_required
+def treatment_file(station_id, file_id):
+    cfg = _load()
+    station = _station_or_404(cfg, station_id)
+    fcfg = config_store.get_file(station, file_id)
+    if not fcfg:
+        abort(404)
+    ledger = _ledger_by_file(cfg)
+    return render_template("tratamento_arquivo.html", cfg=cfg, station=station, f=fcfg,
+                           lg=ledger.get((station_id, file_id)), resumo=_treat_summary(fcfg),
                            api_ok=api_client.configured(cfg))
 
 
@@ -652,68 +676,185 @@ def treatment_save(station_id, file_id):
     novo, errors = config_store.apply_treatment_form(request.form, station, fcfg)
     if errors:
         for e in errors:
-            flash(f"{station_id}/{file_id}: {e}", "error")
-    else:
-        station["files"] = [novo if f["id"] == file_id else f for f in station["files"]]
-        _save(cfg)
-        flash(f"Tratamento de {station_id}/{file_id} salvo"
-              + (" — no banco." if novo.get("ingest") else " — fora do banco."), "ok")
-    return redirect(url_for("pages.treatment") + f"#{station_id}-{file_id}")
+            flash(e, "error")
+        return redirect(url_for("pages.treatment_file", station_id=station_id, file_id=file_id))
+    station["files"] = [novo if f["id"] == file_id else f for f in station["files"]]
+    _save(cfg)
+    flash(f"Tratamento de {file_id} salvo" + (" — no banco." if novo.get("ingest") else " — fora do banco."), "ok")
+    if request.form.get("back") == "file":
+        return redirect(url_for("pages.treatment_file", station_id=station_id, file_id=file_id))
+    return redirect(url_for("pages.treatment"))
 
 
-# --- Aba Banco (visão somente leitura) -------------------------------------------
+# --- Aba Banco (estilo phpMyAdmin: bancos → tabelas → dados/estrutura/inserir/SQL) -----
 _SQL_EXEMPLOS = [
     ("Últimos valores de uma estação",
-     "SELECT variable_id, time, value, quality FROM measurements\n"
-     "WHERE station_id = 'eddyfarm' ORDER BY time DESC LIMIT 50"),
+     "SELECT variable_id, time, value, quality FROM measurements\nWHERE station_id = 'eddyfarm' ORDER BY time DESC LIMIT 50"),
+    ("Tabela larga da estação (view gerada)",
+     "SELECT * FROM \"eddyfarm\".\"cr1000_proc3k\" ORDER BY time DESC LIMIT 20"),
     ("Contagem por estação e variável",
-     "SELECT station_id, variable_id, count(*) AS n, min(time), max(time)\n"
-     "FROM measurements GROUP BY 1, 2 ORDER BY 1, 2"),
+     "SELECT station_id, variable_id, count(*) AS n, min(time), max(time)\nFROM measurements GROUP BY 1, 2 ORDER BY 1, 2"),
     ("Média diária (agregado contínuo)",
-     "SELECT bucket, variable_id, avg_value, n_samples, n_flagged FROM measurements_daily\n"
-     "WHERE station_id = 'eddyfarm' ORDER BY bucket DESC LIMIT 100"),
+     "SELECT bucket, variable_id, avg_value, n_samples, n_flagged FROM measurements_daily\nWHERE station_id = 'eddyfarm' ORDER BY bucket DESC LIMIT 100"),
     ("Valores com flag de qualidade",
-     "SELECT quality, variable_id, count(*) FROM measurements\n"
-     "WHERE quality <> 0 GROUP BY 1, 2 ORDER BY 3 DESC"),
+     "SELECT quality, variable_id, count(*) FROM measurements\nWHERE quality <> 0 GROUP BY 1, 2 ORDER BY 3 DESC"),
     ("Ledger da ingestão",
-     "SELECT station_id, file_key, relpath, size_bytes, bytes_ingested, rows_total, last_time, status\n"
-     "FROM ingest_files ORDER BY station_id, relpath"),
-    ("Tamanho dos chunks da hypertable",
-     "SELECT chunk_name, range_start, range_end, is_compressed FROM timescaledb_information.chunks\n"
-     "WHERE hypertable_name = 'measurements' ORDER BY range_start DESC LIMIT 30"),
+     "SELECT station_id, file_key, relpath, size_bytes, bytes_ingested, rows_total, last_time, status\nFROM ingest_files ORDER BY station_id, relpath"),
 ]
+_COLUMN_TYPES = [("texto", "Texto"), ("numero", "Número (decimal)"), ("inteiro", "Inteiro"),
+                 ("booleano", "Sim/Não"), ("data_hora", "Data e hora (com fuso)"),
+                 ("data", "Data"), ("json", "JSON")]
 
 
-def _banco_context(cfg: dict) -> dict:
-    ctx = {"overview": None, "coverage": None, "error": None, "exemplos": _SQL_EXEMPLOS,
-           "api_ok": api_client.configured(cfg)}
+def _banco_base(cfg: dict) -> dict:
+    """Contexto comum das páginas do banco: lista de bancos (barra lateral)."""
+    ctx = {"api_ok": api_client.configured(cfg), "schemas": [], "error": None,
+           "exemplos": _SQL_EXEMPLOS, "column_types": _COLUMN_TYPES}
     if not ctx["api_ok"]:
         return ctx
     try:
-        ctx["overview"] = api_client.get(cfg, "/admin/db/overview", timeout=20)
-        ctx["coverage"] = api_client.get(cfg, "/admin/db/coverage", timeout=20)
+        ctx["schemas"] = api_client.get(cfg, "/admin/db/schemas", timeout=20) or []
     except api_client.ApiError as exc:
         ctx["error"] = str(exc)
     return ctx
+
+
+def _api_or_flash(cfg, fn, *a, **kw):
+    try:
+        return fn(cfg, *a, **kw)
+    except api_client.ApiError as exc:
+        flash(str(exc), "error")
+        return None
 
 
 @pages.get("/banco")
 @admin_required
 def banco():
     cfg = _load()
-    return render_template("banco.html", cfg=cfg, sql="", result=None, **_banco_context(cfg))
+    ctx = _banco_base(cfg)
+    overview = coverage = None
+    if ctx["api_ok"] and not ctx["error"]:
+        overview = _api_or_flash(cfg, api_client.get, "/admin/db/overview", timeout=20)
+        coverage = _api_or_flash(cfg, api_client.get, "/admin/db/coverage", timeout=20)
+    return render_template("banco.html", cfg=cfg, overview=overview, coverage=coverage,
+                           sql="", result=None, current=None, **ctx)
 
 
 @pages.post("/banco/query")
 @admin_required
 def banco_query():
     cfg = _load()
+    ctx = _banco_base(cfg)
     sql = (request.form.get("sql") or "").strip()
     result = None
-    ctx = _banco_context(cfg)
     if sql and ctx["api_ok"]:
         try:
             result = api_client.post(cfg, "/admin/db/query", {"sql": sql, "max_rows": 200}, timeout=40)
         except api_client.ApiError as exc:
             result = {"error": str(exc)}
-    return render_template("banco.html", cfg=cfg, sql=sql, result=result, **ctx)
+    return render_template("banco.html", cfg=cfg, overview=None, coverage=None,
+                           sql=sql, result=result, current=None, **ctx)
+
+
+@pages.post("/banco/novo-banco")
+@admin_required
+def banco_new_schema():
+    cfg = _load()
+    name = (request.form.get("name") or "").strip().lower()
+    if _api_or_flash(cfg, api_client.post, "/admin/db/schemas",
+                     {"name": name, "comment": (request.form.get("comment") or "").strip()}):
+        flash(f"Banco '{name}' criado.", "ok")
+        return redirect(url_for("pages.banco_schema", schema=name))
+    return redirect(url_for("pages.banco"))
+
+
+@pages.get("/banco/<schema>")
+@admin_required
+def banco_schema(schema):
+    cfg = _load()
+    ctx = _banco_base(cfg)
+    tables = _api_or_flash(cfg, api_client.get, "/admin/db/tables", {"schema": schema}, timeout=30) or []
+    info = next((s for s in ctx["schemas"] if s["schema"] == schema), None)
+    if info is None and ctx["api_ok"] and not ctx["error"]:
+        abort(404)
+    return render_template("banco_schema.html", cfg=cfg, schema=schema, info=info, tables=tables,
+                           current=schema, **ctx)
+
+
+@pages.post("/banco/<schema>/nova-tabela")
+@admin_required
+def banco_new_table(schema):
+    cfg = _load()
+    cols = []
+    for i in range(20):
+        name = (request.form.get(f"c{i}_name") or "").strip().lower()
+        if not name:
+            continue
+        cols.append({"name": name, "type": request.form.get(f"c{i}_type") or "texto",
+                     "nullable": not request.form.get(f"c{i}_notnull"), "pk": bool(request.form.get(f"c{i}_pk"))})
+    body = {"schema": schema, "name": (request.form.get("name") or "").strip().lower(), "columns": cols,
+            "comment": (request.form.get("comment") or "").strip(),
+            "hypertable": bool(request.form.get("hypertable"))}
+    if not cols:
+        flash("Defina pelo menos uma coluna.", "error")
+        return redirect(url_for("pages.banco_schema", schema=schema))
+    if _api_or_flash(cfg, api_client.post, "/admin/db/tables", body):
+        flash(f"Tabela '{body['name']}' criada.", "ok")
+        return redirect(url_for("pages.banco_table", schema=schema, table=body["name"]))
+    return redirect(url_for("pages.banco_schema", schema=schema))
+
+
+@pages.get("/banco/<schema>/<table>")
+@admin_required
+def banco_table(schema, table):
+    cfg = _load()
+    ctx = _banco_base(cfg)
+    tab = request.args.get("aba") or "dados"
+    params = {"schema": schema, "table": table, "limit": 50,
+              "offset": int(request.args.get("offset") or 0), "sort": request.args.get("sort"),
+              "dir": request.args.get("dir") or "desc", "q": request.args.get("q") or ""}
+    structure = _api_or_flash(cfg, api_client.get, "/admin/db/columns", {"schema": schema, "table": table}, timeout=30)
+    data = None
+    if structure and tab == "dados":
+        data = _api_or_flash(cfg, api_client.get, "/admin/db/rows", params, timeout=60)
+    return render_template("banco_table.html", cfg=cfg, schema=schema, table=table, tab=tab,
+                           structure=structure, data=data, params=params, current=schema, **ctx)
+
+
+@pages.post("/banco/<schema>/<table>/inserir")
+@admin_required
+def banco_insert(schema, table):
+    cfg = _load()
+    values = {k[4:]: v for k, v in request.form.items() if k.startswith("col_")}
+    if _api_or_flash(cfg, api_client.post, "/admin/db/rows", {"schema": schema, "table": table, "values": values}):
+        flash("Linha inserida.", "ok")
+        return redirect(url_for("pages.banco_table", schema=schema, table=table))
+    return redirect(url_for("pages.banco_table", schema=schema, table=table, aba="inserir"))
+
+
+@pages.post("/banco/<schema>/<table>/apagar-linha")
+@admin_required
+def banco_delete_row(schema, table):
+    cfg = _load()
+    ctid = (request.form.get("ctid") or "").strip()
+    try:
+        api_client.delete_json(cfg, "/admin/db/rows", {"schema": schema, "table": table, "ctid": ctid})
+        flash("Linha apagada.", "ok")
+    except api_client.ApiError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("pages.banco_table", schema=schema, table=table,
+                            offset=request.form.get("offset") or 0, q=request.form.get("q") or ""))
+
+
+@pages.post("/banco/<schema>/<table>/excluir")
+@admin_required
+def banco_drop_table(schema, table):
+    cfg = _load()
+    try:
+        api_client.delete_json(cfg, "/admin/db/tables",
+                               {"schema": schema, "table": table, "confirm": (request.form.get("confirm") or "").strip()})
+        flash(f"Tabela '{table}' excluída.", "ok")
+        return redirect(url_for("pages.banco_schema", schema=schema))
+    except api_client.ApiError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("pages.banco_table", schema=schema, table=table, aba="estrutura"))

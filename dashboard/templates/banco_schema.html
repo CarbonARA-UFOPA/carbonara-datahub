@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Banco {{ schema }} · CARBONARA{% endblock %}
+{% block content %}
+<h1>Banco <code>{{ schema }}</code>
+  <small>{% if info %}{{ {'sistema': 'sistema', 'estacao': 'estação', 'geral': 'geral'}[info.kind] }} · {{ info.size }}{% if info.comment %} · {{ info.comment }}{% endif %}{% endif %}</small></h1>
+<div class="db-layout">
+{% include "_banco_side.html" %}
+<div>
+  <section class="card">
+    <div class="page-head"><h2>Tabelas e views</h2></div>
+    {% if not tables %}<p class="empty">Este banco ainda não tem tabelas.</p>{% else %}
+    <table class="table">
+      <thead><tr><th>Nome</th><th>Tipo</th><th>Linhas</th><th>Colunas</th><th>Tamanho</th><th>Descrição</th><th></th></tr></thead>
+      <tbody>{% for t in tables %}
+        <tr><td><a href="{{ url_for('pages.banco_table', schema=schema, table=t.name) }}"><code>{{ t.name }}</code></a></td>
+          <td><small>{% if t.generated %}view gerada{% elif t.kind == 'view' %}view{% elif t.kind == 'matview' %}view materializada{% else %}tabela{% endif %}
+              {% if t.editable %} · <span class="badge on">editável</span>{% endif %}</small></td>
+          <td>{% if t.rows_exact is not none %}{{ '{:,}'.format(t.rows_exact).replace(',', '.') }}{% elif t.kind == 'table' %}≈ {{ '{:,}'.format(t.rows_estimate).replace(',', '.') }}{% else %}—{% endif %}</td>
+          <td>{{ t.columns }}</td><td>{{ t.size if t.kind != 'view' else '—' }}</td>
+          <td><small class="meta">{{ (t.comment or '') | replace('carbonara: view gerada da ingestão — ', '') }}</small></td>
+          <td><a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=t.name) }}">Abrir</a></td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  {% if info and info.kind != 'sistema' %}
+  <form method="post" class="card form" action="{{ url_for('pages.banco_new_table', schema=schema) }}" id="new-table">
+    <h2>Nova tabela</h2>
+    <div class="form-row">
+      <label>Nome <input name="name" required pattern="[a-z][a-z0-9_-]{0,62}" placeholder="ex.: calibracoes"></label>
+      <label>Descrição <input name="comment" placeholder="opcional"></label>
+    </div>
+    <table class="table" id="cols-table">
+      <thead><tr><th>Coluna</th><th>Tipo</th><th>Obrigatória</th><th>Chave primária</th><th></th></tr></thead>
+      <tbody>
+        {% for i in range(3) %}
+        <tr><td><input name="c{{ i }}_name" pattern="[a-z][a-z0-9_]{0,62}" placeholder="{{ 'time' if i == 0 else 'coluna' }}"></td>
+          <td><select name="c{{ i }}_type">{% for v, t in column_types %}<option value="{{ v }}" {{ 'selected' if (i == 0 and v == 'data_hora') }}>{{ t }}</option>{% endfor %}</select></td>
+          <td><input type="checkbox" name="c{{ i }}_notnull" value="1"></td>
+          <td><input type="checkbox" name="c{{ i }}_pk" value="1"></td>
+          <td><button type="button" class="btn btn-danger btn-rm">×</button></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <button type="button" class="btn" id="btn-add-col">+ Coluna</button>
+    <label class="check-row"><input type="checkbox" name="hypertable" value="1">
+      <span>Série temporal (hypertable pela coluna <code>time</code>, do tipo data e hora) — para dados que chegam ao longo do tempo.</span></label>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">Criar tabela</button></div>
+    <script>
+      (function () {
+        var tb = document.querySelector("#cols-table tbody"), n = 3;
+        var tipos = {{ column_types | tojson }};
+        document.getElementById("btn-add-col").addEventListener("click", function () {
+          if (n >= 20) return;
+          var tr = document.createElement("tr");
+          tr.innerHTML = '<td><input name="c' + n + '_name" pattern="[a-z][a-z0-9_]{0,62}" placeholder="coluna"></td>' +
+            '<td><select name="c' + n + '_type">' + tipos.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + '</option>'; }).join("") + '</select></td>' +
+            '<td><input type="checkbox" name="c' + n + '_notnull" value="1"></td><td><input type="checkbox" name="c' + n + '_pk" value="1"></td>' +
+            '<td><button type="button" class="btn btn-danger btn-rm">×</button></td>';
+          tb.appendChild(tr); n++;
+        });
+        tb.addEventListener("click", function (ev) { if (ev.target.classList.contains("btn-rm")) ev.target.closest("tr").remove(); });
+      })();
+    </script>
+  </form>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

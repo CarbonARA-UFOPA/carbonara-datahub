@@ -2,7 +2,6 @@
 {% block title %}Banco · CARBONARA{% endblock %}
 {% block content %}
 <h1>Banco de dados</h1>
-
 {% if not api_ok %}
 <div class="flash flash-error">API não configurada — informe a URL interna e a chave de serviço em
   <a href="{{ url_for('pages.settings') }}">Configurações</a>.</div>
@@ -10,116 +9,100 @@
 <div class="flash flash-error">Não foi possível consultar o banco: {{ error }}</div>
 {% endif %}
 
-{% if overview %}
-{% set d = overview.database %}
-<section class="card">
-  <div class="page-head"><h2>Visão geral</h2>
-    <span class="meta">{{ d.postgres }} · TimescaleDB {{ d.timescaledb }}{% if d.postgis %} · PostGIS {{ d.postgis }}{% endif %} · wal_level {{ d.wal_level }}</span></div>
-  <dl>
-    <dt>Tamanho</dt><dd><strong>{{ d.size }}</strong></dd>
-    <dt>Conexões</dt><dd>{{ d.connections }}</dd>
-    <dt>Relógio do banco</dt><dd>{{ d.now[:19] | replace('T', ' ') }} UTC</dd>
-    <dt>Replicação</dt><dd>{% if d.replication_slots %}{% for s in d.replication_slots %}{{ s.slot_name }} ({{ 'ativo' if s.active else 'inativo' }}, {{ s.wal_status }}) {% endfor %}{% else %}pronto (nenhum espelho conectado ainda){% endif %}</dd>
-  </dl>
-</section>
+<div class="db-layout">
+{% include "_banco_side.html" %}
+<div>
+  <section class="card help-card">
+    <strong>Como está organizado:</strong> o banco <code>public</code> é o sistema
+    (<code>measurements</code> com todas as medições, estações, variáveis, ledger, chaves —
+    somente leitura por aqui). Cada <strong>estação</strong> tem o seu banco, com uma
+    <em>tabela larga por arquivo monitorado</em> (uma coluna por variável, gerada e mantida
+    pela ingestão) e as tabelas que você criar — essas são editáveis (inserir/apagar linhas).
+    Bancos <strong>gerais</strong> guardam o que não é de uma estação (campanhas, calibrações…).
+  </section>
 
-<section class="card">
-  <div class="page-head"><h2>Tabelas</h2></div>
-  <table class="table">
-    <thead><tr><th>Nome</th><th>Tipo</th><th>Linhas</th><th>Tamanho</th><th>Descrição</th></tr></thead>
-    <tbody>
-    {% for t in overview.tables %}
-      <tr><td><code>{{ t.name }}</code></td><td><small>{{ t.kind }}</small></td>
-        <td>{{ '{:,}'.format(t.rows_exact if t.rows_exact is not none else t.rows_estimate).replace(',', '.') }}{% if t.rows_exact is none %} <small class="meta">≈</small>{% endif %}</td>
-        <td>{{ t.size }}</td><td><small class="meta">{{ t.comment or '' }}</small></td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <p class="meta">≈ = estimativa do planejador (a hypertable tem milhões de linhas; a contagem exata
-    fica na seção "Cobertura").</p>
-</section>
-
-<section class="card">
-  <div class="page-head"><h2>Hypertable e agregados</h2></div>
-  <table class="table">
-    <thead><tr><th>Hypertable</th><th>Chunks</th><th>Comprimidos</th><th>Primeiro chunk</th><th>Último chunk</th><th>Tamanho</th></tr></thead>
-    <tbody>
-    {% for h in overview.hypertables %}
-      <tr><td><code>{{ h.hypertable_name }}</code></td><td>{{ h.num_chunks }}</td>
-        <td>{{ h.compressed_chunks }}{% if not h.compression_enabled %} <small class="meta">(compressão desligada)</small>{% endif %}</td>
-        <td>{{ (h.first_chunk or '—')[:10] }}</td><td>{{ (h.last_chunk or '—')[:10] }}</td><td>{{ h.size }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <p class="meta">Agregados contínuos:
-    {% for c in overview.continuous_aggregates %}<code>{{ c.view_name }}</code>{{ ' (tempo real)' if not c.materialized_only }}{{ ', ' if not loop.last }}{% endfor %}.
-  </p>
-  <details class="adv"><summary>Tarefas automáticas (compressão, atualização dos agregados)</summary>
-    <table class="table"><thead><tr><th>#</th><th>Tarefa</th><th>Alvo</th><th>A cada</th><th>Última execução</th><th>Estado</th><th>Próxima</th><th>Falhas</th></tr></thead>
-    <tbody>{% for j in overview.jobs %}
-      <tr><td>{{ j.job_id }}</td><td><code>{{ j.proc_name }}</code></td><td>{{ j.hypertable_name or '' }}</td><td>{{ j.every }}</td>
-        <td>{{ (j.last_run_started_at or '—')[:16] | replace('T', ' ') }}</td><td>{{ j.last_run_status or '—' }}</td>
-        <td>{{ (j.next_start or '—')[:16] | replace('T', ' ') }}</td><td>{{ j.total_failures or 0 }}/{{ j.total_runs or 0 }}</td></tr>
-    {% endfor %}</tbody></table>
-  </details>
-</section>
-
-<section class="card">
-  <div class="page-head"><h2>Cobertura — período de dados por estação e variável</h2></div>
-  {% if coverage and coverage.stations %}
-  <table class="table">
-    <thead><tr><th>Estação</th><th>Variáveis</th><th>De</th><th>Até</th><th>Valores OK</th><th>Com flag</th></tr></thead>
-    <tbody>{% for s in coverage.stations %}
-      <tr><td><strong>{{ s.station_id }}</strong></td><td>{{ s.variables }}</td>
-        <td>{{ (s.first_day or '')[:10] }}</td><td>{{ (s.last_day or '')[:10] }}</td>
-        <td>{{ '{:,}'.format(s.n_good).replace(',', '.') }}</td><td>{{ '{:,}'.format(s.n_flagged).replace(',', '.') }}</td></tr>
-    {% endfor %}</tbody>
-  </table>
-  <details class="adv"><summary>Por variável ({{ coverage.variables | length }})</summary>
-    <table class="table"><thead><tr><th>Estação</th><th>Variável</th><th>De</th><th>Até</th><th>Dias</th><th>OK</th><th>Flag</th></tr></thead>
-    <tbody>{% for v in coverage.variables %}
-      <tr><td>{{ v.station_id }}</td><td><code>{{ v.variable_id }}</code> <small class="meta">{{ v.name }}{% if v.unit %} ({{ v.unit }}){% endif %}</small></td>
-        <td>{{ (v.first_day or '')[:10] }}</td><td>{{ (v.last_day or '')[:10] }}</td><td>{{ v.days }}</td>
-        <td>{{ '{:,}'.format(v.n_good).replace(',', '.') }}</td><td>{{ '{:,}'.format(v.n_flagged).replace(',', '.') }}</td></tr>
-    {% endfor %}</tbody></table>
-  </details>
-  {% else %}<p class="empty">Ainda não há medições no banco.</p>{% endif %}
-</section>
-
-<section class="card">
-  <div class="page-head"><h2>Execuções da ingestão</h2></div>
-  <table class="table"><thead><tr><th>#</th><th>Pipeline</th><th>Versão</th><th>Início</th><th>Fim</th><th>Estado</th><th>Detalhes</th></tr></thead>
-  <tbody>{% for r in overview.runs %}
-    <tr><td>{{ r.run_id }}</td><td>{{ r.pipeline }}</td><td>{{ r.version }}</td>
-      <td>{{ (r.started or '')[:16] | replace('T', ' ') }}</td><td>{{ (r.finished or '—')[:16] | replace('T', ' ') }}</td>
-      <td>{{ r.status }}</td><td><small class="meta">{{ r.stats }}</small></td></tr>
-  {% endfor %}</tbody></table>
-</section>
-{% endif %}
-
-{% if api_ok %}
-<form method="post" class="card form" action="{{ url_for('pages.banco_query') }}">
-  <h2>Consulta SQL (somente leitura)</h2>
-  <p class="meta">Só <code>SELECT</code>/<code>WITH</code>/<code>EXPLAIN</code>, uma instrução por vez,
-    transação somente leitura, 20 s de limite e no máximo 200 linhas. Exemplos:
-    {% for titulo, q in exemplos %}<a href="#" class="sql-ex" data-sql="{{ q }}">{{ titulo }}</a>{{ ' · ' if not loop.last }}{% endfor %}</p>
-  <textarea name="sql" id="sql-box" rows="6" style="width:100%;font-family:monospace" placeholder="SELECT ...">{{ sql }}</textarea>
-  <div class="form-actions"><button class="btn btn-primary" type="submit">Executar</button></div>
-  {% if result %}
-    {% if result.error %}<p class="warn">{{ result.error }}</p>
-    {% else %}
-      <p class="meta">{{ result.row_count }} linha(s){{ ' (truncado)' if result.truncated }} · {{ result.elapsed_ms }} ms</p>
-      <div style="overflow-x:auto"><table class="table">
-        <thead><tr>{% for c in result.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for row in result.rows %}<tr>{% for v in row %}<td>{{ v if v is not none else '' }}</td>{% endfor %}</tr>{% endfor %}</tbody>
-      </table></div>
-    {% endif %}
+  {% if overview %}
+  {% set d = overview.database %}
+  <section class="card">
+    <div class="page-head"><h2>Visão geral</h2>
+      <span class="meta">{{ d.postgres }} · TimescaleDB {{ d.timescaledb }}{% if d.postgis %} · PostGIS {{ d.postgis }}{% endif %}</span></div>
+    <dl>
+      <dt>Tamanho total</dt><dd><strong>{{ d.size }}</strong></dd>
+      <dt>Conexões</dt><dd>{{ d.connections }}</dd>
+      <dt>Relógio do banco</dt><dd>{{ d.now[:19] | replace('T', ' ') }} UTC</dd>
+      <dt>Replicação</dt><dd>{{ d.wal_level }}{% if d.replication_slots %} — {% for s in d.replication_slots %}{{ s.slot_name }} ({{ 'ativo' if s.active else 'inativo' }}) {% endfor %}{% else %} (pronto; nenhum espelho conectado){% endif %}</dd>
+    </dl>
+    <table class="table">
+      <thead><tr><th>Hypertable</th><th>Chunks</th><th>Comprimidos</th><th>De</th><th>Até</th><th>Tamanho</th></tr></thead>
+      <tbody>{% for h in overview.hypertables %}
+        <tr><td><code>{{ h.hypertable_name }}</code></td><td>{{ h.num_chunks }}</td><td>{{ h.compressed_chunks }}</td>
+          <td>{{ (h.first_chunk or '—')[:10] }}</td><td>{{ (h.last_chunk or '—')[:10] }}</td><td>{{ h.size }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    <details class="adv"><summary>Tarefas automáticas e execuções da ingestão</summary>
+      <table class="table"><thead><tr><th>Tarefa</th><th>Alvo</th><th>A cada</th><th>Última</th><th>Estado</th><th>Falhas</th></tr></thead>
+      <tbody>{% for j in overview.jobs %}
+        <tr><td><code>{{ j.proc_name }}</code></td><td>{{ j.hypertable_name or '' }}</td><td>{{ j.every }}</td>
+          <td>{{ (j.last_run_started_at or '—')[:16] | replace('T', ' ') }}</td><td>{{ j.last_run_status or '—' }}</td><td>{{ j.total_failures or 0 }}/{{ j.total_runs or 0 }}</td></tr>
+      {% endfor %}</tbody></table>
+      <table class="table"><thead><tr><th>#</th><th>Pipeline</th><th>Início</th><th>Fim</th><th>Estado</th><th>Detalhes</th></tr></thead>
+      <tbody>{% for r in overview.runs %}
+        <tr><td>{{ r.run_id }}</td><td>{{ r.pipeline }} {{ r.version }}</td><td>{{ (r.started or '')[:16] | replace('T', ' ') }}</td>
+          <td>{{ (r.finished or '—')[:16] | replace('T', ' ') }}</td><td>{{ r.status }}</td><td><small class="meta">{{ r.stats }}</small></td></tr>
+      {% endfor %}</tbody></table>
+    </details>
+  </section>
   {% endif %}
-</form>
-<script>
-  document.querySelectorAll(".sql-ex").forEach(function (a) {
-    a.addEventListener("click", function (ev) { ev.preventDefault(); document.getElementById("sql-box").value = a.dataset.sql; });
-  });
-</script>
-{% endif %}
+
+  {% if coverage %}
+  <section class="card">
+    <div class="page-head"><h2>Período de dados por estação</h2></div>
+    {% if coverage.stations %}
+    <table class="table">
+      <thead><tr><th>Estação</th><th>Variáveis</th><th>De</th><th>Até</th><th>Valores OK</th><th>Com flag</th><th></th></tr></thead>
+      <tbody>{% for s in coverage.stations %}
+        <tr><td><strong>{{ s.station_id }}</strong></td><td>{{ s.variables }}</td>
+          <td>{{ (s.first_day or '')[:10] }}</td><td>{{ (s.last_day or '')[:10] }}</td>
+          <td>{{ '{:,}'.format(s.n_good).replace(',', '.') }}</td><td>{{ '{:,}'.format(s.n_flagged).replace(',', '.') }}</td>
+          <td><a class="btn" href="{{ url_for('pages.banco_schema', schema=s.station_id) }}">Abrir banco</a></td></tr>
+      {% endfor %}</tbody>
+    </table>
+    <details class="adv"><summary>Por variável ({{ coverage.variables | length }})</summary>
+      <div class="db-grid"><table class="table"><thead><tr><th>Estação</th><th>Variável</th><th>De</th><th>Até</th><th>Dias</th><th>OK</th><th>Flag</th></tr></thead>
+      <tbody>{% for v in coverage.variables %}
+        <tr><td>{{ v.station_id }}</td><td><code>{{ v.variable_id }}</code> <small class="meta">{{ v.name }}{% if v.unit %} ({{ v.unit }}){% endif %}</small></td>
+          <td>{{ (v.first_day or '')[:10] }}</td><td>{{ (v.last_day or '')[:10] }}</td><td>{{ v.days }}</td>
+          <td>{{ '{:,}'.format(v.n_good).replace(',', '.') }}</td><td>{{ '{:,}'.format(v.n_flagged).replace(',', '.') }}</td></tr>
+      {% endfor %}</tbody></table></div>
+    </details>
+    {% else %}<p class="empty">Ainda não há medições no banco.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if api_ok %}
+  <form method="post" class="card form" action="{{ url_for('pages.banco_query') }}">
+    <h2>Consulta SQL (somente leitura)</h2>
+    <p class="meta">Só <code>SELECT</code>/<code>WITH</code>/<code>EXPLAIN</code>, uma instrução, 20 s, até 200 linhas. Exemplos:
+      {% for titulo, q in exemplos %}<a href="#" class="sql-ex" data-sql="{{ q }}">{{ titulo }}</a>{{ ' · ' if not loop.last }}{% endfor %}</p>
+    <textarea name="sql" id="sql-box" rows="6" style="width:100%;font-family:monospace" placeholder="SELECT ...">{{ sql }}</textarea>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">Executar</button></div>
+    {% if result %}
+      {% if result.error %}<p class="warn">{{ result.error }}</p>
+      {% else %}
+        <p class="meta">{{ result.row_count }} linha(s){{ ' (truncado)' if result.truncated }} · {{ result.elapsed_ms }} ms</p>
+        <div class="db-grid"><table class="table">
+          <thead><tr>{% for c in result.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+          <tbody>{% for row in result.rows %}<tr>{% for v in row %}<td class="{{ 'null' if v is none }}">{{ 'NULL' if v is none else v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+        </table></div>
+      {% endif %}
+    {% endif %}
+  </form>
+  <script>
+    document.querySelectorAll(".sql-ex").forEach(function (a) {
+      a.addEventListener("click", function (ev) { ev.preventDefault(); document.getElementById("sql-box").value = a.dataset.sql; });
+    });
+  </script>
+  {% endif %}
+</div>
+</div>
 {% endblock %}

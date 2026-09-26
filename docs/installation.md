@@ -270,8 +270,8 @@ leitura**, de forma incremental (offset por arquivo), e nunca move nem altera na
    as regras por variável: entra ou não, ID, faixa física (flag 2), salto máximo entre
    leituras (flag 3) e leituras iguais seguidas = travado (flag 4).
 5. Acompanhe: `docker compose logs -f ingestion`, o chip "no banco" na página da estação e
-   a aba **Banco** (tamanho, tabelas, período coberto por estação/variável e consultas
-   SQL somente leitura).
+   a aba **Banco** (um banco por estação com uma tabela larga por arquivo, tabelas que
+   você cria e edita, período coberto, consultas SQL somente leitura).
 
 Reprocessar (ex.: depois de corrigir o fuso ou um ID):
 `docker compose exec ingestion python ingest.py --reprocess <estação> [--file <id>] --apagar`.

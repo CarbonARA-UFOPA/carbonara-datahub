@@ -77,3 +77,8 @@ def post(cfg: dict, path: str, body: dict, timeout: float = DEFAULT_TIMEOUT):
 
 def delete(cfg: dict, path: str, timeout: float = DEFAULT_TIMEOUT):
     return _request(cfg, "DELETE", path, timeout=timeout)
+
+
+def delete_json(cfg: dict, path: str, body: dict, timeout: float = DEFAULT_TIMEOUT):
+    """DELETE com corpo JSON (rotas de linha/tabela da aba Banco)."""
+    return _request(cfg, "DELETE", path, body=body, timeout=timeout)
