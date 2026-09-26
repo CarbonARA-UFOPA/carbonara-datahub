@@ -41,8 +41,8 @@ async def get_station(station_id: str, _who: auth.KeyInfo = Depends(auth.optiona
     if not s:
         raise HTTPException(404, "estação não encontrada")
     files = await db.pool().fetch(
-        "SELECT file_key, path, alias, dynamic_path, timezone, resample, ingest, variables, updated_at "
-        "FROM monitored_files WHERE station_id = $1 ORDER BY file_key", station_id)
+        "SELECT file_key, path, alias, dynamic_path, timezone, resample, ingest, variables, data_type, updated_at "
+        "FROM monitored_files WHERE station_id = $1 ORDER BY data_type, file_key", station_id)
     return {
         "station_id": s["station_id"], "name": s["name"], "latitude": s["latitude"],
         "longitude": s["longitude"], "elevation_m": s["elevation_m"],
@@ -53,7 +53,7 @@ async def get_station(station_id: str, _who: auth.KeyInfo = Depends(auth.optiona
         "files": [{
             "file_key": f["file_key"], "path": f["path"], "alias": f["alias"],
             "dynamic_path": f["dynamic_path"], "timezone": f["timezone"],
-            "resample": f["resample"], "ingest": f["ingest"],
+            "resample": f["resample"], "ingest": f["ingest"], "data_type": f["data_type"],
             "variables": json.loads(f["variables"]) if isinstance(f["variables"], str) else f["variables"],
             "updated_at": iso(f["updated_at"], tzinfo_of(None)),
         } for f in files],

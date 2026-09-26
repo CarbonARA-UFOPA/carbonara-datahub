@@ -24,6 +24,38 @@ from .tailer import COLUMN_TYPES
 # (10–20 Hz), que em linhas cruas explodiriam o banco sem utilidade.
 RESAMPLE_OPTIONS = ("raw", "1min", "30min")
 
+# Tipo de dado de um arquivo monitorado: o nível entre a ESTAÇÃO e o ARQUIVO. Uma torre
+# tem datalogger meteorológico, sistema de fluxo, radiômetro, perfil… — cada um com seus
+# arquivos. No banco vira um schema por estação+tipo (ex.: eddyfarm__radiometro) com uma
+# tabela por arquivo. Texto livre normalizado (minúsculas, [a-z0-9_]); estas são só sugestões.
+DATA_TYPE_SUGGESTIONS = ("datalogger", "meteorologia", "fluxo", "radiacao", "perfil",
+                         "radiossonda", "espectro", "telemetria", "solo", "outro")
+DATA_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
+def normalize_data_type(raw: str | None) -> str | None:
+    """'Radiação solar' → 'radiacao_solar'; vazio → None (aí vale o padrão do arquivo)."""
+    slug = variable_slug(raw or "")[:32].rstrip("_")
+    return slug or None
+
+
+def default_data_type(fcfg: dict) -> str:
+    """Tipo quando o registro não diz: TOA5/Campbell (4 linhas de cabeçalho, nomes na 2ª)
+    é 'datalogger'; o resto 'dados'."""
+    if fcfg.get("skip_header_lines") == 4 and fcfg.get("header_line") == 2:
+        return "datalogger"
+    return "dados"
+
+
+def data_type_of(fcfg: dict) -> str:
+    return (fcfg.get("data_type") or "").strip() or default_data_type(fcfg)
+
+
+def known_data_types(cfg: dict) -> list[str]:
+    """Tipos já usados no config + sugestões, sem repetir (para os datalists)."""
+    usados = {data_type_of(f) for st in cfg.get("stations") or [] for f in st.get("files") or []}
+    return sorted(usados | set(DATA_TYPE_SUGGESTIONS))
+
 try:  # py3.9+
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover
@@ -385,6 +417,7 @@ def default_file_entry(path: str, alias: str | None = None) -> dict:
         "ingest": False,
         "timezone": None,
         "resample": "raw",
+        "data_type": "datalogger",
     }
 
 
@@ -636,7 +669,8 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
             errors.append(f"{what}: valor inválido ('{raw}').")
             return None
 
-    # --- Banco de dados ---------------------------------------------------------
+    # --- Tipo de dado (estação → TIPO → arquivo) e banco de dados ---------------
+    data_type = normalize_data_type(form.get("data_type"))
     ingest = bool(form.get("ingest"))
     tzname = (form.get("timezone") or "").strip() or None
     if tzname and not valid_timezone(tzname):
@@ -732,6 +766,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
         "timezone": tzname,
         "resample": resample,
     }
+    entry["data_type"] = data_type or default_data_type(entry)
     if strip_regex:
         entry["strip_regex"] = strip_regex
     return entry, errors
@@ -762,6 +797,8 @@ def apply_treatment_form(form: dict, station: dict, fcfg: dict) -> tuple[dict, l
     errors: list[str] = []
     out = copy.deepcopy(fcfg)
     out["ingest"] = bool(form.get("ingest"))
+    if "data_type" in form:
+        out["data_type"] = normalize_data_type(form.get("data_type")) or default_data_type(fcfg)
     tzname = (form.get("timezone") or "").strip() or None
     if tzname and not valid_timezone(tzname):
         errors.append(f"Fuso horário inválido: '{tzname}' (ex.: UTC, America/Santarem).")

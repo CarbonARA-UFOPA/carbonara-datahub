@@ -27,7 +27,10 @@
   <div class="table-wrap"><table class="table">
     <thead><tr><th>Arquivo</th><th>No banco?</th><th>Variáveis</th><th>Regras</th><th>Fuso</th><th>Reamostragem</th><th>Ingerido</th><th></th></tr></thead>
     <tbody>
-    {% for f in station.files %}
+    {% for f in station.files | sort(attribute='_tipo') %}
+      {% if loop.changed(f._tipo) %}
+      <tr class="group-row"><td colspan="8">📁 <strong>{{ f._tipo }}</strong> <small class="meta">banco <code>{{ station.id }}__{{ f._tipo }}</code></small></td></tr>
+      {% endif %}
       {% set r = resumo[(station.id, f.id)] %}
       {% set lg = ledger.get((station.id, f.id)) %}
       <tr>

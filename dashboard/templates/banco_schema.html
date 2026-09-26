@@ -2,13 +2,16 @@
 {% block title %}Banco {{ schema }} · CARBONARA{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<h1>Banco <code>{{ schema }}</code>
-  <small>{% if info %}{{ {'sistema': 'sistema', 'estacao': 'estação', 'geral': 'geral'}[info.kind] }} · {{ info.size }}{% if info.comment %} · {{ info.comment }}{% endif %}{% endif %}</small></h1>
+<h1>{% if info and info.kind == 'estacao' %}📡 {{ info.station_name or info.station }} <small>({{ info.station }})</small> › 📁 {{ info.data_type }}
+  <small>· banco <code>{{ schema }}</code> · {{ info.size }}</small>
+  {% else %}Banco <code>{{ schema }}</code>
+  <small>{% if info %}{{ {'sistema': 'sistema', 'estacao': 'estação', 'geral': 'geral'}[info.kind] }} · {{ info.size }}{% if info.comment %} · {{ info.comment }}{% endif %}{% endif %}</small>{% endif %}</h1>
 <div class="db-layout">
 {% include "_banco_side.html" %}
 <div>
   <section class="card">
-    <div class="page-head"><h2>Tabelas e views</h2></div>
+    <div class="page-head"><h2>Tabelas</h2>
+      {% if info and info.kind == 'estacao' %}<span class="meta">uma tabela por arquivo monitorado deste tipo (geradas pela ingestão) + as que você criar aqui</span>{% endif %}</div>
     {% if not tables %}<p class="empty">Este banco ainda não tem tabelas.</p>{% else %}
     <div class="table-wrap"><table class="table">
       <thead><tr><th>Nome</th><th>Tipo</th><th>Linhas</th><th>Colunas</th><th>Tamanho</th><th>Descrição</th><th></th></tr></thead>

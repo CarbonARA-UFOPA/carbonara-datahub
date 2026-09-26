@@ -263,9 +263,11 @@ leitura**, de forma incremental (offset por arquivo), e nunca move nem altera na
 2. Crie a chave de serviço da dashboard:
    `docker compose exec api python -m app.keys_cli create --owner dashboard --scopes read,admin`
    e cole-a em **Configurações → API de dados** (URL interna `http://127.0.0.1:8000`).
-3. Em **Estações → arquivo → Editar**, marque *Ingerir no banco*, informe o **fuso dos
-   carimbos** do arquivo (vazio = UTC), escolha a **reamostragem** (média por 1/30 min para
-   arquivos de alta frequência) e confira o **ID no banco** de cada variável. Salve.
+3. Em **Estações → arquivo → Editar**, informe o **tipo de dado** (datalogger, fluxo,
+   radiação, perfil… — o nível entre a estação e o arquivo; no banco vira
+   `<estação>__<tipo>`), marque *Ingerir no banco*, informe o **fuso dos carimbos** do
+   arquivo (vazio = UTC), escolha a **reamostragem** (média por 1/30 min para arquivos de
+   alta frequência) e confira o **ID no banco** de cada variável. Salve.
 4. Na aba **Tratamento** (admin) revise, por estação e arquivo, o que vai para o banco e
    as regras por variável: entra ou não, ID, faixa física (flag 2), salto máximo entre
    leituras (flag 3) e leituras iguais seguidas = travado (flag 4).

@@ -32,6 +32,7 @@ arquivo e ciclo), INGEST_CYCLE_BUDGET_BYTES (por ciclo), PROCESSING_CONFIG.
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import logging
 import os
@@ -153,39 +154,66 @@ def upsert_monitored_file(cur, station_id: str, fcfg: dict, cols: list[records.C
         """
         INSERT INTO monitored_files
             (station_id, file_key, path, alias, dynamic_path, timezone, resample, ingest,
-             parser_config, variables, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+             parser_config, variables, data_type, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
         ON CONFLICT (station_id, file_key) DO UPDATE SET
             path = EXCLUDED.path, alias = EXCLUDED.alias, dynamic_path = EXCLUDED.dynamic_path,
             timezone = EXCLUDED.timezone, resample = EXCLUDED.resample, ingest = EXCLUDED.ingest,
             parser_config = EXCLUDED.parser_config, variables = EXCLUDED.variables,
-            updated_at = now()
+            data_type = EXCLUDED.data_type, updated_at = now()
         """,
         (station_id, fcfg["id"], fcfg.get("path"), fcfg.get("alias"),
          bool(fcfg.get("dynamic_path")), fcfg.get("timezone"), fcfg.get("resample") or "raw",
-         bool(fcfg.get("ingest")), Json(parser_cfg), Json(variables)),
+         bool(fcfg.get("ingest")), Json(parser_cfg), Json(variables), data_type_of(fcfg)),
     )
 
 
 _VIEW_SIG: dict[tuple[str, str], str] = {}
+_DATA_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
+def data_type_of(fcfg: dict) -> str:
+    """Tipo de dado do arquivo (nível entre estação e arquivo). Mesma regra do
+    config_store da dashboard: o registrado, senão 'datalogger' para TOA5, senão 'dados'."""
+    t = (fcfg.get("data_type") or "").strip().lower()
+    if t and _DATA_TYPE_RE.match(t):
+        return t
+    if fcfg.get("skip_header_lines") == 4 and fcfg.get("header_line") == 2:
+        return "datalogger"
+    return "dados"
 
 
 def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.ColumnSpec]) -> None:
-    """"Banco por estação": schema com o id da estação e, nele, UMA VIEW larga por arquivo
-    monitorado (uma coluna por variável, ``flags`` = quantas variáveis daquele instante
-    têm quality <> 0). É o que a aba Banco mostra como "tabela do arquivo" — derivada
-    de measurements, sempre em dia, sem duplicar dado. Recriada só quando a lista de
-    variáveis muda (assinatura em memória) ou quando não existe."""
+    """Banco por estação E tipo de dado: schema ``<estação>__<tipo>`` (ex.:
+    eddyfarm__radiometro) e, nele, UMA VIEW larga por arquivo monitorado (uma coluna por
+    variável, ``flags`` = quantas variáveis daquele instante têm quality <> 0). É o que a
+    aba Banco mostra como "tabela do arquivo" — derivada de measurements, sempre em dia,
+    sem duplicar dado. Recriada só quando a lista de variáveis ou o tipo muda (assinatura
+    em memória) ou quando não existe. Uma view antiga do mesmo arquivo em outro schema
+    (tipo trocado, ou o formato anterior ``<estação>.<arquivo>``) é removida."""
     vids = [c.variable_id for c in cols if c.vtype != "texto"]
     if not vids:
         return
-    sig = "|".join(vids)
+    schema = f"{station_id}__{data_type_of(fcfg)}"
+    sig = schema + "|" + "|".join(vids)
     key = (station_id, fcfg["id"])
     cur.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'v'", key)
+                "WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'v'", (schema, fcfg["id"]))
     if _VIEW_SIG.get(key) == sig and cur.fetchone():
         return
-    qs = '"' + station_id.replace('"', '""') + '"'
+    # views deste arquivo em OUTROS schemas da estação (tipo antigo / formato antigo)
+    cur.execute("SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE c.relname = %s AND c.relkind = 'v' AND (n.nspname = %s OR n.nspname LIKE %s) "
+                "AND n.nspname <> %s AND obj_description(c.oid, 'pg_class') LIKE 'carbonara:%%'",
+                (fcfg["id"], station_id, station_id + "\\_\\_%", schema))
+    for (old_schema,) in cur.fetchall():
+        qo = '"' + old_schema.replace('"', '""') + '"'
+        cur.execute(f'DROP VIEW IF EXISTS {qo}."{fcfg["id"]}"')
+        cur.execute("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = %s AND c.relkind IN ('r','v','m','p')", (old_schema,))
+        if cur.fetchone()[0] == 0:
+            cur.execute(f"DROP SCHEMA IF EXISTS {qo}")   # schema vazio some com a view
+    qs = '"' + schema.replace('"', '""') + '"'
     qv = '"' + fcfg["id"].replace('"', '""') + '"'
     colunas = ",\n  ".join(
         'max(value) FILTER (WHERE variable_id = %s) AS "%s"' % (
@@ -193,7 +221,7 @@ def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.Col
     lista = ", ".join("'" + v.replace("'", "''") + "'" for v in vids)
     sid = "'" + station_id.replace("'", "''") + "'"
     cur.execute(f"CREATE SCHEMA IF NOT EXISTS {qs}")
-    cur.execute(f"COMMENT ON SCHEMA {qs} IS 'carbonara: banco da estação {station_id}'")
+    cur.execute(f"COMMENT ON SCHEMA {qs} IS 'carbonara: estação {station_id} · tipo {data_type_of(fcfg)}'")
     cur.execute(f"DROP VIEW IF EXISTS {qs}.{qv}")
     cur.execute(
         f"CREATE VIEW {qs}.{qv} AS\nSELECT time,\n  {colunas},\n"

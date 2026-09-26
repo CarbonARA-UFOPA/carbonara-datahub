@@ -71,7 +71,8 @@
        um apelido escrito por você continua aparecendo. #}
     {% set nome_vivo = live_names.get(f.id) if live_names else None %}
     {% set alias_congelado = f.alias and f.id in f.alias %}
-    <h2><span class="file-chip" title="id do cadastro: {{ f.id }}">{{ nome_vivo or f.id }}</span>
+    <h2><span class="type-chip" title="tipo de dado">{{ f.data_type or 'dados' }}</span>
+        <span class="file-chip" title="id do cadastro: {{ f.id }}">{{ nome_vivo or f.id }}</span>
         {% if f.alias and not (nome_vivo and alias_congelado) %}
           <span class="file-alias">{{ f.alias }}</span>
         {% endif %}

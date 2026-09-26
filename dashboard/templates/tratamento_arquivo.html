@@ -12,13 +12,17 @@
 
 <form method="post" class="card form" action="{{ url_for('pages.treatment_save', station_id=station.id, file_id=f.id) }}">
   <input type="hidden" name="back" value="file">
-  <div class="grid-3">
+  <div class="grid-2">
     <label class="check-row"><input type="checkbox" name="ingest" value="1" {{ 'checked' if f.get('ingest') }}>
       <span><strong>Ingerir este arquivo no banco</strong>
         {% if lg %}<br><small class="meta">{{ '{:,}'.format(lg.n_values).replace(',', '.') }} valores no banco
           {%- if lg.last_time %} · até {{ lg.last_time[:16] | replace('T', ' ') }} UTC{% endif %}
           {%- if lg.pending %} · {{ (lg.pending / 1024) | round(0) | int }} kB pendentes{% endif %}
           {%- if lg.errors %} · <span class="warn">erro: {{ lg.errors[0] }}</span>{% endif %}</small>{% endif %}</span></label>
+    <label>Tipo de dado
+      <input name="data_type" list="data-type-list" value="{{ f.data_type or '' }}" placeholder="ex.: datalogger, fluxo, radiacao">
+      <datalist id="data-type-list">{% for t in data_types %}<option value="{{ t }}">{% endfor %}</datalist>
+      <small>Agrupa os arquivos da estação; no banco: <code>{{ station.id }}__{{ f.data_type or 'tipo' }}</code>.</small></label>
     <label>Fuso dos carimbos do arquivo
       <input name="timezone" list="tz-list" value="{{ f.timezone or '' }}" placeholder="vazio = UTC">
       <small>Epoch já é UTC e ignora este campo.</small></label>

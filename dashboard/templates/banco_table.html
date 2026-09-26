@@ -2,7 +2,8 @@
 {% block title %}{{ schema }}.{{ table }} · CARBONARA{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<h1><a href="{{ url_for('pages.banco_schema', schema=schema) }}"><code>{{ schema }}</code></a> . <code>{{ table }}</code>
+{% set sinfo = schemas | selectattr('schema', 'equalto', schema) | list | first %}
+<h1>{% if sinfo and sinfo.kind == 'estacao' %}📡 {{ sinfo.station }} › <a href="{{ url_for('pages.banco_schema', schema=schema) }}">📁 {{ sinfo.data_type }}</a> › {% else %}<a href="{{ url_for('pages.banco_schema', schema=schema) }}"><code>{{ schema }}</code></a> . {% endif %}<code>{{ table }}</code>
   <small>{% if structure %}{% if structure.generated %}view gerada pela ingestão{% elif structure.kind == 'view' %}view{% elif structure.kind == 'matview' %}view materializada{% else %}tabela{% endif %}
     {% if structure.editable %}· <span class="badge on">editável</span>{% else %}· somente leitura{% endif %}{% endif %}</small></h1>
 <div class="db-layout">

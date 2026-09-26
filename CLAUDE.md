@@ -631,12 +631,22 @@ computes live station status. Viewing is open; edits require the admin login
   `variables[]` — `carry_treatment` matches by column/ID; don't drop it. Checks live in
   `processing/checks/{spike,persistence}_check.py` (stateful per station+variable; the
   ingestion reads each file in order).
+- **Data type level** (`data_type` on every monitored file; `config_store.data_type_of`,
+  suggestions `DATA_TYPE_SUGGESTIONS`, default `datalogger` for TOA5-shaped registrations
+  else `dados`; mirrored in `monitored_files.data_type`, migration 0002): the hierarchy is
+  **station → data type → file** (a tower has a met datalogger, a flux system, a radiometer,
+  a profile… each with files). Editable in the file form and in Tratamento; the Tratamento
+  index groups files by type; station detail shows a purple type chip.
 - **Banco tab** (`/banco`, admin, phpMyAdmin-like, through the API's `/admin/db/*`):
   "bancos" = PostgreSQL SCHEMAS. `public` = the system (measurements, stations, ledger…)
-  — read-only. **One schema per station**, created by the ingestion
-  (`ensure_station_view`), holding one **wide VIEW per monitored file** (one column per
-  variable + `flags`, built from `measurements`, recreated only when the variable list
-  changes) and any user-created tables. "Gerais" schemas hold cross-station user tables.
+  — read-only. **One schema per station AND data type** (`<station>__<data_type>`, e.g.
+  `eddyfarm__datalogger`), created by the ingestion (`ensure_station_view`), holding one
+  **wide VIEW per monitored file** (one column per variable + `flags`, built from
+  `measurements`, recreated only when the variable list or the type changes; a view of the
+  same file in another schema of the station — old type, or the pre-0002 `<station>.<file>`
+  shape — is dropped, and an emptied schema with it) and any user-created tables. The
+  sidebar renders a tree station → type; `/admin/db/schemas` splits the name on `__` and
+  reports `station`/`data_type`; dashboard routes derive the station with `_station_of()`. "Gerais" schemas hold cross-station user tables.
   Sidebar = schemas; pages: schema (tables + "nova tabela" with typed columns, optional
   hypertable), table (tabs Dados with sort/filter/pagination by `ctid`, Estrutura,
   Inserir; drop with typed confirmation). Writes are allowed ONLY on user tables

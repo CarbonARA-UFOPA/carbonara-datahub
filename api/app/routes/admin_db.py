@@ -227,12 +227,22 @@ async def schemas(_who: auth.KeyInfo = Depends(auth.require("admin"))):
                                 'timescaledb_experimental', 'topology', 'tiger', 'tiger_data')
         GROUP BY n.nspname, n.oid ORDER BY (n.nspname = 'public') DESC, n.nspname
         """)
-    stations = {r["station_id"] for r in await db.pool().fetch("SELECT station_id FROM stations")}
+    st_rows = await db.pool().fetch("SELECT station_id, name FROM stations")
+    stations = {r["station_id"]: r["name"] for r in st_rows}
     out = []
     for r in rows:
-        kind = "sistema" if r["schema"] in SYSTEM_SCHEMAS else ("estacao" if r["schema"] in stations else "geral")
-        out.append({"schema": r["schema"], "kind": kind, "tables": r["tables"], "views": r["views"],
-                    "size": _pretty(r["bytes"]), "comment": r["comment"]})
+        name = r["schema"]
+        station, data_type = (name.split("__", 1) + [None])[:2] if "__" in name else (name, None)
+        if name in SYSTEM_SCHEMAS:
+            kind = "sistema"
+        elif station in stations:
+            kind = "estacao"
+        else:
+            kind, station, data_type = "geral", None, None
+        out.append({"schema": name, "kind": kind, "tables": r["tables"], "views": r["views"],
+                    "size": _pretty(r["bytes"]), "comment": r["comment"],
+                    "station": station, "station_name": stations.get(station) if station else None,
+                    "data_type": data_type or ("dados" if kind == "estacao" else None)})
     return out
 
 
@@ -597,6 +607,10 @@ async def station_drop_table(body: StationTable, who: auth.KeyInfo = Depends(aut
         async with conn.transaction():
             res = await conn.execute("DELETE FROM measurements WHERE station_id = $1 AND variable_id = ANY($2)", body.station, vids)
             await conn.execute(f"DROP VIEW IF EXISTS {qs}.{qv}")
+            dt = await conn.fetchval("SELECT data_type FROM monitored_files WHERE station_id = $1 AND file_key = $2",
+                                     body.station, body.file_key)
+            if dt:
+                await conn.execute(f"DROP VIEW IF EXISTS {_q(body.station + '__' + dt)}.{qv}")
             await conn.execute("DELETE FROM ingest_files WHERE station_id = $1 AND file_key = $2", body.station, body.file_key)
             await conn.execute("UPDATE monitored_files SET ingest = false, updated_at = now() WHERE station_id = $1 AND file_key = $2",
                                body.station, body.file_key)

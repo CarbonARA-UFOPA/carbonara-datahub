@@ -72,10 +72,19 @@
     </label>
   </div>
 
+  <div class="form-row">
   <label>Apelido (opcional)
     <input name="alias" value="{{ fcfg.alias if fcfg and fcfg.get('alias') else '' }}"
            placeholder="ex.: Torre Norte — nome de exibição nos gráficos">
   </label>
+  <label>Tipo de dado
+    <input name="data_type" list="data-type-list" value="{{ fcfg.data_type if fcfg and fcfg.get('data_type') else '' }}"
+           placeholder="ex.: datalogger, fluxo, radiacao, perfil">
+    <datalist id="data-type-list">{% for t in data_types %}<option value="{{ t }}">{% endfor %}</datalist>
+    <small>O nível entre a estação e o arquivo: que equipamento/conjunto gera este arquivo. No banco vira
+      <code>{{ station.id }}__&lt;tipo&gt;</code>, com uma tabela por arquivo. Vazio = <code>datalogger</code> para TOA5, <code>dados</code> para o resto.</small>
+  </label>
+  </div>
 
   <h2>Banco de dados</h2>
   <p class="meta">Só entra no banco o que for marcado aqui — e só as variáveis da tabela

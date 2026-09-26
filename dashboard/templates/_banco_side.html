@@ -7,10 +7,19 @@
     {% set grupo = schemas | selectattr('kind', 'equalto', kind) | list %}
     {% if grupo or kind == 'geral' %}
       <div class="db-kind">{{ titulo }}</div>
+      {% if kind == 'estacao' %}
+        {# Árvore: estação → tipo de dado (schema) → tabelas (na página do schema). #}
+        {% for s in grupo | sort(attribute='schema') %}
+          {% if loop.changed(s.station) %}<span class="db-station" title="{{ s.station_name or '' }}">📡 {{ s.station }}</span>{% endif %}
+          <a href="{{ url_for('pages.banco_schema', schema=s.schema) }}" class="db-sub {{ 'active' if current == s.schema }}">
+            📁 {{ s.data_type }} <small>{{ s.views }} tab{{ ' · ' ~ s.tables ~ ' própria(s)' if s.tables }}</small></a>
+        {% endfor %}
+      {% else %}
       {% for s in grupo %}
         <a href="{{ url_for('pages.banco_schema', schema=s.schema) }}" class="{{ 'active' if current == s.schema }}">
           {{ s.schema }} <small>{{ s.tables }} tab · {{ s.views }} view</small></a>
       {% endfor %}
+      {% endif %}
       {% if kind == 'geral' %}
         <form method="post" action="{{ url_for('pages.banco_new_schema') }}" class="form" style="margin:.3rem .5rem">
           <input name="name" placeholder="novo banco geral" pattern="[a-z][a-z0-9_-]{0,62}" required style="width:100%">

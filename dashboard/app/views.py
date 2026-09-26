@@ -427,7 +427,8 @@ def station_delete(station_id):
 def file_new(station_id):
     cfg = _load()
     station = _station_or_404(cfg, station_id)
-    return render_template("file_form.html", station=station, fcfg=None)
+    return render_template("file_form.html", station=station, fcfg=None,
+                           data_types=config_store.known_data_types(cfg))
 
 
 @pages.post("/stations/<station_id>/files")
@@ -439,7 +440,7 @@ def file_create(station_id):
     if errors:
         for e in errors:
             flash(e, "error")
-        return render_template("file_form.html", station=station, fcfg=None), 400
+        return render_template("file_form.html", station=station, fcfg=None, data_types=config_store.known_data_types(cfg)), 400
     entry["id"] = config_store.unique_file_id(station, entry["path"])
     station.setdefault("files", []).append(entry)
     _save(cfg)
@@ -512,7 +513,8 @@ def file_edit(station_id, file_id):
     fcfg = config_store.get_file(station, file_id)
     if not fcfg:
         abort(404)
-    return render_template("file_form.html", station=station, fcfg=fcfg)
+    return render_template("file_form.html", station=station, fcfg=fcfg,
+                           data_types=config_store.known_data_types(cfg))
 
 
 @pages.post("/stations/<station_id>/files/<file_id>/edit")
@@ -528,7 +530,7 @@ def file_update(station_id, file_id):
     if errors:
         for e in errors:
             flash(e, "error")
-        return render_template("file_form.html", station=station, fcfg=fcfg), 400
+        return render_template("file_form.html", station=station, fcfg=fcfg, data_types=config_store.known_data_types(cfg)), 400
     # merge sobre a entry existente: chaves adicionadas à mão no YAML sobrevivem à UI;
     # as escolhas da aba Tratamento por variável também (casadas por coluna/ID).
     entry["variables"] = config_store.carry_treatment(fcfg.get("variables") or [], entry["variables"])
@@ -652,6 +654,9 @@ def treatment():
     cfg = _load()
     ledger = _ledger_by_file(cfg)
     resumo = {(s["id"], f["id"]): _treat_summary(f) for s in cfg["stations"] for f in s.get("files") or []}
+    for st in cfg["stations"]:
+        for f in st.get("files") or []:
+            f["_tipo"] = config_store.data_type_of(f)
     return render_template("tratamento.html", cfg=cfg, ledger=ledger, resumo=resumo,
                            api_ok=api_client.configured(cfg))
 
@@ -667,7 +672,7 @@ def treatment_file(station_id, file_id):
     ledger = _ledger_by_file(cfg)
     return render_template("tratamento_arquivo.html", cfg=cfg, station=station, f=fcfg,
                            lg=ledger.get((station_id, file_id)), resumo=_treat_summary(fcfg),
-                           api_ok=api_client.configured(cfg))
+                           api_ok=api_client.configured(cfg), data_types=config_store.known_data_types(cfg))
 
 
 @pages.post("/tratamento/<station_id>/<file_id>")
@@ -1002,7 +1007,7 @@ def banco_export(schema, table):
     try:
         if structure.get("generated"):
             vids = [c["name"] for c in structure["columns"] if c["name"] not in ("time", "flags")]
-            data = api_client.get_bytes(cfg, "/series", {"station": schema, "vars": ",".join(vids), "agg": "raw",
+            data = api_client.get_bytes(cfg, "/series", {"station": _station_of(schema), "vars": ",".join(vids), "agg": "raw",
                                                           "qc": "all", "start": start, "end": end, "format": "csv",
                                                           "limit": 200000})
         else:
@@ -1048,13 +1053,18 @@ def _danger(cfg, path, body, ok_msg, back):
     return redirect(back)
 
 
+def _station_of(schema: str) -> str:
+    """Schema de estação+tipo ('eddyfarm__radiometro') → id da estação."""
+    return schema.split("__", 1)[0]
+
+
 @pages.post("/banco/<schema>/<table>/zerar")
 @admin_required
 def banco_station_clear(schema, table):
     cfg = _load()
     back = url_for("pages.banco_table", schema=schema, table=table, aba="perigo")
     return _danger(cfg, "/admin/db/station/clear",
-                   {"station": schema, "file_key": table, "confirm": request.form.get("confirm", "")},
+                   {"station": _station_of(schema), "file_key": table, "confirm": request.form.get("confirm", "")},
                    "Tabela zerada: {deleted} valor(es) removido(s); a ingestão relê o arquivo do início.", back)
 
 
@@ -1065,7 +1075,7 @@ def banco_station_drop_variable(schema, table):
     back = url_for("pages.banco_table", schema=schema, table=table, aba="perigo")
     vid = (request.form.get("variable_id") or "").strip()
     return _danger(cfg, "/admin/db/station/drop-variable",
-                   {"station": schema, "variable_id": vid, "confirm": request.form.get("confirm", "")},
+                   {"station": _station_of(schema), "variable_id": vid, "confirm": request.form.get("confirm", "")},
                    "Variável '" + vid + "' apagada: {deleted} valor(es). {note}.", back)
 
 
@@ -1075,12 +1085,12 @@ def banco_station_drop_table(schema, table):
     cfg = _load()
     try:
         res = api_client.post(cfg, "/admin/db/station/drop-table",
-                              {"station": schema, "file_key": table, "confirm": request.form.get("confirm", "")}, timeout=600)
+                              {"station": _station_of(schema), "file_key": table, "confirm": request.form.get("confirm", "")}, timeout=600)
     except api_client.ApiError as exc:
         flash(str(exc), "error")
         return redirect(url_for("pages.banco_table", schema=schema, table=table, aba="perigo"))
     # Desliga a ingestão no REGISTRO da dashboard também — senão o próximo ciclo recria a view.
-    station = config_store.get_station(cfg, schema)
+    station = config_store.get_station(cfg, _station_of(schema))
     if station:
         for f in station.get("files") or []:
             if f.get("id") == table:

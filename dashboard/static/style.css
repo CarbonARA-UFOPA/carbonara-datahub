@@ -437,3 +437,8 @@ dl.kv dd { margin: 0; }
 .diag-pill.diag-ok { background: #e4f5ea; color: var(--accent); } .diag-pill.diag-info { background: rgba(138,92,214,.14); color: var(--purple); }
 .tabs a.tab-danger { color: var(--red); }
 .danger-card h2 { color: var(--red); }
+.type-chip { display: inline-block; background: rgba(138,92,214,.14); color: var(--purple); border-radius: 5px;
+             padding: .02rem .5rem; font-size: .78rem; font-weight: 600; margin-right: .3rem; }
+.group-row td { background: #f6f8f7; font-size: .85rem; padding: .35rem .8rem; }
+.db-side .db-station { display: block; padding: .25rem .5rem 0; font-weight: 600; }
+.db-side .db-sub { padding-left: 1.3rem; font-size: .92rem; }

@@ -65,7 +65,7 @@
         <tr><td><strong>{{ s.station_id }}</strong></td><td>{{ s.variables }}</td>
           <td>{{ (s.first_day or '')[:10] }}</td><td>{{ (s.last_day or '')[:10] }}</td>
           <td>{{ '{:,}'.format(s.n_good).replace(',', '.') }}</td><td>{{ '{:,}'.format(s.n_flagged).replace(',', '.') }}</td>
-          <td><a class="btn" href="{{ url_for('pages.banco_schema', schema=s.station_id) }}">Abrir banco</a></td></tr>
+          <td>{% for sc in schemas if sc.station == s.station_id %}<a class="btn btn-sm" href="{{ url_for('pages.banco_schema', schema=sc.schema) }}">📁 {{ sc.data_type }}</a> {% endfor %}</td></tr>
       {% endfor %}</tbody>
     </table></div>
     <details class="adv"><summary>Por variável ({{ coverage.variables | length }})</summary>
