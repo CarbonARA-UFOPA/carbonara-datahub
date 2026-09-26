@@ -639,6 +639,28 @@ def _ledger_by_file(cfg: dict) -> dict:
     return out
 
 
+def _monitored_seen(cfg: dict) -> set:
+    """(station_id, file_key) que a ingestão já espelhou em monitored_files."""
+    if not api_client.configured(cfg):
+        return set()
+    try:
+        return {(r["station_id"], r["file_key"]) for r in api_client.get(cfg, "/monitored", timeout=6) or []}
+    except api_client.ApiError:
+        return set()
+
+
+def _pending_reason(f: dict, seen: set, station_id: str, ledger: dict) -> str | None:
+    """Por que um arquivo marcado para o banco ainda não tem leitura."""
+    if not f.get("ingest") or ledger.get((station_id, f.get("id"))):
+        return None
+    if (station_id, f.get("id")) not in seen:
+        return ("a ingestão ainda não leu este registro — ela relê o config a cada ciclo (30 s); "
+                "se persistir, o serviço ingestion não está enxergando o config.yaml atual")
+    return ("nenhum arquivo casou com o caminho/padrão registrado (ou ainda está sendo escrito) — "
+            "confira o caminho em Editar parse/colunas e a verificação 'Registros ingeridos sem "
+            "nenhum arquivo encontrado' em Banco → Diagnóstico")
+
+
 def _treat_summary(f: dict) -> dict:
     vs = [v for v in f.get("variables") or [] if (v.get("type") or "numero") != "texto"]
     no_banco = [v for v in vs if v.get("ingest") is not False]
@@ -654,9 +676,11 @@ def treatment():
     cfg = _load()
     ledger = _ledger_by_file(cfg)
     resumo = {(s["id"], f["id"]): _treat_summary(f) for s in cfg["stations"] for f in s.get("files") or []}
+    seen = _monitored_seen(cfg)
     for st in cfg["stations"]:
         for f in st.get("files") or []:
             f["_tipo"] = config_store.data_type_of(f)
+            f["_pendente"] = _pending_reason(f, seen, st["id"], ledger)
     return render_template("tratamento.html", cfg=cfg, ledger=ledger, resumo=resumo,
                            api_ok=api_client.configured(cfg))
 
@@ -670,8 +694,9 @@ def treatment_file(station_id, file_id):
     if not fcfg:
         abort(404)
     ledger = _ledger_by_file(cfg)
+    pendente = _pending_reason(fcfg, _monitored_seen(cfg), station_id, ledger)
     return render_template("tratamento_arquivo.html", cfg=cfg, station=station, f=fcfg,
-                           lg=ledger.get((station_id, file_id)), resumo=_treat_summary(fcfg),
+                           lg=ledger.get((station_id, file_id)), resumo=_treat_summary(fcfg), pendente=pendente,
                            api_ok=api_client.configured(cfg), data_types=config_store.known_data_types(cfg))
 
 

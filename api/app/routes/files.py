@@ -38,3 +38,13 @@ async def list_files(station: str | None = None, file_key: str | None = None,
         "resample": r["resample"], "timezone": r["timezone"],
         "first_seen": iso(r["first_seen"], tzi), "last_ingested": iso(r["last_ingested"], tzi),
     } for r in rows]
+
+
+@router.get("/monitored", summary="Registros que a ingestão já viu (espelho monitored_files)")
+async def monitored(station: str | None = None, tz: str | None = None,
+                    _who: auth.KeyInfo = Depends(auth.require("read"))):
+    tzi = tzinfo_of(tz)
+    rows = await db.pool().fetch(
+        "SELECT station_id, file_key, ingest, data_type, resample, timezone, updated_at FROM monitored_files "
+        "WHERE ($1::text IS NULL OR station_id = $1) ORDER BY 1, 2", station)
+    return [{**dict(r), "updated_at": iso(r["updated_at"], tzi)} for r in rows]

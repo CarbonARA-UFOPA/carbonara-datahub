@@ -483,6 +483,13 @@ ingests ONLY the files with `ingest: true`, and ONLY their `variables[]` (types 
 column/format, `timezone`, `resample`, per-variable `variable_id`/`min`/`max`/`type`).
 
 Key invariants when editing:
+- **The dashboard config is mounted as a DIRECTORY** (`./dashboard:/app/dashboard:ro`,
+  `DASHBOARD_CONFIG=/app/dashboard/config.yaml`), never as a single file: `ConfigStore.save`
+  writes atomically (tempfile + `os.replace`), which changes the inode, and a file bind
+  mount stays pinned to the old inode — the ingestion would never see new registrations
+  (this happened: a file showed "aguardando" forever). `DashboardConfig.load` reloads on
+  mtime change; the Tratamento tab explains a pending file via `/monitored` (seen by the
+  ingestion but no file matched) vs not seen at all.
 - **`incoming/` is never touched.** The container mounts `CARBONARA_ROOT` at the SAME
   absolute path, read-only. Nothing is moved to `archive/`/`quarantine/` (those dirs no
   longer exist in the flow). Errors are recorded in the ledger (`ingest_files.status/error`).

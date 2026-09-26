@@ -17,7 +17,7 @@ COPY carbonara_parse/ /app/carbonara_parse/
 # config.yaml da dashboard (registro dos arquivos monitorados), processing/config.yaml
 # (QC global) e a raiz de dados (somente leitura) entram por volume (ver docker-compose.yml).
 ENV PYTHONUNBUFFERED=1 \
-    DASHBOARD_CONFIG=/app/dashboard-config.yaml \
+    DASHBOARD_CONFIG=/app/dashboard/config.yaml \
     PROCESSING_CONFIG=/app/processing/config.yaml
 
 CMD ["python", "ingest.py"]
