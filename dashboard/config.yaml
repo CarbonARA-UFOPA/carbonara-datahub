@@ -10,6 +10,26 @@ rsync_hub_bin: null
 auth:
   username: carbonara
   password_hash: scrypt:32768:8:1$Y8azd3pSABrjsI7m$6dab69b533ec7eacb1d2205574c4cf573766564ea82d847d4e8d2ad0ebfb0fe5807dcdc204fabb3580407d3976ea2e35739d89baf87de46505b7f07639d1addf
+ftp:
+  root: null
+  vsftpd_conf: null
+  ftp_hub_bin: null
+  public_host: null
+  publications:
+  - id: radiosonde
+    name: radiosonde
+    source: incoming/radiosonda_pibmt/log
+    dest: radiosonde
+    include: []
+    exclude: []
+    delete: false
+    hidden: false
+    interval_min: 60
+    enabled: true
+api:
+  url: http://127.0.0.1:8000
+  key: cbk_X8ip1Z7OPLlzgxwfAgVsQkL-mpGfar0QzFCsLoGTcGU
+  public_url: null
 stations:
 - id: eddyfarm
   name: Radiometro JPL
@@ -17,803 +37,6 @@ stations:
   longitude: -54.533
   heartbeat_file: /mnt/data_8tb/carbonara-data-hub/incoming/eddyfarm/.carbonara-status
   files:
-  - path: incoming/eddyfarm/loggernet/CR1000_Proc3K.dat
-    tail_lines: 100
-    separator: ','
-    quotechar: '"'
-    decimal: .
-    skip_header_lines: 4
-    header_line: 2
-    timestamp:
-      column: 0
-      format: '%Y-%m-%d %H:%M:%S'
-    variables:
-    - column: 1
-      label: RECORD
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 2
-      label: Bateria do datalogger
-      unit: V
-      min: 11.5
-      max: 16.0
-      type: numero
-    - column: 3
-      label: Temperatura do painel (CR1000X)
-      unit: °C
-      min: 0.0
-      max: 60.0
-      type: numero
-    - column: 4
-      label: Rad1_A(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 5
-      label: Rad1_A(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 6
-      label: Rad1_A(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 7
-      label: Rad1_A(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 8
-      label: Rad1_A(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 9
-      label: IRT visada -20° · temperatura
-      unit: °C
-      min: 5.0
-      max: 50.0
-      type: numero
-    - column: 10
-      label: Rad1_A(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 11
-      label: Rad1_A(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 12
-      label: Rad1_A(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 13
-      label: Rad1_A(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 14
-      label: Rad1_A(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 15
-      label: Rad1_B(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 16
-      label: Rad1_B(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 17
-      label: Rad1_B(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 18
-      label: Rad1_B(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 19
-      label: Rad1_B(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 20
-      label: IRT visada -25° · temperatura
-      unit: °C
-      min: 5.0
-      max: 50.0
-      type: numero
-    - column: 21
-      label: Rad1_B(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 22
-      label: Rad1_B(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 23
-      label: Rad1_B(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 24
-      label: Rad1_B(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 25
-      label: Rad1_B(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 26
-      label: Rad1_C(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 27
-      label: Rad1_C(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 28
-      label: Rad1_C(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 29
-      label: Rad1_C(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 30
-      label: Rad1_C(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 31
-      label: IRT visada -30° · temperatura
-      unit: °C
-      min: 5.0
-      max: 50.0
-      type: numero
-    - column: 32
-      label: Rad1_C(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 33
-      label: Rad1_C(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 34
-      label: Rad1_C(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 35
-      label: Rad1_C(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 36
-      label: Rad1_C(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 37
-      label: Rad1_D(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 38
-      label: Rad1_D(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 39
-      label: Rad1_D(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 40
-      label: Rad1_D(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 41
-      label: Rad1_D(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 42
-      label: IRT visada -40° · temperatura
-      unit: °C
-      min: 5.0
-      max: 50.0
-      type: numero
-    - column: 43
-      label: Rad1_D(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 44
-      label: Rad1_D(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 45
-      label: Rad1_D(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 46
-      label: Rad1_D(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 47
-      label: Rad1_D(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 48
-      label: Rad1_E(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 49
-      label: Rad1_E(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 50
-      label: Rad1_E(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 51
-      label: Rad1_E(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 52
-      label: Rad1_E(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 53
-      label: IRT visada -125° (referência) · temperatura
-      unit: °C
-      min: -60.0
-      max: 45.0
-      type: numero
-    - column: 54
-      label: Rad1_E(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 55
-      label: Rad1_E(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 56
-      label: Rad1_E(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 57
-      label: Rad1_E(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 58
-      label: Rad1_E(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 59
-      label: Leituras truncadas do IRT (contador)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 60
-      label: r1_runt_flag
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 61
-      label: PollRad1_flag
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 62
-      label: PowerRad1_flag
-      unit: null
-      min: null
-      max: null
-      type: numero
-    id: cr1000_proc3k
-    alias: null
-    dynamic_path: false
-    truncate_chars: null
-    hour_offset: null
-    window_hours: null
-  - path: incoming/eddyfarm/loggernet/CR1000_Public.dat
-    tail_lines: 100
-    separator: ','
-    quotechar: ''
-    decimal: .
-    skip_header_lines: 4
-    header_line: 2
-    timestamp:
-      column: 0
-      format: '%Y-%m-%d %H:%M:%S'
-    variables:
-    - column: 1
-      label: RECORD
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 2
-      label: Temperatura do painel (CR1000X)
-      unit: °C
-      min: 0.0
-      max: 60.0
-      type: numero
-    - column: 3
-      label: Bateria do datalogger
-      unit: V
-      min: 11.5
-      max: 16.0
-      type: numero
-    - column: 5
-      label: DataPoll
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 6
-      label: Rtrnstat1
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 7
-      label: Rad1_A(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 8
-      label: Rad1_A(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 9
-      label: Rad1_A(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 10
-      label: Rad1_A(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 11
-      label: Rad1_A(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 12
-      label: Rad1_A(6)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 13
-      label: Rad1_A(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 14
-      label: Rad1_A(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 15
-      label: Rad1_A(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 16
-      label: Rad1_A(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 17
-      label: Rad1_A(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 18
-      label: Rad1_B(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 19
-      label: Rad1_B(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 20
-      label: Rad1_B(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 21
-      label: Rad1_B(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 22
-      label: Rad1_B(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 23
-      label: Rad1_B(6)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 24
-      label: Rad1_B(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 25
-      label: Rad1_B(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 26
-      label: Rad1_B(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 27
-      label: Rad1_B(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 28
-      label: Rad1_B(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 29
-      label: Rad1_C(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 30
-      label: Rad1_C(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 31
-      label: Rad1_C(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 32
-      label: Rad1_C(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 33
-      label: Rad1_C(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 34
-      label: Rad1_C(6)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 35
-      label: Rad1_C(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 36
-      label: Rad1_C(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 37
-      label: Rad1_C(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 38
-      label: Rad1_C(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 39
-      label: Rad1_C(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 40
-      label: Rad1_D(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 41
-      label: Rad1_D(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 42
-      label: Rad1_D(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 43
-      label: Rad1_D(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 44
-      label: Rad1_D(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 45
-      label: Rad1_D(6)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 46
-      label: Rad1_D(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 47
-      label: Rad1_D(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 48
-      label: Rad1_D(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 49
-      label: Rad1_D(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 50
-      label: Rad1_D(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 51
-      label: Rad1_E(1)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 52
-      label: Rad1_E(2)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 53
-      label: Rad1_E(3)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 54
-      label: Rad1_E(4)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 55
-      label: Rad1_E(5)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 56
-      label: Rad1_E(6)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 57
-      label: Rad1_E(7)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 58
-      label: Rad1_E(8)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 59
-      label: Rad1_E(9)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 60
-      label: Rad1_E(10)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 61
-      label: Rad1_E(11)
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 62
-      label: r1_runt_count
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 63
-      label: r1_runt_flag
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 71
-      label: PollRad1_flag
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 72
-      label: PowerRad1_flag
-      unit: null
-      min: null
-      max: null
-      type: numero
-    - column: 73
-      label: Rad1_hibernate_flag
-      unit: null
-      min: null
-      max: null
-      type: numero
-    id: cr1000_public
-    window_hours: null
-    strip_regex: '"m -125'
-    alias: null
-    dynamic_path: false
-    truncate_chars: null
-    hour_offset: null
   - path: incoming/eddyfarm/loggernet/CR1KX_RAD_NASA_Proc3K.dat
     alias: loggernet/CR1KX_RAD_NASA_Proc3K
     dynamic_path: false
@@ -2427,4 +1650,215 @@ stations:
   heartbeat_file: null
   latitude: null
   longitude: null
-  files: []
+  files:
+  - path: incoming/radiosonda_pibmt/log/%Y%m%d-******_X*******_RS41_******_sonde.log
+    alias: log/20260926_sonde
+    dynamic_path: true
+    tail_lines: 100
+    window_hours: null
+    separator: ','
+    quotechar: '"'
+    decimal: .
+    skip_header_lines: 1
+    header_line: 1
+    timestamp:
+      column: 0
+      format: '%Y-%m-%dT%H:%M:%S.%fZ'
+    variables:
+    - column: 1
+      label: SERIAL
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: serial
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 2
+      label: frame
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: frame
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 3
+      label: lat
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: lat
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 4
+      label: lon
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: lon
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 5
+      label: alt
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: alt
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 6
+      label: vel_v
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: vel_v
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 7
+      label: vel_h
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: vel_h
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 8
+      label: heading
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: heading
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 9
+      label: temp
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: temp
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 10
+      label: humidity
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: humidity
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 11
+      label: pressure
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: pressure
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 12
+      label: type
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: type
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 13
+      label: freq_mhz
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: freq_mhz
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 14
+      label: snr
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: snr
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 15
+      label: f_error_hz
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: f_error_hz
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 16
+      label: sats
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: sats
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 17
+      label: batt_v
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: batt_v
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 18
+      label: burst_timer
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: burst_timer
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    - column: 19
+      label: aux_data
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: aux_data
+      ingest: true
+      qc_spike: null
+      qc_stuck: null
+    ingest: true
+    timezone: null
+    resample: raw
+    data_type: radiossonda
+    id: 20260926-113452_x3043003_rs41_403031_sonde
+    truncate_chars: null
+    hour_offset: null
