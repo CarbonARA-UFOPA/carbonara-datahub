@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Banco {{ schema }} · CARBONARA{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
 <h1>Banco <code>{{ schema }}</code>
   <small>{% if info %}{{ {'sistema': 'sistema', 'estacao': 'estação', 'geral': 'geral'}[info.kind] }} · {{ info.size }}{% if info.comment %} · {{ info.comment }}{% endif %}{% endif %}</small></h1>
@@ -9,7 +10,7 @@
   <section class="card">
     <div class="page-head"><h2>Tabelas e views</h2></div>
     {% if not tables %}<p class="empty">Este banco ainda não tem tabelas.</p>{% else %}
-    <table class="table">
+    <div class="table-wrap"><table class="table">
       <thead><tr><th>Nome</th><th>Tipo</th><th>Linhas</th><th>Colunas</th><th>Tamanho</th><th>Descrição</th><th></th></tr></thead>
       <tbody>{% for t in tables %}
         <tr><td><a href="{{ url_for('pages.banco_table', schema=schema, table=t.name) }}"><code>{{ t.name }}</code></a></td>
@@ -20,7 +21,7 @@
           <td><small class="meta">{{ (t.comment or '') | replace('carbonara: view gerada da ingestão — ', '') }}</small></td>
           <td><a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=t.name) }}">Abrir</a></td></tr>
       {% endfor %}</tbody>
-    </table>
+    </table></div>
     {% endif %}
   </section>
 

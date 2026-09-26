@@ -292,6 +292,26 @@ curl -H "X-API-Key: cbk_..." "http://servidor:8000/series?station=eddyfarm&agg=1
 curl -H "X-API-Key: cbk_..." "http://servidor:8000/latest?station=eddyfarm&tz=America/Santarem"
 ```
 
+### B4b. Onde o banco está — e como movê-lo
+
+O `.env` diz aos serviços onde está o PostgreSQL. Padrão: `DB_HOST=db` e
+`COMPOSE_PROFILES=local-db` (o banco é o serviço `db` deste compose, no disco de dados).
+Para migrar o banco a outro servidor: suba lá um PostgreSQL 16 com TimescaleDB e PostGIS,
+copie os dados (`pg_dump -Fc | pg_restore` ou um espelho promovido) e, na dashboard,
+**Banco → Conexão**: modo *Externo*, host/porta/usuário/senha, *Testar conexão*, *Gravar no
+.env*, *Aplicar aos serviços*. Depois de conferir, *Parar banco local*. A coleta das
+estações não muda.
+
+### B4c. Diagnóstico e manutenção
+
+**Banco → Diagnóstico e manutenção** roda verificações de leitura (erros e atrasos de
+ingestão, arquivos duplicados, rótulos repetidos, séries órfãs ou paradas, lacunas,
+qualidade, carimbos implausíveis, compressão, inchaço, tarefas com falha, consultas presas)
+e oferece ações nomeadas (ANALYZE, VACUUM, comprimir, recalcular agregados, remover
+carimbos implausíveis ou séries órfãs — as que apagam exigem digitar `APAGAR`). Toda
+página de tabela tem **⬇ CSV**; o **Guia** (menu, público) explica aos pesquisadores como
+consultar a API.
+
 ### B5. Distribuição pelo FTP
 
 **Servidor com vsftpd nativo** (o caso da workstation de produção — instalação em

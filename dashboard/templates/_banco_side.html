@@ -1,6 +1,8 @@
 {# Barra lateral da aba Banco: os "bancos" (schemas) agrupados por tipo. #}
 <aside class="card db-side">
   <a href="{{ url_for('pages.banco') }}" class="{{ 'active' if not current }}"><strong>Visão geral e SQL</strong></a>
+  <a href="{{ url_for('pages.banco_diagnostico') }}" class="{{ 'active' if current == 'diagnostico' }}">Diagnóstico e manutenção</a>
+  <a href="{{ url_for('pages.banco_conexao') }}" class="{{ 'active' if current == 'conexao' }}">Conexão (onde está o banco)</a>
   {% for kind, titulo in (('sistema', 'Sistema'), ('estacao', 'Estações'), ('geral', 'Gerais')) %}
     {% set grupo = schemas | selectattr('kind', 'equalto', kind) | list %}
     {% if grupo or kind == 'geral' %}

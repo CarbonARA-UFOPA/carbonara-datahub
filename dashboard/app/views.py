@@ -7,11 +7,16 @@ bloco ``auth:`` do config.yaml (hash de senha — nunca texto puro). Sem bloco
 """
 from __future__ import annotations
 
+import csv
+import io
+import re
+
 import secrets
 from functools import wraps
 
 from flask import (
     Blueprint,
+    Response,
     abort,
     current_app,
     flash,
@@ -24,7 +29,7 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
-from . import api_client, config_store, hub, series, status
+from . import api_client, config_store, dbconn, hub, series, status
 
 pages = Blueprint("pages", __name__)
 
@@ -719,6 +724,25 @@ def _banco_base(cfg: dict) -> dict:
     return ctx
 
 
+_ISO_TS = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(\.\d+)?(\+00:00|Z)?$")
+
+
+def _pretty_rows(rows: list) -> list:
+    """Carimbos ISO ('2026-06-27T16:30:00+00:00') viram '2026-06-27 16:30:00' nas grades
+    (o banco está em UTC; a grade diz isso no cabeçalho)."""
+    out = []
+    for r in rows:
+        nr = []
+        for v in r:
+            if isinstance(v, str):
+                m = _ISO_TS.match(v)
+                if m:
+                    v = f"{m.group(1)} {m.group(2)}" + ((m.group(3) or "")[:4] if m.group(3) and m.group(3) not in (".000", ".000000") else "")
+            nr.append(v)
+        out.append(nr)
+    return out
+
+
 def _api_or_flash(cfg, fn, *a, **kw):
     try:
         return fn(cfg, *a, **kw)
@@ -750,6 +774,7 @@ def banco_query():
     if sql and ctx["api_ok"]:
         try:
             result = api_client.post(cfg, "/admin/db/query", {"sql": sql, "max_rows": 200}, timeout=40)
+            result["rows"] = _pretty_rows(result.get("rows") or [])
         except api_client.ApiError as exc:
             result = {"error": str(exc)}
     return render_template("banco.html", cfg=cfg, overview=None, coverage=None,
@@ -817,6 +842,8 @@ def banco_table(schema, table):
     data = None
     if structure and tab == "dados":
         data = _api_or_flash(cfg, api_client.get, "/admin/db/rows", params, timeout=60)
+        if data:
+            data["rows"] = _pretty_rows(data.get("rows") or [])
     return render_template("banco_table.html", cfg=cfg, schema=schema, table=table, tab=tab,
                            structure=structure, data=data, params=params, current=schema, **ctx)
 
@@ -858,3 +885,228 @@ def banco_drop_table(schema, table):
     except api_client.ApiError as exc:
         flash(str(exc), "error")
         return redirect(url_for("pages.banco_table", schema=schema, table=table, aba="estrutura"))
+
+
+# --- Banco: conexão, diagnóstico/manutenção, exportação; Guia para pesquisadores -------
+@pages.get("/banco/conexao")
+@admin_required
+def banco_conexao():
+    cfg = _load()
+    ctx = _banco_base(cfg)
+    server = _api_or_flash(cfg, api_client.get, "/admin/db/connection", timeout=20) if ctx["api_ok"] else None
+    dock_ok, dock_msg = dbconn.docker_ok()
+    _ok, svc = dbconn.services_status() if dock_ok else (False, "")
+    return render_template("banco_conexao.html", cfg=cfg, conn=dbconn.current(), server=server,
+                           docker_ok=dock_ok, docker_msg=dock_msg, services=svc, current="conexao", **ctx)
+
+
+@pages.post("/banco/conexao")
+@admin_required
+def banco_conexao_save():
+    mode = request.form.get("mode") or "local"
+    host = (request.form.get("host") or "").strip()
+    port = (request.form.get("port") or "5432").strip()
+    name = (request.form.get("name") or "carbonara").strip()
+    user = (request.form.get("user") or "carbonara").strip()
+    password = (request.form.get("password") or "").strip()
+    acao = request.form.get("acao") or "salvar"
+    if mode == "local":
+        host, port = "db", "5432"
+    if not host or not port.isdigit() or not re.match(r"^[a-z_][a-z0-9_]*$", name) or not re.match(r"^[a-z_][a-z0-9_]*$", user):
+        flash("Confira host, porta (número), banco e usuário (minúsculas, números e '_').", "error")
+        return redirect(url_for("pages.banco_conexao"))
+    if acao == "testar":
+        ok, out = dbconn.test_connection(host, port, name, user, password or None)
+        flash(("Conexão OK — " if ok else "Falha na conexão — ") + out[-600:], "ok" if ok else "error")
+        return redirect(url_for("pages.banco_conexao"))
+    updates = {"COMPOSE_PROFILES": "local-db" if mode == "local" else "", "DB_HOST": host,
+               "DB_INTERNAL_PORT": port, "DB_NAME": name, "DB_USER": user}
+    if password:
+        updates["DB_PASSWORD"] = password
+    try:
+        dbconn.write_env(updates)
+    except OSError as exc:
+        flash(f"Não consegui gravar o .env: {exc}", "error")
+        return redirect(url_for("pages.banco_conexao"))
+    flash(f"Conexão gravada em {dbconn.env_path()} (modo {mode}, {host}:{port}/{name}). "
+          "Clique em 'Aplicar aos serviços' para a API e a ingestão passarem a usar.", "ok")
+    return redirect(url_for("pages.banco_conexao"))
+
+
+@pages.post("/banco/conexao/aplicar")
+@admin_required
+def banco_conexao_apply():
+    acao = request.form.get("acao") or "aplicar"
+    if acao == "parar-db-local":
+        ok, out = dbconn.stop_local_db()
+        flash(("Banco local parado.\n" if ok else "Falha ao parar o banco local.\n") + out, "ok" if ok else "error")
+    else:
+        ok, out = dbconn.apply(dbconn.current()["mode"])
+        flash(("Serviços atualizados.\n" if ok else "Falha ao aplicar.\n") + out, "ok" if ok else "error")
+    return redirect(url_for("pages.banco_conexao"))
+
+
+_MAINT_ACTIONS = {
+    "analyze": ("Atualizar estatísticas (ANALYZE)", "rápido; melhora os planos de consulta"),
+    "vacuum": ("VACUUM ANALYZE", "recupera espaço de linhas apagadas; pode levar minutos"),
+    "compress": ("Comprimir chunks antigos", "aplica agora a compressão dos dados com mais de 30 dias"),
+    "refresh_aggregates": ("Recalcular agregados (30 dias)", "refaz as médias horárias/diárias do período"),
+    "purge_implausible_times": ("Remover carimbos implausíveis", "APAGA linhas antes de 1990 ou no futuro"),
+    "purge_orphans": ("Remover séries órfãs", "APAGA séries sem registro ativo na dashboard"),
+}
+
+
+@pages.get("/banco/diagnostico")
+@admin_required
+def banco_diagnostico():
+    cfg = _load()
+    ctx = _banco_base(cfg)
+    diag = _api_or_flash(cfg, api_client.get, "/admin/db/diagnostics", timeout=120) if ctx["api_ok"] else None
+    return render_template("banco_diagnostico.html", cfg=cfg, diag=diag, actions=_MAINT_ACTIONS,
+                           current="diagnostico", **ctx)
+
+
+@pages.post("/banco/manutencao")
+@admin_required
+def banco_manutencao():
+    cfg = _load()
+    action = request.form.get("action") or ""
+    if action not in _MAINT_ACTIONS:
+        flash("Ação desconhecida.", "error")
+        return redirect(url_for("pages.banco_diagnostico"))
+    if action.startswith("purge") and request.form.get("confirm") != "APAGAR":
+        flash("Para ações que apagam dados, digite APAGAR no campo de confirmação.", "error")
+        return redirect(url_for("pages.banco_diagnostico"))
+    try:
+        days = int(request.form.get("days") or 30)
+    except ValueError:
+        days = 30
+    res = _api_or_flash(cfg, api_client.post, "/admin/db/maintenance", {"action": action, "days": days}, timeout=900)
+    if res:
+        flash(f"{_MAINT_ACTIONS[action][0]}: {res.get('detail')} ({res.get('elapsed_ms')} ms).", "ok")
+    return redirect(url_for("pages.banco_diagnostico"))
+
+
+@pages.get("/banco/<schema>/<table>/exportar")
+@admin_required
+def banco_export(schema, table):
+    """CSV da tabela/view. View gerada (arquivo de uma estação): usa /series da API no
+    período pedido (formato longo: time, station, variable, value, quality). Demais:
+    até 500 linhas da grade."""
+    cfg = _load()
+    structure = _api_or_flash(cfg, api_client.get, "/admin/db/columns", {"schema": schema, "table": table}, timeout=30)
+    if not structure:
+        return redirect(url_for("pages.banco_table", schema=schema, table=table))
+    start = request.args.get("start") or "now-30d"
+    end = request.args.get("end") or "now"
+    try:
+        if structure.get("generated"):
+            vids = [c["name"] for c in structure["columns"] if c["name"] not in ("time", "flags")]
+            data = api_client.get_bytes(cfg, "/series", {"station": schema, "vars": ",".join(vids), "agg": "raw",
+                                                          "qc": "all", "start": start, "end": end, "format": "csv",
+                                                          "limit": 200000})
+        else:
+            rows = api_client.get(cfg, "/admin/db/rows", {"schema": schema, "table": table, "limit": 500}, timeout=60)
+            if not rows["columns"]:                       # tabela vazia: cabeçalho pela estrutura
+                rows["columns"] = [c["name"] for c in structure["columns"]]
+            cols = [c for c in rows["columns"] if c != "_ctid"]
+            skip = 1 if "_ctid" in rows["columns"] else 0
+            buf = io.StringIO()
+            w = csv.writer(buf)
+            w.writerow(cols)
+            for r in rows["rows"]:
+                w.writerow(r[skip:])
+            data = buf.getvalue().encode("utf-8")
+    except api_client.ApiError as exc:
+        flash(f"Exportação falhou: {exc}", "error")
+        return redirect(url_for("pages.banco_table", schema=schema, table=table))
+    resp = Response(data, mimetype="text/csv")
+    resp.headers["Content-Disposition"] = f'attachment; filename="{schema}_{table}.csv"'
+    return resp
+
+
+@pages.get("/guia")
+def guia():
+    """Guia para pesquisadores: como acessar os dados (API, chaves, flags, exemplos)."""
+    cfg = _load()
+    stations = []
+    if api_client.configured(cfg):
+        try:
+            stations = api_client.get(cfg, "/stations", timeout=10) or []
+        except api_client.ApiError:
+            stations = []
+    return render_template("guia.html", cfg=cfg, stations=stations, api_url=api_client.public_url(cfg) or "http://<servidor>:8000")
+
+
+# --- Banco: zona de perigo (sempre com texto de confirmação, validado também na API) -------
+def _danger(cfg, path, body, ok_msg, back):
+    try:
+        res = api_client.post(cfg, path, body, timeout=600)
+        flash(ok_msg.format(**res), "ok")
+    except api_client.ApiError as exc:
+        flash(str(exc), "error")
+    return redirect(back)
+
+
+@pages.post("/banco/<schema>/<table>/zerar")
+@admin_required
+def banco_station_clear(schema, table):
+    cfg = _load()
+    back = url_for("pages.banco_table", schema=schema, table=table, aba="perigo")
+    return _danger(cfg, "/admin/db/station/clear",
+                   {"station": schema, "file_key": table, "confirm": request.form.get("confirm", "")},
+                   "Tabela zerada: {deleted} valor(es) removido(s); a ingestão relê o arquivo do início.", back)
+
+
+@pages.post("/banco/<schema>/<table>/apagar-variavel")
+@admin_required
+def banco_station_drop_variable(schema, table):
+    cfg = _load()
+    back = url_for("pages.banco_table", schema=schema, table=table, aba="perigo")
+    vid = (request.form.get("variable_id") or "").strip()
+    return _danger(cfg, "/admin/db/station/drop-variable",
+                   {"station": schema, "variable_id": vid, "confirm": request.form.get("confirm", "")},
+                   "Variável '" + vid + "' apagada: {deleted} valor(es). {note}.", back)
+
+
+@pages.post("/banco/<schema>/<table>/apagar-tabela")
+@admin_required
+def banco_station_drop_table(schema, table):
+    cfg = _load()
+    try:
+        res = api_client.post(cfg, "/admin/db/station/drop-table",
+                              {"station": schema, "file_key": table, "confirm": request.form.get("confirm", "")}, timeout=600)
+    except api_client.ApiError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("pages.banco_table", schema=schema, table=table, aba="perigo"))
+    # Desliga a ingestão no REGISTRO da dashboard também — senão o próximo ciclo recria a view.
+    station = config_store.get_station(cfg, schema)
+    if station:
+        for f in station.get("files") or []:
+            if f.get("id") == table:
+                f["ingest"] = False
+        _save(cfg)
+    flash(f"Tabela {schema}.{table} apagada: {res.get('deleted')} valor(es) removido(s), view removida e ingestão "
+          "do arquivo desligada (o arquivo em disco e o monitoramento dos gráficos continuam).", "ok")
+    return redirect(url_for("pages.banco_schema", schema=schema))
+
+
+@pages.post("/banco/<schema>/<table>/truncar")
+@admin_required
+def banco_truncate(schema, table):
+    cfg = _load()
+    back = url_for("pages.banco_table", schema=schema, table=table, aba="perigo")
+    return _danger(cfg, "/admin/db/tables/truncate",
+                   {"schema": schema, "table": table, "confirm": request.form.get("confirm", "")},
+                   "Tabela {truncated} esvaziada.", back)
+
+
+@pages.post("/banco/<schema>/<table>/apagar-coluna")
+@admin_required
+def banco_drop_column(schema, table):
+    cfg = _load()
+    back = url_for("pages.banco_table", schema=schema, table=table, aba="perigo")
+    return _danger(cfg, "/admin/db/tables/drop-column",
+                   {"schema": schema, "table": table, "column": (request.form.get("column") or "").strip(),
+                    "confirm": request.form.get("confirm", "")},
+                   "Coluna {dropped_column} apagada.", back)

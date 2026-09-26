@@ -209,6 +209,9 @@ else
     echo "$ENV_FILE já existe — mantido; completando chaves que faltem:"
 fi
 ensure_key CARBONARA_ROOT "$BASE"
+ensure_key COMPOSE_PROFILES local-db
+ensure_key DB_HOST db
+ensure_key DB_INTERNAL_PORT 5432
 ensure_key PG_DATA_DIR "$PGDATA_HOST"
 ensure_key DB_USER carbonara
 ensure_key DB_PASSWORD "$(gen_secret)"

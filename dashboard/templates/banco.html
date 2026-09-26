@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Banco · CARBONARA{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
 <h1>Banco de dados</h1>
 {% if not api_ok %}
@@ -26,30 +27,30 @@
   <section class="card">
     <div class="page-head"><h2>Visão geral</h2>
       <span class="meta">{{ d.postgres }} · TimescaleDB {{ d.timescaledb }}{% if d.postgis %} · PostGIS {{ d.postgis }}{% endif %}</span></div>
-    <dl>
+    <dl class="kv">
       <dt>Tamanho total</dt><dd><strong>{{ d.size }}</strong></dd>
       <dt>Conexões</dt><dd>{{ d.connections }}</dd>
       <dt>Relógio do banco</dt><dd>{{ d.now[:19] | replace('T', ' ') }} UTC</dd>
       <dt>Replicação</dt><dd>{{ d.wal_level }}{% if d.replication_slots %} — {% for s in d.replication_slots %}{{ s.slot_name }} ({{ 'ativo' if s.active else 'inativo' }}) {% endfor %}{% else %} (pronto; nenhum espelho conectado){% endif %}</dd>
     </dl>
-    <table class="table">
+    <div class="table-wrap"><table class="table">
       <thead><tr><th>Hypertable</th><th>Chunks</th><th>Comprimidos</th><th>De</th><th>Até</th><th>Tamanho</th></tr></thead>
       <tbody>{% for h in overview.hypertables %}
         <tr><td><code>{{ h.hypertable_name }}</code></td><td>{{ h.num_chunks }}</td><td>{{ h.compressed_chunks }}</td>
           <td>{{ (h.first_chunk or '—')[:10] }}</td><td>{{ (h.last_chunk or '—')[:10] }}</td><td>{{ h.size }}</td></tr>
       {% endfor %}</tbody>
-    </table>
+    </table></div>
     <details class="adv"><summary>Tarefas automáticas e execuções da ingestão</summary>
-      <table class="table"><thead><tr><th>Tarefa</th><th>Alvo</th><th>A cada</th><th>Última</th><th>Estado</th><th>Falhas</th></tr></thead>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Tarefa</th><th>Alvo</th><th>A cada</th><th>Última</th><th>Estado</th><th>Falhas</th></tr></thead>
       <tbody>{% for j in overview.jobs %}
         <tr><td><code>{{ j.proc_name }}</code></td><td>{{ j.hypertable_name or '' }}</td><td>{{ j.every }}</td>
           <td>{{ (j.last_run_started_at or '—')[:16] | replace('T', ' ') }}</td><td>{{ j.last_run_status or '—' }}</td><td>{{ j.total_failures or 0 }}/{{ j.total_runs or 0 }}</td></tr>
-      {% endfor %}</tbody></table>
-      <table class="table"><thead><tr><th>#</th><th>Pipeline</th><th>Início</th><th>Fim</th><th>Estado</th><th>Detalhes</th></tr></thead>
+      {% endfor %}</tbody></table></div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Pipeline</th><th>Início</th><th>Fim</th><th>Estado</th><th>Detalhes</th></tr></thead>
       <tbody>{% for r in overview.runs %}
         <tr><td>{{ r.run_id }}</td><td>{{ r.pipeline }} {{ r.version }}</td><td>{{ (r.started or '')[:16] | replace('T', ' ') }}</td>
           <td>{{ (r.finished or '—')[:16] | replace('T', ' ') }}</td><td>{{ r.status }}</td><td><small class="meta">{{ r.stats }}</small></td></tr>
-      {% endfor %}</tbody></table>
+      {% endfor %}</tbody></table></div>
     </details>
   </section>
   {% endif %}
@@ -58,7 +59,7 @@
   <section class="card">
     <div class="page-head"><h2>Período de dados por estação</h2></div>
     {% if coverage.stations %}
-    <table class="table">
+    <div class="table-wrap"><table class="table">
       <thead><tr><th>Estação</th><th>Variáveis</th><th>De</th><th>Até</th><th>Valores OK</th><th>Com flag</th><th></th></tr></thead>
       <tbody>{% for s in coverage.stations %}
         <tr><td><strong>{{ s.station_id }}</strong></td><td>{{ s.variables }}</td>
@@ -66,7 +67,7 @@
           <td>{{ '{:,}'.format(s.n_good).replace(',', '.') }}</td><td>{{ '{:,}'.format(s.n_flagged).replace(',', '.') }}</td>
           <td><a class="btn" href="{{ url_for('pages.banco_schema', schema=s.station_id) }}">Abrir banco</a></td></tr>
       {% endfor %}</tbody>
-    </table>
+    </table></div>
     <details class="adv"><summary>Por variável ({{ coverage.variables | length }})</summary>
       <div class="db-grid"><table class="table"><thead><tr><th>Estação</th><th>Variável</th><th>De</th><th>Até</th><th>Dias</th><th>OK</th><th>Flag</th></tr></thead>
       <tbody>{% for v in coverage.variables %}

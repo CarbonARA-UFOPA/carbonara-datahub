@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ schema }}.{{ table }} · CARBONARA{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
 <h1><a href="{{ url_for('pages.banco_schema', schema=schema) }}"><code>{{ schema }}</code></a> . <code>{{ table }}</code>
   <small>{% if structure %}{% if structure.generated %}view gerada pela ingestão{% elif structure.kind == 'view' %}view{% elif structure.kind == 'matview' %}view materializada{% else %}tabela{% endif %}
@@ -14,6 +15,15 @@
     <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='inserir') }}" class="{{ 'active' if tab == 'inserir' }}">Inserir</a>
     {% endif %}
     <a href="{{ url_for('pages.banco') }}#sql-box">SQL</a>
+    {% if structure and (structure.generated or structure.editable) %}
+    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='perigo') }}" class="{{ 'active' if tab == 'perigo' }} tab-danger">Zona de perigo</a>
+    {% endif %}
+    {% if structure %}
+    <form method="get" action="{{ url_for('pages.banco_export', schema=schema, table=table) }}" class="tabs-export">
+      {% if structure.generated %}<input name="start" value="now-30d" class="num-input" title="início (ISO ou now-30d)"><input name="end" value="now" class="num-short" title="fim">{% endif %}
+      <button class="btn" type="submit" title="{{ 'CSV longo (time, variável, valor, flag) do período, via API' if structure.generated else 'até 500 linhas em CSV' }}">⬇ CSV</button>
+    </form>
+    {% endif %}
   </nav>
 
   {% if not structure %}
@@ -29,7 +39,7 @@
         <input type="hidden" name="sort" value="{{ params.sort or '' }}"><input type="hidden" name="dir" value="{{ params.dir }}">
         <button class="btn" type="submit">Filtrar</button>
         {% endif %}
-        {% if data %}<span class="meta">{{ data.row_count }} linha(s) a partir de {{ params.offset }}{{ ' (há mais)' if data.truncated }} · {{ data.elapsed_ms }} ms · ordenado por <code>{{ data.sort }}</code> {{ data.dir }}</span>{% endif %}
+        {% if data %}<span class="meta">{{ data.row_count }} linha(s) a partir de {{ params.offset }}{{ ' (há mais)' if data.truncated }} · {{ data.elapsed_ms }} ms · ordenado por <code>{{ data.sort }}</code> {{ data.dir }} · carimbos em UTC</span>{% endif %}
       </form>
       {% if data and data.rows %}
       {% set cols = data.columns | reject('equalto', '_ctid') | list %}
@@ -66,13 +76,66 @@
       {% if structure.comment %}<p class="meta">{{ structure.comment }}</p>{% endif %}
       {% if structure.definition %}<details class="adv"><summary>Definição da view (SQL)</summary><pre style="white-space:pre-wrap;font-size:.8rem">{{ structure.definition }}</pre></details>{% endif %}
     </section>
-    {% if structure.editable %}
-    <form method="post" class="card form" action="{{ url_for('pages.banco_drop_table', schema=schema, table=table) }}"
-          onsubmit="return confirm('Excluir a tabela {{ table }} e TODOS os seus dados?');">
-      <h2 class="warn">Excluir tabela</h2>
-      <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off"></label>
-      <div class="form-actions"><button class="btn btn-danger" type="submit">Excluir tabela</button></div>
-    </form>
+
+  {% elif tab == 'perigo' %}
+    <section class="card help-card" style="border-color:#e0a9a9;background:#fff6f6">
+      <strong>Zona de perigo.</strong> As ações abaixo apagam dados de forma irreversível. Cada uma exige digitar
+      exatamente o texto indicado; a API confere de novo antes de executar e registra quem fez em <code>pipeline_runs</code>.
+      Os arquivos em <code>incoming/</code> nunca são tocados — o histórico pode ser reingerido a partir deles.
+    </section>
+    {% if structure.generated %}
+      {% set vars = structure.columns | map(attribute='name') | reject('in', ['time', 'flags']) | list %}
+      <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_station_clear', schema=schema, table=table) }}"
+            onsubmit="return confirm('Zerar TODOS os dados desta tabela ({{ vars | length }} variáveis) e reingerir do zero?');">
+        <h2>Zerar os dados da tabela</h2>
+        <p class="meta">Remove todas as medições das {{ vars | length }} variáveis deste arquivo para a estação <code>{{ schema }}</code>
+          e zera o ledger — no próximo ciclo a ingestão relê o arquivo do início, com as regras atuais da aba Tratamento.
+          É o jeito de reaplicar fuso, IDs ou regras de qualidade ao histórico.</p>
+        <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off" placeholder="{{ table }}"></label>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">Zerar e reingerir</button></div>
+      </form>
+      <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_station_drop_variable', schema=schema, table=table) }}"
+            onsubmit="return confirm('Apagar TODOS os dados da variável escolhida nesta estação?');">
+        <h2>Apagar uma variável</h2>
+        <p class="meta">Remove todas as medições de uma variável da estação <code>{{ schema }}</code>. Se ela continuar marcada
+          para o banco em Tratamento, os dados novos voltam a entrar (sem o histórico). Para tirá-la de vez, desmarque-a lá.</p>
+        <div class="form-row">
+          <label>Variável <select name="variable_id" id="dv-select">{% for v in vars %}<option value="{{ v }}">{{ v }}</option>{% endfor %}</select></label>
+          <label>Digite o ID da variável para confirmar <input name="confirm" required autocomplete="off" placeholder="{{ vars[0] if vars }}"></label>
+        </div>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">Apagar variável</button></div>
+      </form>
+      <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_station_drop_table', schema=schema, table=table) }}"
+            onsubmit="return confirm('Apagar a tabela {{ schema }}.{{ table }}: todos os dados, a view e desligar a ingestão deste arquivo?');">
+        <h2>Apagar a tabela inteira</h2>
+        <p class="meta">Remove todas as medições das variáveis deste arquivo, a view <code>{{ schema }}.{{ table }}</code> e o ledger,
+          e <strong>desliga a ingestão</strong> do arquivo na dashboard (o registro e os gráficos por arquivo continuam; para voltar,
+          marque "Ingerir no banco" em Tratamento e tudo é reingerido do zero).</p>
+        <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off" placeholder="{{ table }}"></label>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">Apagar tabela</button></div>
+      </form>
+    {% elif structure.editable %}
+      <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_truncate', schema=schema, table=table) }}"
+            onsubmit="return confirm('Esvaziar a tabela {{ table }} (todas as linhas)?');">
+        <h2>Esvaziar a tabela</h2>
+        <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off"></label>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">Esvaziar</button></div>
+      </form>
+      <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_drop_column', schema=schema, table=table) }}"
+            onsubmit="return confirm('Apagar a coluna escolhida e todos os seus valores?');">
+        <h2>Apagar uma coluna</h2>
+        <div class="form-row">
+          <label>Coluna <select name="column">{% for c in structure.columns %}<option value="{{ c.name }}">{{ c.name }} ({{ c.type }})</option>{% endfor %}</select></label>
+          <label>Digite o nome da coluna para confirmar <input name="confirm" required autocomplete="off"></label>
+        </div>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">Apagar coluna</button></div>
+      </form>
+      <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_drop_table', schema=schema, table=table) }}"
+            onsubmit="return confirm('Excluir a tabela {{ table }} e TODOS os seus dados?');">
+        <h2>Excluir a tabela</h2>
+        <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off"></label>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">Excluir tabela</button></div>
+      </form>
     {% endif %}
 
   {% elif tab == 'inserir' and structure.editable %}

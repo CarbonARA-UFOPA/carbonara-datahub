@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Conexão do banco · CARBONARA{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<h1>Banco de dados — conexão</h1>
+<div class="db-layout">
+{% include "_banco_side.html" %}
+<div>
+  <section class="card help-card">
+    Quem fala com o PostgreSQL são os serviços <code>api</code> e <code>ingestion</code>, configurados
+    pelo arquivo <code>{{ conn.env_path }}</code>. Aqui você vê <strong>onde o banco está</strong> e pode
+    <strong>apontar para outro lugar</strong> — o caso de uma migração para outro servidor: sobe-se o
+    PostgreSQL lá (mesma versão, com TimescaleDB e PostGIS), copia-se o banco (replicação ou
+    <code>pg_dump</code>), testa-se a conexão aqui, grava-se e aplica-se aos serviços. Os dados das
+    estações continuam chegando em <code>incoming/</code> neste servidor; só o banco muda de casa.
+  </section>
+
+  <div class="grid-2">
+    <section class="card">
+      <h2>Como está agora</h2>
+      <dl class="kv">
+        <dt>Modo</dt><dd>{% if conn.mode == 'local' %}<span class="badge on">local</span> — serviço <code>db</code> deste servidor{% else %}<span class="badge">externo</span> — outro servidor{% endif %}</dd>
+        <dt>Endereço usado pelos serviços</dt><dd><code>{{ conn.host }}:{{ conn.port }}/{{ conn.name }}</code> como <code>{{ conn.user }}</code></dd>
+        <dt>Senha</dt><dd>{{ 'configurada' if conn.has_password else '— não definida —' }}</dd>
+        {% if conn.mode == 'local' %}
+        <dt>Diretório dos dados</dt><dd><code>{{ conn.pg_data_dir or '—' }}</code></dd>
+        <dt>Porta no servidor</dt><dd><code>{{ conn.bind }}:{{ conn.host_port }}</code> <small class="meta">(só local; um espelho externo exige abrir para o IP dele)</small></dd>
+        {% endif %}
+      </dl>
+      {% if server %}
+      <h3 class="h3-sub">O que o PostgreSQL diz de si</h3>
+      <dl class="kv">
+        <dt>Versão</dt><dd>{{ server.server.version }}</dd>
+        <dt>Endereço do servidor</dt><dd><code>{{ server.server.server_addr or 'socket local' }}:{{ server.server.server_port }}</code> · escuta em <code>{{ server.server.listen_addresses }}</code></dd>
+        <dt>Diretório</dt><dd><code>{{ server.server.data_directory }}</code></dd>
+        <dt>Banco / tamanho</dt><dd>{{ server.server.database }} · {{ server.server.size }}</dd>
+        <dt>No ar desde</dt><dd>{{ (server.server.started or '')[:16] | replace('T', ' ') }} UTC</dd>
+        <dt>Conexões</dt><dd>{{ server.server.connections }} de {{ server.server.max_connections }} · shared_buffers {{ server.server.shared_buffers }}</dd>
+        <dt>Replicação</dt><dd>wal_level {{ server.server.wal_level }}{% if server.server.in_recovery %} · <strong>este banco é uma RÉPLICA</strong>{% endif %}
+          {% if server.replication %}{% for r in server.replication %}<br>espelho {{ r.client_addr }} · {{ r.state }} · {{ r.sync_state }}{% if r.replay_lag %} · atraso {{ r.replay_lag }}{% endif %}{% endfor %}
+          {% else %}<br><small class="meta">nenhum espelho conectado</small>{% endif %}
+          {% for s in server.slots %}<br><small class="meta">slot {{ s.slot_name }}: {{ 'ativo' if s.active else 'inativo' }}, {{ s.wal_status }}, WAL retido {{ s.retained }}</small>{% endfor %}</dd>
+      </dl>
+      {% else %}<p class="warn">A API não respondeu — o banco pode estar fora do ar ou os serviços ainda não foram aplicados.</p>{% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Serviços</h2>
+      {% if docker_ok %}
+        <pre class="mono">{{ services or 'nenhum serviço listado' }}</pre>
+        <form method="post" action="{{ url_for('pages.banco_conexao_apply') }}" class="form-actions">
+          <button class="btn btn-primary" name="acao" value="aplicar" type="submit"
+                  onclick="return confirm('Recriar api e ingestion (e o db local, no modo local) com a configuração atual do .env? A API fica indisponível por alguns segundos.');">Aplicar aos serviços</button>
+          {% if conn.mode == 'externo' %}
+          <button class="btn btn-danger" name="acao" value="parar-db-local" type="submit"
+                  onclick="return confirm('Parar o container do banco LOCAL? Os dados ficam no disco; só o serviço para.');">Parar banco local</button>
+          {% endif %}
+        </form>
+        <p class="meta">"Aplicar" roda <code>docker compose up -d</code> na raiz do repositório com o usuário
+          da dashboard. Sem alterações no .env, não recria nada.</p>
+      {% else %}
+        <p class="warn">{{ docker_msg }}</p>
+        <p class="meta">Aplique manualmente no servidor: <code>cd {{ conn.env_path | replace('/.env', '') }} && docker compose up -d</code></p>
+      {% endif %}
+    </section>
+  </div>
+
+  <form method="post" class="card form" action="{{ url_for('pages.banco_conexao_save') }}" id="conn-form">
+    <h2>Apontar o banco</h2>
+    <div class="grid-2">
+      <label class="check-row mode-box"><input type="radio" name="mode" value="local" {{ 'checked' if conn.mode == 'local' }}>
+        <span><strong>Local</strong> — o PostgreSQL deste compose (<code>db</code>), dados em <code>{{ conn.pg_data_dir or 'PG_DATA_DIR' }}</code>.</span></label>
+      <label class="check-row mode-box"><input type="radio" name="mode" value="externo" {{ 'checked' if conn.mode == 'externo' }}>
+        <span><strong>Externo</strong> — um PostgreSQL em outro servidor (migração/espelho promovido). O <code>db</code> local deixa de subir.</span></label>
+    </div>
+    <div class="grid-3" id="ext-fields">
+      <label>Host ou IP <input name="host" value="{{ conn.host if conn.mode == 'externo' else '' }}" placeholder="ex.: 10.1.90.50"></label>
+      <label>Porta <input name="port" value="{{ conn.port }}" class="num-short"></label>
+      <label>Banco <input name="name" value="{{ conn.name }}"></label>
+      <label>Usuário <input name="user" value="{{ conn.user }}"></label>
+      <label>Senha <input name="password" type="password" autocomplete="new-password" placeholder="{{ 'vazio = manter a atual' if conn.has_password else 'obrigatória' }}"></label>
+    </div>
+    <div class="form-actions">
+      <button class="btn" name="acao" value="testar" type="submit">Testar conexão</button>
+      <button class="btn btn-primary" name="acao" value="salvar" type="submit"
+              onclick="return confirm('Gravar esta conexão no .env? Só passa a valer depois de Aplicar aos serviços.');">Gravar no .env</button>
+    </div>
+    <p class="meta">O teste roda de dentro da imagem da API (tem o driver), com os valores do formulário, sem gravar nada.
+      Requisitos do destino: PostgreSQL 16 com <code>timescaledb</code> e <code>postgis</code> instalados e o schema do CARBONARA
+      (restaure com <code>pg_dump</code>/<code>pg_restore</code> ou promova um espelho); libere a porta para o IP deste servidor.</p>
+  </form>
+
+  <section class="card">
+    <h2>Roteiro de migração do banco</h2>
+    <ol class="help-list">
+      <li>No servidor novo: PostgreSQL 16 + TimescaleDB + PostGIS (a mesma imagem <code>timescaledb-ha</code> serve). Libere a porta para este servidor.</li>
+      <li>Copie os dados: <code>pg_dump -Fc carbonara | pg_restore -d carbonara</code> no destino, ou use um espelho (streaming replication com o papel <code>replicator</code>) e promova-o.</li>
+      <li>Aqui: marque <em>Externo</em>, preencha host/porta/usuário/senha, <em>Testar conexão</em>, <em>Gravar no .env</em>, <em>Aplicar aos serviços</em>.</li>
+      <li>Confira em <a href="{{ url_for('pages.banco') }}">Visão geral</a> que os números batem e, só então, <em>Parar banco local</em>.</li>
+    </ol>
+  </section>
+</div>
+</div>
+<script>
+  (function () {
+    var f = document.getElementById("conn-form"), ext = document.getElementById("ext-fields");
+    function upd() { var m = f.querySelector('input[name="mode"]:checked'); ext.style.opacity = (m && m.value === "externo") ? 1 : .55;
+      f.host.disabled = !(m && m.value === "externo"); f.port.disabled = f.host.disabled; }
+    f.querySelectorAll('input[name="mode"]').forEach(function (r) { r.addEventListener("change", upd); }); upd();
+  })();
+</script>
+{% endblock %}

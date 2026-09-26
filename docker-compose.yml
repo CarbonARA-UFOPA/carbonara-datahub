@@ -10,6 +10,10 @@
 #      docker compose up -d --build
 #      ./database/migrate.sh              (schema num banco já existente)
 #
+# ONDE ESTÁ O BANCO (.env, editável em Banco → Conexão na dashboard):
+#   DB_HOST=db + COMPOSE_PROFILES=local-db  → banco local, neste compose (padrão)
+#   DB_HOST=<ip> + DB_INTERNAL_PORT=<porta> + COMPOSE_PROFILES=   → banco em outro servidor
+#
 # CARBONARA_ROOT (caminho ABSOLUTO — em produção a raiz do rsync-hub, onde chega
 # incoming/; em dev, o ./data do repositório por extenso) é montada no MESMO caminho dentro dos containers — os caminhos absolutos do
 # config.yaml da dashboard (heartbeat_file, files[].path) valem sem tradução.
@@ -28,6 +32,10 @@ services:
   # Memória dimensionada para o host de 7,6 GB (docs/estrategia-dados.md, 2.6).
   # ---------------------------------------------------------------------------
   db:
+    # Perfil `local-db` (ligado por COMPOSE_PROFILES=local-db no .env): quando o banco for
+    # migrado para outro servidor, basta esvaziar COMPOSE_PROFILES e apontar DB_HOST —
+    # ingestão e API continuam iguais (elas esperam o banco ficar acessível).
+    profiles: ["local-db"]
     image: timescale/timescaledb-ha:pg16.15-ts2.30.1
     container_name: carbonara-db
     restart: unless-stopped
@@ -98,12 +106,9 @@ services:
       dockerfile: ingestion/Dockerfile
     container_name: carbonara-ingestion
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
-      DB_HOST: db
-      DB_PORT: 5432
+      DB_HOST: "${DB_HOST:-db}"
+      DB_PORT: "${DB_INTERNAL_PORT:-5432}"
       DB_USER: "${DB_USER}"
       DB_PASSWORD: "${DB_PASSWORD}"
       DB_NAME: "${DB_NAME:-carbonara}"
@@ -130,14 +135,11 @@ services:
       dockerfile: api/Dockerfile
     container_name: carbonara-api
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     ports:
       - "${API_BIND:-0.0.0.0}:${API_PORT:-8000}:8000"
     environment:
-      DB_HOST: db
-      DB_PORT: 5432
+      DB_HOST: "${DB_HOST:-db}"
+      DB_PORT: "${DB_INTERNAL_PORT:-5432}"
       DB_USER: "${DB_USER}"
       DB_PASSWORD: "${DB_PASSWORD}"
       DB_NAME: "${DB_NAME:-carbonara}"

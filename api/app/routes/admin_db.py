@@ -518,3 +518,129 @@ async def drop_table(body: TableDrop, _who: auth.KeyInfo = Depends(auth.require(
         raise HTTPException(400, "digite o nome da tabela exatamente para confirmar")
     await db.pool().execute(f"DROP TABLE {_q(schema)}.{_q(table)}")
     return {"dropped": f"{schema}.{table}"}
+
+
+# ---------------------------------------------------------------------------------
+# Zona de perigo — apagar dados de uma estação (sempre com texto de confirmação)
+# ---------------------------------------------------------------------------------
+class StationTable(BaseModel):
+    station: str
+    file_key: str
+    confirm: str
+
+
+class StationVariable(BaseModel):
+    station: str
+    variable_id: str
+    confirm: str
+
+
+async def _file_variables(station: str, file_key: str) -> list[str]:
+    row = await db.pool().fetchrow(
+        "SELECT variables FROM monitored_files WHERE station_id = $1 AND file_key = $2", station, file_key)
+    if not row:
+        raise HTTPException(404, f"registro {station}/{file_key} não encontrado no banco")
+    import json as _json
+    vs = row["variables"]
+    if isinstance(vs, str):
+        vs = _json.loads(vs)
+    return [v["variable_id"] for v in vs if v.get("variable_id") and (v.get("type") or "numero") != "texto"]
+
+
+def _confirm(given: str, expected: str) -> None:
+    if (given or "").strip() != expected:
+        raise HTTPException(400, f"confirmação incorreta: digite exatamente '{expected}'")
+
+
+async def _log_run(action: str, who: str, stats: dict) -> None:
+    import json as _json
+    await db.pool().execute(
+        "INSERT INTO pipeline_runs (pipeline, version, finished, status, stats) VALUES ('danger', '1', now(), 'ok', $1::jsonb)",
+        _json.dumps({"action": action, "by": who, **stats}))
+
+
+@router.post("/station/clear", summary="Zerar os dados de uma tabela (arquivo) da estação e reingerir do zero")
+async def station_clear(body: StationTable, who: auth.KeyInfo = Depends(auth.require("admin"))):
+    _q(body.station); _q(body.file_key)
+    _confirm(body.confirm, body.file_key)
+    vids = await _file_variables(body.station, body.file_key)
+    async with db.pool().acquire() as conn:
+        async with conn.transaction():
+            res = await conn.execute("DELETE FROM measurements WHERE station_id = $1 AND variable_id = ANY($2)", body.station, vids)
+            await conn.execute(
+                "UPDATE ingest_files SET bytes_ingested = 0, size_bytes = 0, head_sha256 = NULL, rows_total = 0, "
+                "values_total = 0, bad_timestamps = 0, last_time = NULL, status = 'ok', error = NULL "
+                "WHERE station_id = $1 AND file_key = $2", body.station, body.file_key)
+    n = int(res.split()[-1])
+    await _log_run("station_clear", who.owner, {"station": body.station, "file_key": body.file_key, "deleted": n})
+    return {"deleted": n, "variables": len(vids), "note": "ledger zerado: a ingestão relê o arquivo do início no próximo ciclo"}
+
+
+@router.post("/station/drop-variable", summary="Apagar todos os dados de UMA variável da estação")
+async def station_drop_variable(body: StationVariable, who: auth.KeyInfo = Depends(auth.require("admin"))):
+    _q(body.station)
+    _confirm(body.confirm, body.variable_id)
+    res = await db.pool().execute("DELETE FROM measurements WHERE station_id = $1 AND variable_id = $2",
+                                  body.station, body.variable_id)
+    n = int(res.split()[-1])
+    await _log_run("station_drop_variable", who.owner, {"station": body.station, "variable_id": body.variable_id, "deleted": n})
+    return {"deleted": n, "note": "se a variável continuar marcada para o banco na dashboard, os dados novos voltam a entrar; "
+                                  "para reingerir o histórico, zere a tabela"}
+
+
+@router.post("/station/drop-table", summary="Apagar a tabela da estação: dados, view e ledger; desliga a ingestão")
+async def station_drop_table(body: StationTable, who: auth.KeyInfo = Depends(auth.require("admin"))):
+    qs, qv = _q(body.station), _q(body.file_key)
+    _confirm(body.confirm, body.file_key)
+    vids = await _file_variables(body.station, body.file_key)
+    async with db.pool().acquire() as conn:
+        async with conn.transaction():
+            res = await conn.execute("DELETE FROM measurements WHERE station_id = $1 AND variable_id = ANY($2)", body.station, vids)
+            await conn.execute(f"DROP VIEW IF EXISTS {qs}.{qv}")
+            await conn.execute("DELETE FROM ingest_files WHERE station_id = $1 AND file_key = $2", body.station, body.file_key)
+            await conn.execute("UPDATE monitored_files SET ingest = false, updated_at = now() WHERE station_id = $1 AND file_key = $2",
+                               body.station, body.file_key)
+    n = int(res.split()[-1])
+    await _log_run("station_drop_table", who.owner, {"station": body.station, "file_key": body.file_key, "deleted": n})
+    return {"deleted": n, "dropped_view": f"{body.station}.{body.file_key}",
+            "note": "ingestão deste arquivo desligada no espelho; a dashboard também desmarca o registro"}
+
+
+class TableTruncate(BaseModel):
+    schema_name: str = Field(..., alias="schema")
+    table: str
+    confirm: str
+    model_config = {"populate_by_name": True}
+
+
+class ColumnDrop(BaseModel):
+    schema_name: str = Field(..., alias="schema")
+    table: str
+    column: str
+    confirm: str
+    model_config = {"populate_by_name": True}
+
+
+@router.post("/tables/truncate", summary="Esvaziar uma tabela de usuário")
+async def truncate_table(body: TableTruncate, who: auth.KeyInfo = Depends(auth.require("admin"))):
+    meta = await _table_kind(body.schema_name, body.table)
+    if not meta["editable"]:
+        raise HTTPException(400, "só tabelas de usuário")
+    _confirm(body.confirm, body.table)
+    await db.pool().execute(f"TRUNCATE {_q(body.schema_name)}.{_q(body.table)}")
+    await _log_run("truncate", who.owner, {"schema": body.schema_name, "table": body.table})
+    return {"truncated": f"{body.schema_name}.{body.table}"}
+
+
+@router.post("/tables/drop-column", summary="Apagar uma coluna de uma tabela de usuário")
+async def drop_column(body: ColumnDrop, who: auth.KeyInfo = Depends(auth.require("admin"))):
+    meta = await _table_kind(body.schema_name, body.table)
+    if not meta["editable"]:
+        raise HTTPException(400, "só tabelas de usuário")
+    _confirm(body.confirm, body.column)
+    try:
+        await db.pool().execute(f"ALTER TABLE {_q(body.schema_name)}.{_q(body.table)} DROP COLUMN {_q(body.column)}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+    await _log_run("drop_column", who.owner, {"schema": body.schema_name, "table": body.table, "column": body.column})
+    return {"dropped_column": body.column}

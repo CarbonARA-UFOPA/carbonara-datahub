@@ -20,6 +20,7 @@
       <a href="{{ url_for('pages.index') }}" class="nav-link{{ ' active' if request.path == '/' }}">Estações</a>
       <a href="{{ url_for('pages.compare') }}" class="nav-link{{ ' active' if request.path.startswith('/compare') }}">Comparar</a>
       <a href="{{ url_for('pages.map_view') }}" class="nav-link{{ ' active' if request.path.startswith('/map') }}">Mapa</a>
+      <a href="{{ url_for('pages.guia') }}" class="nav-link{{ ' active' if request.path.startswith('/guia') }}">Guia</a>
       {% if is_admin %}
         <a href="{{ url_for('hub.index') }}" class="nav-link{{ ' active' if request.path.startswith('/hub') }}">Coleta</a>
         <a href="{{ url_for('ftp.index') }}" class="nav-link{{ ' active' if request.path.startswith('/ftp') }}">FTP</a>

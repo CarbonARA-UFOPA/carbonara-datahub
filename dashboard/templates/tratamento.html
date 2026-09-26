@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Tratamento · CARBONARA{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
 <h1>Tratamento</h1>
 <section class="card help-card">
@@ -23,7 +24,7 @@
   {% if not station.files %}
     <p class="empty">Nenhum arquivo monitorado — cadastre em <em>Estações → Editar</em>.</p>
   {% else %}
-  <table class="table">
+  <div class="table-wrap"><table class="table">
     <thead><tr><th>Arquivo</th><th>No banco?</th><th>Variáveis</th><th>Regras</th><th>Fuso</th><th>Reamostragem</th><th>Ingerido</th><th></th></tr></thead>
     <tbody>
     {% for f in station.files %}
@@ -33,7 +34,7 @@
         <td><strong>{{ f.alias or f.id }}</strong><br><small class="meta"><code>{{ f.path }}</code></small></td>
         <td>{% if f.get('ingest') %}<span class="badge on">sim</span>{% else %}<span class="badge">não</span>{% endif %}</td>
         <td>{{ r.no_banco }} / {{ r.total }} <small class="meta">no banco</small></td>
-        <td><small>faixa {{ r.faixa }} · salto {{ r.salto }} · travado {{ r.travado }}</small></td>
+        <td class="nowrap"><small>faixa {{ r.faixa }} · salto {{ r.salto }} · travado {{ r.travado }}</small></td>
         <td>{{ f.timezone or 'UTC' }}</td>
         <td>{{ {'raw': 'cada registro', '1min': 'média 1 min', '30min': 'média 30 min'}.get(f.resample or 'raw') }}</td>
         <td><small>{% if f.get('ingest') and lg %}{{ '{:,}'.format(lg.n_values).replace(',', '.') }} valores
@@ -44,7 +45,7 @@
       </tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% endif %}
 </section>
 {% endfor %}

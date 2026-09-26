@@ -646,6 +646,45 @@ computes live station status. Viewing is open; edits require the admin login
   — the per-station "databases" are views over it, not separate PostgreSQL databases.
   asyncpg gotchas met here: `relkind` comes back as bytes (cast `::text`), `format('%I.%I',
   $1::text, $2::text)`, `ctid = $1::text::tid`.
+  Generated views are paginated BY TIME through an anchor variable (`_rows_generated_view`):
+  a plain `ORDER BY time LIMIT` would aggregate the whole station first (minutes on 6 M rows).
+  Layout rule learned the hard way: these pages use `main.wide` and every table sits in a
+  `.table-wrap` (overflow-x) — tables wider than the card pushed buttons outside the border.
+- **Banco → Conexão** (`/banco/conexao`, `app/dbconn.py`): shows where the DB is (from the
+  repo `.env` + the API's `/admin/db/connection`) and lets the admin point the services at
+  another PostgreSQL: modes `local` (`DB_HOST=db`, `COMPOSE_PROFILES=local-db`) and
+  `externo` (`DB_HOST=<ip>`, `DB_INTERNAL_PORT`, `COMPOSE_PROFILES=` empty → the `db`
+  service does not start). It edits ONLY the connection keys of `.env` (atomic, mode kept),
+  "Testar conexão" runs asyncpg inside the api image with the form values (nothing
+  written), "Aplicar aos serviços" runs `docker compose up -d api ingestion [db]` as the
+  dashboard user (docker group; no sudo) and "Parar banco local" is a separate explicit
+  action. `db` therefore lives under the `local-db` profile and api/ingestion have NO
+  `depends_on` (both wait/retry for the DB themselves: `db.connect` retries, ingestion
+  `wait_for_schema`). Keep `COMPOSE_PROFILES=local-db` in `.env` (setup writes it) or
+  `docker compose up -d` will silently skip the database.
+- **Banco → Diagnóstico e manutenção** (`/banco/diagnostico`, API `admin_maint.py`):
+  read-only checks (ledger errors, backlog, bad timestamps, registrations that never found
+  a file, same file under two registrations, same label with different IDs in a station,
+  orphan series, stale series, day gaps in 90 d from `measurements_daily`, > 20 % flagged,
+  implausible timestamps < 1990 / future, uncompressed old chunks, dead tuples, failed
+  Timescale jobs, long queries, inactive slots retaining WAL) each with level/hint and an
+  optional named action; `/admin/db/maintenance` actions: `analyze`, `vacuum`, `compress`,
+  `refresh_aggregates`, `purge_implausible_times`, `purge_orphans` (purges require typing
+  APAGAR in the UI; every run is logged in `pipeline_runs`). Never add implicit writes.
+- **Zona de perigo** (tab `aba=perigo` on a table page; API `/admin/db/station/{clear,
+  drop-variable,drop-table}` and `/admin/db/tables/{truncate,drop-column}`): for a generated
+  station table — zerar (delete the file's variables for that station AND reset its ledger
+  rows so the ingestion re-reads from byte 0 = "reapply rules to history"), apagar variável
+  (delete one variable's rows of the station), apagar tabela (delete data + DROP VIEW +
+  delete ledger + `monitored_files.ingest=false`, and the dashboard also sets `ingest:
+  false` on the registration so the next cycle does not recreate the view); for user tables
+  — TRUNCATE, DROP COLUMN, DROP TABLE. Every action needs the exact confirmation text (table
+  name / variable id) typed in the UI AND re-checked by the API, and is logged in
+  `pipeline_runs` (pipeline `danger`). `incoming/` is never touched.
+- **CSV export** on every table page (`/banco/<schema>/<table>/exportar`): generated
+  views go through `/series?format=csv` (long format, period params), other tables/views
+  dump up to 500 rows. **`/guia`** is the public researcher guide (endpoints, flags,
+  Python/R/curl examples, good practices) — keep it in sync with the API.
 - **Config-driven** (`dashboard/config.yaml`, gitignored; example versioned): the UI
   itself edits it via `ConfigStore` (atomic write: tempfile + `os.replace`, under a
   lock). Relative `data_root` resolves against the **config file's directory**, not cwd.

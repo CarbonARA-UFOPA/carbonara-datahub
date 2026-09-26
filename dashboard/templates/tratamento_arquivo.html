@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Tratamento · {{ f.alias or f.id }} · CARBONARA{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
 <div class="page-head">
   <h1>Tratamento — {{ f.alias or f.id }} <small>{{ station.name or station.id }} · <code>{{ f.path }}</code></small></h1>

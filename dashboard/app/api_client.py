@@ -36,7 +36,7 @@ def public_url(cfg: dict) -> str:
 
 
 def _request(cfg: dict, method: str, path: str, params: dict | None = None,
-             body: dict | None = None, timeout: float = DEFAULT_TIMEOUT):
+             body: dict | None = None, timeout: float = DEFAULT_TIMEOUT, raw_bytes: bool = False):
     if not configured(cfg):
         raise ApiError("API não configurada (Configurações → API de dados).")
     url = base_url(cfg) + path
@@ -54,6 +54,8 @@ def _request(cfg: dict, method: str, path: str, params: dict | None = None,
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
+            if raw_bytes:
+                return raw
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as exc:
         try:
@@ -82,3 +84,8 @@ def delete(cfg: dict, path: str, timeout: float = DEFAULT_TIMEOUT):
 def delete_json(cfg: dict, path: str, body: dict, timeout: float = DEFAULT_TIMEOUT):
     """DELETE com corpo JSON (rotas de linha/tabela da aba Banco)."""
     return _request(cfg, "DELETE", path, body=body, timeout=timeout)
+
+
+def get_bytes(cfg: dict, path: str, params: dict | None = None, timeout: float = 120.0) -> bytes:
+    """GET devolvendo o corpo cru (exportações CSV)."""
+    return _request(cfg, "GET", path, params=params, timeout=timeout, raw_bytes=True)

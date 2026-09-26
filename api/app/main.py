@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import db, settings
-from .routes import admin_db, files, health, keys, series, stations, variables
+from .routes import admin_db, admin_maint, files, health, keys, series, stations, variables
 
 
 @asynccontextmanager
@@ -43,7 +43,7 @@ app.add_middleware(
 )
 
 for r in (health.router, stations.router, variables.router, series.router,
-          files.router, keys.router, admin_db.router):
+          files.router, keys.router, admin_db.router, admin_maint.router):
     app.include_router(r)
 
 
