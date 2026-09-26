@@ -24,6 +24,9 @@
       <input name="data_type" list="data-type-list" value="{{ f.data_type or '' }}" placeholder="ex.: datalogger, fluxo, radiacao">
       <datalist id="data-type-list">{% for t in data_types %}<option value="{{ t }}">{% endfor %}</datalist>
       <small>Agrupa os arquivos da estação; no banco: <code>{{ station.id }}__{{ f.data_type or 'tipo' }}</code>.</small></label>
+    <label>Nome da tabela no banco
+      <input name="table_name" value="{{ f.table_name or '' }}" placeholder="{{ f.id }}" pattern="[A-Za-z][A-Za-z0-9_ ]{0,62}">
+      <small>Vazio = <code>{{ f.id }}</code>. Trocar o nome move a tabela (o histórico fica).</small></label>
     <label>Fuso dos carimbos do arquivo
       <input name="timezone" list="tz-list" value="{{ f.timezone or '' }}" placeholder="vazio = UTC">
       <small>Epoch já é UTC e ignora este campo.</small></label>

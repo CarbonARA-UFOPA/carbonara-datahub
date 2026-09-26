@@ -154,17 +154,17 @@ def upsert_monitored_file(cur, station_id: str, fcfg: dict, cols: list[records.C
         """
         INSERT INTO monitored_files
             (station_id, file_key, path, alias, dynamic_path, timezone, resample, ingest,
-             parser_config, variables, data_type, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+             parser_config, variables, data_type, table_name, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
         ON CONFLICT (station_id, file_key) DO UPDATE SET
             path = EXCLUDED.path, alias = EXCLUDED.alias, dynamic_path = EXCLUDED.dynamic_path,
             timezone = EXCLUDED.timezone, resample = EXCLUDED.resample, ingest = EXCLUDED.ingest,
             parser_config = EXCLUDED.parser_config, variables = EXCLUDED.variables,
-            data_type = EXCLUDED.data_type, updated_at = now()
+            data_type = EXCLUDED.data_type, table_name = EXCLUDED.table_name, updated_at = now()
         """,
         (station_id, fcfg["id"], fcfg.get("path"), fcfg.get("alias"),
          bool(fcfg.get("dynamic_path")), fcfg.get("timezone"), fcfg.get("resample") or "raw",
-         bool(fcfg.get("ingest")), Json(parser_cfg), Json(variables), data_type_of(fcfg)),
+         bool(fcfg.get("ingest")), Json(parser_cfg), Json(variables), data_type_of(fcfg), table_name_of(fcfg)),
     )
 
 
@@ -183,6 +183,16 @@ def data_type_of(fcfg: dict) -> str:
     return "dados"
 
 
+_TABLE_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+
+
+def table_name_of(fcfg: dict) -> str:
+    """Nome da tabela (view) do arquivo no banco da estação: o `table_name` do registro
+    quando válido, senão o id do registro."""
+    t = (fcfg.get("table_name") or "").strip().lower()
+    return t if t and _TABLE_RE.match(t) else fcfg["id"]
+
+
 def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.ColumnSpec]) -> None:
     """Banco por estação E tipo de dado: schema ``<estação>__<tipo>`` (ex.:
     eddyfarm__radiometro) e, nele, UMA VIEW larga por arquivo monitorado (uma coluna por
@@ -195,26 +205,32 @@ def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.Col
     if not vids:
         return
     schema = f"{station_id}__{data_type_of(fcfg)}"
-    sig = schema + "|" + "|".join(vids)
+    tname = table_name_of(fcfg)
+    sig = schema + "." + tname + "|" + "|".join(vids)
     key = (station_id, fcfg["id"])
     cur.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'v'", (schema, fcfg["id"]))
+                "WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'v'", (schema, tname))
     if _VIEW_SIG.get(key) == sig and cur.fetchone():
         return
-    # views deste arquivo em OUTROS schemas da estação (tipo antigo / formato antigo)
-    cur.execute("SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE c.relname = %s AND c.relkind = 'v' AND (n.nspname = %s OR n.nspname LIKE %s) "
-                "AND n.nspname <> %s AND obj_description(c.oid, 'pg_class') LIKE 'carbonara:%%'",
-                (fcfg["id"], station_id, station_id + "\\_\\_%", schema))
-    for (old_schema,) in cur.fetchall():
+    # views deste arquivo (pelo nome atual OU pelo id) em qualquer schema da estação que
+    # não seja o destino: tipo antigo, nome antigo ou o formato pré-0002 <estação>.<arquivo>.
+    # O comentário 'carbonara: … [<file_key>]' identifica a view mesmo após renomear.
+    cur.execute("SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE c.relkind = 'v' AND (n.nspname = %s OR n.nspname LIKE %s) "
+                "AND obj_description(c.oid, 'pg_class') LIKE 'carbonara:%%' "
+                "AND (c.relname IN (%s, %s) OR obj_description(c.oid, 'pg_class') LIKE %s) "
+                "AND NOT (n.nspname = %s AND c.relname = %s)",
+                (station_id, station_id + "\\_\\_%", fcfg["id"], tname, "%[" + fcfg["id"] + "]%", schema, tname))
+    for old_schema, old_name in cur.fetchall():
         qo = '"' + old_schema.replace('"', '""') + '"'
-        cur.execute(f'DROP VIEW IF EXISTS {qo}."{fcfg["id"]}"')
+        qn = '"' + old_name.replace('"', '""') + '"'
+        cur.execute(f"DROP VIEW IF EXISTS {qo}.{qn}")
         cur.execute("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                     "WHERE n.nspname = %s AND c.relkind IN ('r','v','m','p')", (old_schema,))
         if cur.fetchone()[0] == 0:
             cur.execute(f"DROP SCHEMA IF EXISTS {qo}")   # schema vazio some com a view
     qs = '"' + schema.replace('"', '""') + '"'
-    qv = '"' + fcfg["id"].replace('"', '""') + '"'
+    qv = '"' + tname.replace('"', '""') + '"'
     colunas = ",\n  ".join(
         'max(value) FILTER (WHERE variable_id = %s) AS "%s"' % (
             "'" + v.replace("'", "''") + "'", v.replace('"', '""')) for v in vids)
@@ -230,7 +246,8 @@ def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.Col
         f"GROUP BY time")
     alias = (fcfg.get("alias") or fcfg["id"]).replace("'", "''")
     caminho = str(fcfg.get("path", "")).replace("'", "''")
-    cur.execute(f"COMMENT ON VIEW {qs}.{qv} IS 'carbonara: view gerada da ingestão — {alias} ({caminho})'")
+    fk = fcfg["id"].replace("'", "''")
+    cur.execute(f"COMMENT ON VIEW {qs}.{qv} IS 'carbonara: view gerada da ingestão — {alias} ({caminho}) [{fk}]'")
     _VIEW_SIG[key] = sig
 
 
@@ -290,7 +307,18 @@ def build_qc(cols: list[records.ColumnSpec], global_qc: QualityPipeline) -> Qual
         checks.append(get_check("spike_check", {"flag": 3, "variables": saltos}))
     if travados:
         checks.append(get_check("persistence_check", {"flag": 4, "variables": travados}))
-    checks.extend(global_qc.checks)
+    # Checks globais (processing/config.yaml) valem só para variáveis SEM limite no
+    # registro: o id 'pressure' de uma radiossonda (5–1000 hPa) não pode ser julgado pela
+    # faixa de superfície (850–1100) do config global.
+    import copy as _copy
+    for chk in global_qc.checks:
+        vars_opt = chk.options.get("variables") if isinstance(chk.options, dict) else None
+        if isinstance(vars_opt, dict) and any(v in vars_opt for v in limites):
+            novo = _copy.copy(chk)
+            novo.options = {**chk.options, "variables": {k: v for k, v in vars_opt.items() if k not in limites}}
+            checks.append(novo)
+        else:
+            checks.append(chk)
     return QualityPipeline(checks)
 
 

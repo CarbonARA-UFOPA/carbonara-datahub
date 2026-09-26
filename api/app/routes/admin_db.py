@@ -29,7 +29,7 @@ router = APIRouter(prefix="/admin/db", tags=["banco"])
 
 QUERY_MAX_ROWS = 500
 QUERY_TIMEOUT_MS = 20000
-IDENT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
+IDENT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 SYSTEM_SCHEMAS = ("public",)
 HIDDEN_SCHEMA_PREFIXES = ("pg_", "_timescaledb", "timescaledb_", "information_schema", "topology", "tiger")
 GENERATED_COMMENT = "carbonara: view gerada da ingestão"
@@ -47,8 +47,7 @@ _FORBIDDEN = re.compile(
 def _q(ident: str) -> str:
     """Identificador validado e entre aspas (nomes de estação/arquivo podem ter '-')."""
     if not IDENT_RE.match(ident or ""):
-        raise HTTPException(400, f"nome inválido: '{ident}' (minúsculas, números, '_' ou '-', "
-                                 "começando por letra, até 63)")
+        raise HTTPException(400, f"nome inválido: '{ident}' (minúsculas, números, '_' ou '-', até 63)")
     return '"' + ident.replace('"', '""') + '"'
 
 
@@ -545,11 +544,18 @@ class StationVariable(BaseModel):
     confirm: str
 
 
-async def _file_variables(station: str, file_key: str) -> list[str]:
+async def _registration(station: str, key: str):
+    """Registro por file_key OU pelo nome da tabela no banco (table_name)."""
     row = await db.pool().fetchrow(
-        "SELECT variables FROM monitored_files WHERE station_id = $1 AND file_key = $2", station, file_key)
+        "SELECT file_key, table_name, data_type, variables FROM monitored_files "
+        "WHERE station_id = $1 AND (file_key = $2 OR table_name = $2)", station, key)
     if not row:
-        raise HTTPException(404, f"registro {station}/{file_key} não encontrado no banco")
+        raise HTTPException(404, f"registro {station}/{key} não encontrado no banco")
+    return row
+
+
+async def _file_variables(station: str, file_key: str) -> list[str]:
+    row = await _registration(station, file_key)
     import json as _json
     vs = row["variables"]
     if isinstance(vs, str):
@@ -573,6 +579,7 @@ async def _log_run(action: str, who: str, stats: dict) -> None:
 async def station_clear(body: StationTable, who: auth.KeyInfo = Depends(auth.require("admin"))):
     _q(body.station); _q(body.file_key)
     _confirm(body.confirm, body.file_key)
+    reg = await _registration(body.station, body.file_key)
     vids = await _file_variables(body.station, body.file_key)
     async with db.pool().acquire() as conn:
         async with conn.transaction():
@@ -580,7 +587,7 @@ async def station_clear(body: StationTable, who: auth.KeyInfo = Depends(auth.req
             await conn.execute(
                 "UPDATE ingest_files SET bytes_ingested = 0, size_bytes = 0, head_sha256 = NULL, rows_total = 0, "
                 "values_total = 0, bad_timestamps = 0, last_time = NULL, status = 'ok', error = NULL "
-                "WHERE station_id = $1 AND file_key = $2", body.station, body.file_key)
+                "WHERE station_id = $1 AND file_key = $2", body.station, reg["file_key"])
     n = int(res.split()[-1])
     await _log_run("station_clear", who.owner, {"station": body.station, "file_key": body.file_key, "deleted": n})
     return {"deleted": n, "variables": len(vids), "note": "ledger zerado: a ingestão relê o arquivo do início no próximo ciclo"}
@@ -600,23 +607,23 @@ async def station_drop_variable(body: StationVariable, who: auth.KeyInfo = Depen
 
 @router.post("/station/drop-table", summary="Apagar a tabela da estação: dados, view e ledger; desliga a ingestão")
 async def station_drop_table(body: StationTable, who: auth.KeyInfo = Depends(auth.require("admin"))):
-    qs, qv = _q(body.station), _q(body.file_key)
+    _q(body.station); _q(body.file_key)
     _confirm(body.confirm, body.file_key)
+    reg = await _registration(body.station, body.file_key)
     vids = await _file_variables(body.station, body.file_key)
+    tname = reg["table_name"] or reg["file_key"]
     async with db.pool().acquire() as conn:
         async with conn.transaction():
             res = await conn.execute("DELETE FROM measurements WHERE station_id = $1 AND variable_id = ANY($2)", body.station, vids)
-            await conn.execute(f"DROP VIEW IF EXISTS {qs}.{qv}")
-            dt = await conn.fetchval("SELECT data_type FROM monitored_files WHERE station_id = $1 AND file_key = $2",
-                                     body.station, body.file_key)
-            if dt:
-                await conn.execute(f"DROP VIEW IF EXISTS {_q(body.station + '__' + dt)}.{qv}")
-            await conn.execute("DELETE FROM ingest_files WHERE station_id = $1 AND file_key = $2", body.station, body.file_key)
+            for sch in (body.station, f"{body.station}__{reg['data_type']}"):
+                await conn.execute(f"DROP VIEW IF EXISTS {_q(sch)}.{_q(tname)}")
+                await conn.execute(f"DROP VIEW IF EXISTS {_q(sch)}.{_q(reg['file_key'])}")
+            await conn.execute("DELETE FROM ingest_files WHERE station_id = $1 AND file_key = $2", body.station, reg["file_key"])
             await conn.execute("UPDATE monitored_files SET ingest = false, updated_at = now() WHERE station_id = $1 AND file_key = $2",
-                               body.station, body.file_key)
+                               body.station, reg["file_key"])
     n = int(res.split()[-1])
-    await _log_run("station_drop_table", who.owner, {"station": body.station, "file_key": body.file_key, "deleted": n})
-    return {"deleted": n, "dropped_view": f"{body.station}.{body.file_key}",
+    await _log_run("station_drop_table", who.owner, {"station": body.station, "file_key": reg["file_key"], "deleted": n})
+    return {"deleted": n, "file_key": reg["file_key"], "dropped_view": f"{body.station}__{reg['data_type']}.{tname}",
             "note": "ingestão deste arquivo desligada no espelho; a dashboard também desmarca o registro"}
 
 

@@ -31,6 +31,17 @@ RESAMPLE_OPTIONS = ("raw", "1min", "30min")
 DATA_TYPE_SUGGESTIONS = ("datalogger", "meteorologia", "fluxo", "radiacao", "perfil",
                          "radiossonda", "espectro", "telemetria", "solo", "outro")
 DATA_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+TABLE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+
+
+def normalize_table_name(raw: str | None) -> str | None:
+    """Nome da tabela no banco: slug [a-z0-9_] começando por letra; vazio = None (= id)."""
+    slug = variable_slug(raw or "")[:63].rstrip("_")
+    return slug or None
+
+
+def table_name_of(fcfg: dict) -> str:
+    return (fcfg.get("table_name") or "").strip() or fcfg.get("id") or ""
 
 
 def normalize_data_type(raw: str | None) -> str | None:
@@ -671,6 +682,11 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
 
     # --- Tipo de dado (estação → TIPO → arquivo) e banco de dados ---------------
     data_type = normalize_data_type(form.get("data_type"))
+    table_name = normalize_table_name(form.get("table_name"))
+    if table_name and station is not None:
+        for other in station.get("files") or []:
+            if other.get("id") != file_id and table_name_of(other) == table_name:
+                errors.append(f"Nome de tabela '{table_name}' já usado pelo arquivo '{other.get('id')}' desta estação.")
     ingest = bool(form.get("ingest"))
     tzname = (form.get("timezone") or "").strip() or None
     if tzname and not valid_timezone(tzname):
@@ -767,6 +783,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
         "resample": resample,
     }
     entry["data_type"] = data_type or default_data_type(entry)
+    entry["table_name"] = table_name
     if strip_regex:
         entry["strip_regex"] = strip_regex
     return entry, errors
@@ -799,6 +816,12 @@ def apply_treatment_form(form: dict, station: dict, fcfg: dict) -> tuple[dict, l
     out["ingest"] = bool(form.get("ingest"))
     if "data_type" in form:
         out["data_type"] = normalize_data_type(form.get("data_type")) or default_data_type(fcfg)
+    if "table_name" in form:
+        tn = normalize_table_name(form.get("table_name"))
+        for other in station.get("files") or []:
+            if tn and other.get("id") != fcfg.get("id") and table_name_of(other) == tn:
+                errors.append(f"Nome de tabela '{tn}' já usado pelo arquivo '{other.get('id')}'.")
+        out["table_name"] = tn
     tzname = (form.get("timezone") or "").strip() or None
     if tzname and not valid_timezone(tzname):
         errors.append(f"Fuso horário inválido: '{tzname}' (ex.: UTC, America/Santarem).")

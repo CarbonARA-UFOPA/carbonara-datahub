@@ -84,6 +84,12 @@
     <small>O nível entre a estação e o arquivo: que equipamento/conjunto gera este arquivo. No banco vira
       <code>{{ station.id }}__&lt;tipo&gt;</code>, com uma tabela por arquivo. Vazio = <code>datalogger</code> para TOA5, <code>dados</code> para o resto.</small>
   </label>
+  <label>Nome da tabela no banco (opcional)
+    <input name="table_name" value="{{ fcfg.table_name if fcfg and fcfg.get('table_name') else '' }}"
+           placeholder="{{ fcfg.id if fcfg else 'vazio = identificador do registro' }}" pattern="[A-Za-z][A-Za-z0-9_ ]{0,62}">
+    <small>Como a tabela deste arquivo aparece no banco da estação (ex.: <code>sondagens_rs41</code>). Útil quando o
+      registro nasceu de um arquivo concreto e herdou a data no nome. Só letras, números e <code>_</code>.</small>
+  </label>
   </div>
 
   <h2>Banco de dados</h2>
