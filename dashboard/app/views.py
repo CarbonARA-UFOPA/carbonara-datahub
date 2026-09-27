@@ -1005,7 +1005,7 @@ _MAINT_ACTIONS = {
     "compress": ("Comprimir chunks antigos", "aplica agora a compressão dos dados com mais de 30 dias"),
     "refresh_aggregates": ("Recalcular agregados (30 dias)", "refaz as médias horárias/diárias do período"),
     "purge_implausible_times": ("Remover carimbos implausíveis", "APAGA linhas antes de 1990 ou no futuro"),
-    "purge_orphans": ("Remover séries órfãs", "APAGA séries sem registro ativo na dashboard"),
+    "purge_orphans": ("Remover séries órfãs", "APAGA do banco as séries de arquivos/variáveis que não estão mais registrados para ingestão (veja a lista na verificação 'Séries órfãs' antes)"),
 }
 
 

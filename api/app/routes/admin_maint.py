@@ -191,7 +191,11 @@ async def diagnostics(_who: auth.KeyInfo = Depends(auth.require("admin"))):
     cols = ["station_id", "variable_id", "de", "ate", "dias_sem_dado", "dias_esperados"]
     checks.append(_check("gaps", "Lacunas: dias sem dado nos últimos 90 dias", "warn" if recs else "ok",
                          f"{len(recs)} série(s) com dias faltando" if recs else "sem dias faltando",
-                         rows_of(recs, cols), cols, "Dias entre o primeiro e o último dado do período em que nada foi gravado."))
+                         rows_of(recs, cols), cols,
+                         "Informativo — não há ação de correção: são dias, entre o primeiro e o último dado do período, em que "
+                         "o arquivo não trouxe valores para a variável (estação parada, sensor desligado, ou dado por evento, "
+                         "como radiossonda sem lançamento no dia). Se o dado existe no arquivo e não entrou, reingira a tabela "
+                         "(Zona de perigo → Zerar e reingerir)."))
 
     recs = await pool.fetch(
         """
@@ -287,7 +291,9 @@ async def maintenance(body: MaintIn, who: auth.KeyInfo = Depends(auth.require("a
     import json as _json
     purged = False
     async with pool.acquire() as conn:
-        ex = lambda q, *a: conn.execute(q, *a, timeout=None)   # manutenção pode passar de 60 s  # noqa: E731
+        # manutenção pode passar dos 60 s do pool; no asyncpg timeout=None significa "o
+        # padrão da conexão", então o teto tem de ser explícito (1 h)
+        ex = lambda q, *a: conn.execute(q, *a, timeout=3600)   # noqa: E731
         if body.action == "analyze":
             for t in ("measurements", "stations", "variables", "ingest_files", "monitored_files"):
                 await ex(f"ANALYZE {t}")
@@ -316,16 +322,24 @@ async def maintenance(body: MaintIn, who: auth.KeyInfo = Depends(auth.require("a
             out["detail"] = f"{res.split()[-1]} linha(s) com carimbo implausível removida(s)"
             purged = True
         elif body.action == "purge_orphans":
-            res = await ex(
+            # pares (estação, variável) órfãos vêm do agregado diário (barato); cada par é
+            # apagado pelo índice (station_id, variable_id, time) — um DELETE ... NOT EXISTS
+            # sobre a hypertable inteira levava minutos e estourava o tempo
+            pares = await conn.fetch(
                 """
                 WITH ativos AS (
                   SELECT m.station_id, x->>'variable_id' AS variable_id FROM monitored_files m, jsonb_array_elements(m.variables) x
                   WHERE m.ingest AND (x->>'ingest') IS DISTINCT FROM 'false'
                 )
-                DELETE FROM measurements me WHERE NOT EXISTS (
-                  SELECT 1 FROM ativos a WHERE a.station_id = me.station_id AND a.variable_id = me.variable_id)
-                """)
-            out["detail"] = f"{res.split()[-1]} linha(s) de séries órfãs removida(s)"
+                SELECT DISTINCT d.station_id, d.variable_id FROM measurements_daily d
+                LEFT JOIN ativos a USING (station_id, variable_id) WHERE a.variable_id IS NULL
+                """, timeout=300)
+            total = 0
+            for par in pares:
+                res = await ex("DELETE FROM measurements WHERE station_id = $1 AND variable_id = $2",
+                               par["station_id"], par["variable_id"])
+                total += int(res.split()[-1])
+            out["detail"] = f"{total} linha(s) de {len(pares)} série(s) órfã(s) removida(s)"
             purged = True
         else:
             raise HTTPException(400, "ação desconhecida")
