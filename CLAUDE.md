@@ -478,8 +478,11 @@ Single polling loop in `ingest.py` — no watchers, no queue, **no parsers regis
 more** (the old `ingestion/parsers/` + `ingestion/config.yaml` were removed). The
 ingestion is **driven by the dashboard's registrations**: it reads `dashboard/config.yaml`
 (mounted read-only as `/app/dashboard-config.yaml`, reloaded when its mtime changes) and
-ingests ONLY the files with `ingest: true`, and ONLY their `variables[]` (types other than
-`texto`). That registration IS the ingestion config (separator, header, timestamp
+ingests ONLY the files with `ingest: true`, and ONLY their `variables[]` with `ingest` not
+false. A `texto` variable (radiosonde SERIAL, sensor model…) is stored too: `value` NULL,
+the cell in `measurements.value_text` (migration 0006), quality 0, no QC; the file view
+exposes it as a TEXT column and the API returns the text in the value field (raw only —
+the aggregates are numeric). With `resample`, the LAST text of the bucket is kept. That registration IS the ingestion config (separator, header, timestamp
 column/format, `timezone`, `resample`, per-variable `variable_id`/`min`/`max`/`type`).
 
 Key invariants when editing:

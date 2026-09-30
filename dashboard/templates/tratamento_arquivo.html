@@ -61,11 +61,11 @@
       {% set i = loop.index0 %}
       {% set vt = v.type or 'numero' %}
       <tr data-text="{{ (v.label ~ ' ' ~ (v.variable_id or '') ~ ' ' ~ v.column ~ ' ' ~ vt) | lower }}">
-        <td>{% if vt == 'texto' %}<span class="meta" title="texto não vira série">—</span>
-            {% else %}<input type="checkbox" name="v{{ i }}_ingest" value="1" class="treat-chk" {{ 'checked' if v.get('ingest') is not false }}>{% endif %}</td>
+        <td><input type="checkbox" name="v{{ i }}_ingest" value="1" class="treat-chk" {{ 'checked' if v.get('ingest') is not false }}
+                   {% if vt == 'texto' %}title="texto: entra no banco como coluna de texto (sem gráfico e sem regras de QC)"{% endif %}></td>
         <td><strong>{{ v.label }}</strong>{% if v.unit %} <small class="meta">({{ v.unit }})</small>{% endif %}
             <br><small class="meta">col {{ v.column }} · {{ vt }}</small></td>
-        <td><input name="v{{ i }}_id" value="{{ v.variable_id or '' }}" placeholder="auto" class="num-input" {{ 'disabled' if vt == 'texto' }}></td>
+        <td><input name="v{{ i }}_id" value="{{ v.variable_id or '' }}" placeholder="auto" class="num-input"></td>
         <td><input name="v{{ i }}_min" value="{{ v.min if v.min is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
         <td><input name="v{{ i }}_max" value="{{ v.max if v.max is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>
         <td><input name="v{{ i }}_spike" value="{{ v.qc_spike if v.qc_spike is not none else '' }}" placeholder="—" class="num-short" {{ 'disabled' if vt == 'texto' }}></td>

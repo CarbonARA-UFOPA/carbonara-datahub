@@ -669,7 +669,7 @@ def _pending_reason(f: dict, seen: set | None, station_id: str, ledger: dict) ->
 
 
 def _treat_summary(f: dict) -> dict:
-    vs = [v for v in f.get("variables") or [] if (v.get("type") or "numero") != "texto"]
+    vs = list(f.get("variables") or [])          # texto também vai para o banco (value_text)
     no_banco = [v for v in vs if v.get("ingest") is not False]
     return {"total": len(vs), "no_banco": len(no_banco),
             "faixa": sum(1 for v in no_banco if v.get("min") is not None or v.get("max") is not None),

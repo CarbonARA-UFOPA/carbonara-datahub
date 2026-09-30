@@ -64,8 +64,8 @@ async def get_station(station_id: str, who: auth.KeyInfo = Depends(auth.optional
 async def station_variables(station_id: str, tz: str | None = None,
                             _who: auth.KeyInfo = Depends(auth.require("read"))):
     tzi = tzinfo_of(tz)
-    from .series import LATEST_SQL   # mesma consulta indexada do /latest
+    from .series import LATEST_SQL, value_of   # mesma consulta indexada do /latest
     rows = await db.pool().fetch(LATEST_SQL, station_id, None)
     return [{"variable_id": r["variable_id"], "name": r["name"], "unit": r["unit"],
-             "last_time": iso(r["time"], tzi), "last_value": r["value"],
+             "last_time": iso(r["time"], tzi), "last_value": value_of(r),
              "last_quality": r["quality"]} for r in rows]

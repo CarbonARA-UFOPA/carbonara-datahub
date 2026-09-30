@@ -603,7 +603,7 @@ async def _file_variables(station: str, file_key: str) -> list[str]:
     vs = row["variables"]
     if isinstance(vs, str):
         vs = _json.loads(vs)
-    return [v["variable_id"] for v in vs if v.get("variable_id") and (v.get("type") or "numero") != "texto"]
+    return [v["variable_id"] for v in vs if v.get("variable_id")]   # texto também está no banco
 
 
 def _confirm(given: str, expected: str) -> None:

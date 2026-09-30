@@ -17,17 +17,23 @@ router = APIRouter(tags=["séries"])
 
 AGG_VIEWS = {"1h": "measurements_hourly", "1d": "measurements_daily"}
 
+
+def value_of(r):
+    """Valor de uma linha crua: o número, ou o texto de uma variável do tipo texto
+    (nº de série, modelo…), que fica em ``value_text`` com ``value`` nulo."""
+    return r["value"] if r["value"] is not None else r["value_text"]
+
 # Último valor por variável SEM varrer a estação inteira: um DISTINCT ON sobre
 # measurements lê todas as linhas da estação (34 s em 11 M linhas — o PostgreSQL não
 # "salta" pelo índice). Aqui a lista de variáveis vem do agregado diário (barato) e, para
 # cada uma, um LATERAL com ORDER BY time DESC LIMIT 1 usa o índice
 # (station_id, variable_id, time DESC): milissegundos por variável.
 LATEST_SQL = """
-    SELECT d.variable_id, v.name, v.unit, l.time, l.value, l.quality
+    SELECT d.variable_id, v.name, v.unit, l.time, l.value, l.quality, l.value_text
     FROM (SELECT DISTINCT variable_id FROM measurements_daily
           WHERE station_id = $1 AND ($2::text[] IS NULL OR variable_id = ANY($2))) d
     JOIN variables v USING (variable_id)
-    JOIN LATERAL (SELECT m.time, m.value, m.quality FROM measurements m
+    JOIN LATERAL (SELECT m.time, m.value, m.quality, m.value_text FROM measurements m
                   WHERE m.station_id = $1 AND m.variable_id = d.variable_id
                   ORDER BY m.time DESC LIMIT 1) l ON true
     ORDER BY d.variable_id
@@ -72,7 +78,7 @@ async def get_series(
         lim = min(limit or settings.DEFAULT_RAW_POINTS, cap)      # TOTAL de pontos (soma das variáveis)
         direction = "DESC" if order == "desc" else "ASC"
         sql = f"""
-            SELECT m.time, m.variable_id, m.value, m.quality
+            SELECT m.time, m.variable_id, m.value, m.quality, m.value_text
             FROM measurements m
             WHERE m.station_id = $1 AND m.time >= $2 AND m.time < $3
               AND ($4::text[] IS NULL OR m.variable_id = ANY($4))
@@ -123,7 +129,7 @@ async def get_series(
             else:
                 s.update({"min": [], "max": [], "n": [], "n_flagged": []})
         s["times"].append(iso(r["time"], tzi))
-        s["values"].append(r["value"])
+        s["values"].append(value_of(r) if agg == "raw" else r["value"])
         if agg == "raw":
             s["quality"].append(r["quality"])
         else:
@@ -162,7 +168,7 @@ def _csv(rows, agg: str, tzi, station: str, truncated: bool = False) -> Streamin
         for r in rows:
             buf.seek(0); buf.truncate()
             if agg == "raw":
-                w.writerow([iso(r["time"], tzi), station, r["variable_id"], r["value"], r["quality"]])
+                w.writerow([iso(r["time"], tzi), station, r["variable_id"], value_of(r), r["quality"]])
             else:
                 w.writerow([iso(r["time"], tzi), station, r["variable_id"], r["value"],
                             r["min_value"], r["max_value"], r["n_samples"], r["n_flagged"]])
@@ -183,5 +189,5 @@ async def latest(station: str, vars: str | None = None, tz: str | None = None,
     rows = await db.pool().fetch(LATEST_SQL, station, variables or None)
     return {"station": station, "tz": tz or "UTC", "values": [
         {"variable_id": r["variable_id"], "name": r["name"], "unit": r["unit"],
-         "time": iso(r["time"], tzi), "value": r["value"], "quality": r["quality"]}
+         "time": iso(r["time"], tzi), "value": value_of(r), "quality": r["quality"]}
         for r in rows]}

@@ -143,12 +143,13 @@ def resolve_columns(fcfg: dict, header: list[str] | None, row_len: int) -> list[
 
 def convert_cell(cell: str, vtype: str, decimal: str, strip_re, ts_format: str | None,
                  tzname: str | None) -> float | None:
-    """Célula → valor NUMÉRICO conforme o tipo (o banco só guarda números).
+    """Célula → valor NUMÉRICO conforme o tipo (coluna ``measurements.value``).
 
     - numero/inteiro/booleano: como no gráfico (``tailer``);
     - epoch/timestamp: o instante em segundos Unix (UTC) — a mesma convenção do valor
       plotado (``series.build_series`` usa ``d.timestamp()``);
-    - texto: não é série → None (a ingestão pula variáveis de texto)."""
+    - texto: não tem valor numérico → None (a ingestão grava a célula em
+      ``measurements.value_text``)."""
     if vtype == "texto":
         return None
     if vtype == "epoch":

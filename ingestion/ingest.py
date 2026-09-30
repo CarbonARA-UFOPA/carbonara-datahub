@@ -136,7 +136,7 @@ def ensure_station(cur, station: dict) -> None:
 
 def ensure_variables(cur, cols: list[records.ColumnSpec]) -> None:
     """Catálogo `variables`: cria as que faltam e mantém nome/unidade em dia com o registro."""
-    rows = [(c.variable_id, c.label, c.unit) for c in cols if c.vtype != "texto"]
+    rows = [(c.variable_id, c.label, c.unit) for c in cols]
     if not rows:
         return
     execute_values(
@@ -209,13 +209,16 @@ def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.Col
     aba Banco mostra como "tabela do arquivo" — derivada de measurements, sempre em dia,
     sem duplicar dado. Recriada só quando a lista de variáveis ou o tipo muda (assinatura
     em memória) ou quando não existe. Uma view antiga do mesmo arquivo em outro schema
-    (tipo trocado, ou o formato anterior ``<estação>.<arquivo>``) é removida."""
-    vids = [c.variable_id for c in cols if c.vtype != "texto"]
+    (tipo trocado, ou o formato anterior ``<estação>.<arquivo>``) é removida.
+    Variável do tipo ``texto`` (nº de série, modelo…) vira coluna TEXT, lida de
+    ``value_text``."""
+    vids = [c.variable_id for c in cols]
     if not vids:
         return
+    textos = {c.variable_id for c in cols if c.vtype == "texto"}
     schema = f"{station_id}__{data_type_of(fcfg)}"
     tname = table_name_of(fcfg)
-    sig = schema + "." + tname + "|" + "|".join(vids)
+    sig = schema + "." + tname + "|" + "|".join(v + (":t" if v in textos else "") for v in vids)
     key = (station_id, fcfg["id"])
     cur.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                 "WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'v'", (schema, tname))
@@ -241,7 +244,8 @@ def ensure_station_view(cur, station_id: str, fcfg: dict, cols: list[records.Col
     qs = '"' + schema.replace('"', '""') + '"'
     qv = '"' + tname.replace('"', '""') + '"'
     colunas = ",\n  ".join(
-        'max(value) FILTER (WHERE variable_id = %s) AS "%s"' % (
+        'max(%s) FILTER (WHERE variable_id = %s) AS "%s"' % (
+            "value_text" if v in textos else "value",
             "'" + v.replace("'", "''") + "'", v.replace('"', '""')) for v in vids)
     lista = ", ".join("'" + v.replace("'", "''") + "'" for v in vids)
     sid = "'" + station_id.replace("'", "''") + "'"
@@ -285,7 +289,7 @@ def insert_measurements(cur, rows: list[tuple]) -> int:
             cur,
             """
             INSERT INTO measurements
-                (time, station_id, variable_id, value, quality, source_file, file_id)
+                (time, station_id, variable_id, value, quality, source_file, file_id, value_text)
             VALUES %s
             ON CONFLICT (time, station_id, variable_id) DO NOTHING
             """,
@@ -351,7 +355,11 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
     descarregados (uma fatia interrompida pelo teto de bytes NÃO descarrega — o intervalo
     cortado voltaria com média parcial e o DO NOTHING a congelaria)."""
     """Lê do offset em diante e devolve (linhas prontas p/ insert sem station/file,
-    novo_offset, stats). Linha = (time, variable_id, value, quality_parse).
+    novo_offset, stats). Linha = (time, variable_id, value, quality_parse, value_text).
+
+    Variável do tipo ``texto`` (nº de série de uma sonda, modelo…) não tem valor
+    numérico: vai com ``value`` nulo e o conteúdo da célula em ``value_text``, quality 0,
+    sem passar pelo QC. Na reamostragem vale o ÚLTIMO texto do intervalo.
 
     Com reamostragem, só os intervalos COMPLETOS são emitidos e o offset devolvido é o
     início do intervalo ainda aberto — o próximo ciclo o relê inteiro. Um arquivo
@@ -369,6 +377,7 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
 
     # reamostragem: (bucket) -> {vid: [soma, n]}; início (offset) de cada bucket aberto
     acc: dict[datetime, dict[str, list[float]]] = {}
+    acc_txt: dict[datetime, dict[str, str]] = {}
     bucket_start_offset: dict[datetime, int] = {}
     prev_offset = offset
 
@@ -376,8 +385,6 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
         if n not in resolved:
             lst = []
             for c in cols:
-                if c.vtype == "texto":
-                    continue
                 idx = records.column_index(c.column, header, n)
                 if idx is not None:
                     lst.append(records.ColumnSpec(c.variable_id, c.label, c.column, idx,
@@ -390,7 +397,9 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
     def flush(bkt: datetime) -> None:
         for vid, (soma, n) in acc.pop(bkt).items():
             if n:
-                out.append((bkt, vid, soma / n, 0))
+                out.append((bkt, vid, soma / n, 0, None))
+        for vid, txt in acc_txt.pop(bkt, {}).items():
+            out.append((bkt, vid, None, 0, txt))
         bucket_start_offset.pop(bkt, None)
 
     for rec in records.iter_records(path, fcfg, offset, tzname, header, max_bytes,
@@ -410,8 +419,11 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
                 raw = (cell or "").strip().strip('"')
                 if raw == "":
                     continue                       # célula vazia: não há leitura
+                if c.vtype == "texto":
+                    out.append((rec.time, c.variable_id, None, 0, raw))
+                    continue
                 val = records.convert_cell(cell, c.vtype, decimal, strip_re, ts_format, tzname)
-                out.append((rec.time, c.variable_id, val, 0 if val is not None else 1))
+                out.append((rec.time, c.variable_id, val, 0 if val is not None else 1, None))
             new_offset = rec.offset
         else:
             bkt = _bucket(rec.time, step)
@@ -423,6 +435,11 @@ def read_new_data(path: Path, fcfg: dict, offset: int, tzname: str | None,
                     flush(old)
             for c in cols_for(n):
                 cell = rec.cells[c.index] if -n <= c.index < n else ""
+                if c.vtype == "texto":
+                    raw = (cell or "").strip().strip('"')
+                    if raw:
+                        acc_txt.setdefault(bkt, {})[c.variable_id] = raw
+                    continue
                 val = records.convert_cell(cell, c.vtype, decimal, strip_re, ts_format, tzname)
                 if val is not None:
                     a = acc[bkt][c.variable_id]
@@ -539,9 +556,10 @@ def process_file(conn, station_id: str, fcfg: dict, path: Path, tzname: str | No
                                        f"({max_bytes} bytes) a partir do offset {offset}")
                 break
             rows = []
-            for ts, vid, val, qparse in lines:
-                q = qc.evaluate(_M(ts, station_id, vid, val, qparse))
-                rows.append((ts, station_id, vid, val, q, path.name, file_id))
+            for ts, vid, val, qparse, txt in lines:
+                # texto não passa pelo QC (as regras são numéricas)
+                q = qparse if txt is not None else qc.evaluate(_M(ts, station_id, vid, val, qparse))
+                rows.append((ts, station_id, vid, val, q, path.name, file_id, txt))
             if rows:
                 _touch_range(station_id, min(r[0] for r in rows), max(r[0] for r in rows))
             with conn.cursor() as cur:
