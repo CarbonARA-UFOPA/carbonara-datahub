@@ -15,17 +15,7 @@ ftp:
   vsftpd_conf: null
   ftp_hub_bin: null
   public_host: null
-  publications:
-  - id: radiosonde
-    name: radiosonde
-    source: incoming/radiosonda_pibmt/log
-    dest: radiosonde
-    include: []
-    exclude: []
-    delete: false
-    hidden: false
-    interval_min: 60
-    enabled: true
+  publications: []
 api:
   url: http://127.0.0.1:8000
   key: cbk_X8ip1Z7OPLlzgxwfAgVsQkL-mpGfar0QzFCsLoGTcGU
@@ -1651,10 +1641,10 @@ stations:
   latitude: null
   longitude: null
   files:
-  - path: incoming/radiosonda_pibmt/log/%Y%m%d-******_X*******_RS41_******_sonde.log
-    alias: log/20260926_sonde
+  - path: incoming/radiosonda_pibmt/log/%Y%m%d-*_sonde.log
+    alias: Radiossondas RS41 (um arquivo por lançamento)
     dynamic_path: true
-    tail_lines: 100
+    tail_lines: 500
     window_hours: null
     separator: ','
     quotechar: '"'
@@ -1670,7 +1660,7 @@ stations:
       unit: null
       min: null
       max: null
-      type: numero
+      type: texto
       variable_id: serial
       ingest: true
       qc_spike: null
@@ -1688,8 +1678,8 @@ stations:
     - column: 3
       label: lat
       unit: null
-      min: null
-      max: null
+      min: -90.0
+      max: 90.0
       type: numero
       variable_id: lat
       ingest: true
@@ -1698,8 +1688,8 @@ stations:
     - column: 4
       label: lon
       unit: null
-      min: null
-      max: null
+      min: -180.0
+      max: 180.0
       type: numero
       variable_id: lon
       ingest: true
@@ -1708,8 +1698,8 @@ stations:
     - column: 5
       label: alt
       unit: null
-      min: null
-      max: null
+      min: -100.0
+      max: 45000.0
       type: numero
       variable_id: alt
       ingest: true
@@ -1718,8 +1708,8 @@ stations:
     - column: 6
       label: vel_v
       unit: null
-      min: null
-      max: null
+      min: -50.0
+      max: 50.0
       type: numero
       variable_id: vel_v
       ingest: true
@@ -1728,8 +1718,8 @@ stations:
     - column: 7
       label: vel_h
       unit: null
-      min: null
-      max: null
+      min: 0.0
+      max: 150.0
       type: numero
       variable_id: vel_h
       ingest: true
@@ -1738,8 +1728,8 @@ stations:
     - column: 8
       label: heading
       unit: null
-      min: null
-      max: null
+      min: 0.0
+      max: 360.0
       type: numero
       variable_id: heading
       ingest: true
@@ -1748,8 +1738,8 @@ stations:
     - column: 9
       label: temp
       unit: null
-      min: null
-      max: null
+      min: -100.0
+      max: 60.0
       type: numero
       variable_id: temp
       ingest: true
@@ -1758,8 +1748,8 @@ stations:
     - column: 10
       label: humidity
       unit: null
-      min: null
-      max: null
+      min: 0.0
+      max: 100.0
       type: numero
       variable_id: humidity
       ingest: true
@@ -1768,8 +1758,8 @@ stations:
     - column: 11
       label: pressure
       unit: null
-      min: null
-      max: null
+      min: 1.0
+      max: 1100.0
       type: numero
       variable_id: pressure
       ingest: true
@@ -1780,7 +1770,7 @@ stations:
       unit: null
       min: null
       max: null
-      type: numero
+      type: texto
       variable_id: type
       ingest: true
       qc_spike: null
@@ -1798,8 +1788,8 @@ stations:
     - column: 14
       label: snr
       unit: null
-      min: null
-      max: null
+      min: 0.0
+      max: 60.0
       type: numero
       variable_id: snr
       ingest: true
@@ -1818,8 +1808,8 @@ stations:
     - column: 16
       label: sats
       unit: null
-      min: null
-      max: null
+      min: 0.0
+      max: 40.0
       type: numero
       variable_id: sats
       ingest: true
@@ -1828,8 +1818,8 @@ stations:
     - column: 17
       label: batt_v
       unit: null
-      min: null
-      max: null
+      min: 0.0
+      max: 10.0
       type: numero
       variable_id: batt_v
       ingest: true
@@ -1840,7 +1830,7 @@ stations:
       unit: null
       min: null
       max: null
-      type: numero
+      type: texto
       variable_id: burst_timer
       ingest: true
       qc_spike: null
@@ -1850,15 +1840,16 @@ stations:
       unit: null
       min: null
       max: null
-      type: numero
+      type: texto
       variable_id: aux_data
       ingest: true
       qc_spike: null
       qc_stuck: null
     ingest: true
-    timezone: null
+    timezone: UTC
     resample: raw
     data_type: radiossonda
     id: 20260926-113452_x3043003_rs41_403031_sonde
     truncate_chars: null
     hour_offset: null
+    table_name: sondagens_rs41
