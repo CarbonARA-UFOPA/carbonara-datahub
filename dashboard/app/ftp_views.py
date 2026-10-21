@@ -106,6 +106,17 @@ def folder_remove():
     return _back_to_folder(parent)
 
 
+@ftp_pages.post("/pastas/apagar")
+@admin_required
+def folder_delete():
+    """Apaga uma pasta COM conteúdo — confirmação digitada re-conferida em ftp.py."""
+    sub = request.form.get("sub") or ""
+    ok, out = ftp.delete_folder(_load(), sub, request.form.get("confirm") or "")
+    flash(out, "ok" if ok else "error")
+    parent = "/".join(sub.strip("/").split("/")[:-1])
+    return _back_to_folder(parent if ok else sub)
+
+
 # --- Vínculos (bind mounts) ----------------------------------------------------------------
 @ftp_pages.post("/vinculos")
 @admin_required

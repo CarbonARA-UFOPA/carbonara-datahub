@@ -7,7 +7,7 @@ EN = {
     "Mapa": "Map",
     "Guia": "Guide",
     "Coleta": "Collection",
-    "Tratamento": "Processing",
+    "Tratamento": "Data Quality",
     "Banco": "Database",
     "Configurações": "Settings",
     "Sair": "Log out",

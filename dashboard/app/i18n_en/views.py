@@ -53,8 +53,8 @@ EN = {
         "the ingestion has not read this registration yet — it rereads the config every cycle (30 s); if this persists, the ingestion service is not seeing the current config.yaml",
     "nenhum arquivo casou com o caminho/padrão registrado (ou ainda está sendo escrito) — confira o caminho em Editar parse/colunas e a verificação 'Registros ingeridos sem nenhum arquivo encontrado' em Banco → Diagnóstico":
         "no file matched the registered path/pattern (or it is still being written) — check the path in Edit parse/columns and the check 'Ingested registrations with no file found' in Database → Diagnostics",
-    "Tratamento de %(id)s salvo — no banco.": "Processing of %(id)s saved — in the database.",
-    "Tratamento de %(id)s salvo — fora do banco.": "Processing of %(id)s saved — kept out of the database.",
+    "Tratamento de %(id)s salvo — no banco.": "Data quality settings of %(id)s saved — in the database.",
+    "Tratamento de %(id)s salvo — fora do banco.": "Data quality settings of %(id)s saved — kept out of the database.",
 
     # --- Banco -----------------------------------------------------------------
     "Banco '%(nome)s' criado.": "Database '%(nome)s' created.",

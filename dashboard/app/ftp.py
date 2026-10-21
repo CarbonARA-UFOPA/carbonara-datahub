@@ -24,6 +24,7 @@ import pwd
 import re
 import shutil
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -939,6 +940,93 @@ def remove_folder(cfg: dict, sub: str) -> tuple[bool, str]:
             return False, tr("ftp:/%(p)s não está vazia — a dashboard só remove pastas vazias.", p=norm)
         return False, tr("não consegui remover: %(e)s", e=exc)
     return True, tr("Pasta vazia ftp:/%(p)s removida.", p=norm)
+
+
+def _covers(folder: str, other: str) -> bool:
+    """`other` (subpasta relativa à raiz) é a própria `folder` ou está dentro dela."""
+    other = (other or "").strip("/")
+    return other == folder or other.startswith(folder + "/")
+
+
+def delete_folder_blockers(cfg: dict, norm: str) -> list[str]:
+    """Por que `ftp:/<norm>` NÃO pode ser apagada com conteúdo (lista vazia = pode).
+
+    A trava que importa é a do VÍNCULO: um bind mount dentro da pasta é a pasta de
+    ORIGEM vista por outro caminho — apagar recursivamente atravessaria a montagem e
+    destruiria os dados originais (ex.: incoming/ da coleta). Por isso a checagem é
+    dupla: pontos de montagem conhecidos (/proc/self/mounts + registro de vínculos) e,
+    na varredura, qualquer diretório em outro dispositivo (st_dev) que a raiz."""
+    root = ftp_root(cfg)
+    target = root / norm
+    out: list[str] = []
+    for ln in links(cfg):
+        if _covers(norm, ln["dest"]):
+            out.append(tr("contém o vínculo ftp:/%(d)s — desfaça o vínculo antes.", d=ln["dest"]))
+    for a in list_accounts(cfg):
+        if not a.get("folder_outside") and a["folder"] != "/" and _covers(norm, a["folder"]):
+            out.append(tr("é a pasta da conta %(u)s (ftp:/%(d)s) — mude a pasta da conta antes.",
+                          u=a["user"], d=a["folder"]))
+    for p in publications(cfg):
+        if p.get("dest") and _covers(norm, p["dest"]):
+            out.append(tr("é o destino da publicação “%(n)s” (ftp:/%(d)s) — ela recriaria a "
+                          "pasta; apague ou mude a publicação antes.", n=p.get("name") or p.get("id"),
+                          d=p["dest"]))
+    if out:
+        return out
+    mounted = _mountpoints()
+    try:
+        dev = target.stat().st_dev
+        for cur, dirs, _files in os.walk(target, followlinks=False):
+            for d in dirs:
+                full = os.path.join(cur, d)
+                if full in mounted or os.lstat(full).st_dev != dev:
+                    rel = full[len(str(root).rstrip("/")) + 1:]
+                    out.append(tr("contém um ponto de montagem (ftp:/%(d)s) — nada foi apagado.", d=rel))
+                    return out
+    except OSError as exc:
+        out.append(tr("não consegui examinar a pasta: %(e)s", e=exc))
+    return out
+
+
+def delete_folder(cfg: dict, sub: str, confirm: str) -> tuple[bool, str]:
+    """Apaga `ftp:/<sub>` COM o conteúdo. Exige digitar o nome da pasta (conferido
+    aqui, não só no JS) e recusa vínculos, pastas de contas e destinos de publicação
+    (`delete_folder_blockers`). Symlinks são removidos, nunca seguidos. Falhas de
+    permissão em arquivos de terceiros não abortam: o que sobrou é relatado."""
+    norm, err = normalize_subfolder(sub)
+    if norm is None or not norm:
+        return False, tr("pasta inválida.")
+    if (confirm or "").strip() != norm.split("/")[-1]:
+        return False, tr("Confirmação não confere: digite exatamente o nome da pasta (%(n)s).",
+                         n=norm.split("/")[-1])
+    root = ftp_root(cfg)
+    target = root / norm
+    try:
+        if not _is_within(target.resolve(), root.resolve()) or target.resolve() == root.resolve():
+            return False, tr("fora da raiz do FTP.")
+        if target.is_symlink() or not target.is_dir():
+            return False, tr("não é uma pasta.")
+        if str(target) in _mountpoints():
+            return False, tr("esta pasta é um vínculo — desfaça o vínculo em vez de removê-la.")
+    except OSError as exc:
+        return False, tr("não consegui remover: %(e)s", e=exc)
+    blockers = delete_folder_blockers(cfg, norm)
+    if blockers:
+        return False, tr("ftp:/%(p)s não foi apagada: %(m)s", p=norm, m=" ".join(blockers))
+    falhas: list[str] = []
+
+    def _falha(_func, path, _exc):
+        falhas.append(os.path.relpath(path, root))
+
+    # `onexc` substituiu `onerror` no Python 3.12 (mesma assinatura útil aqui).
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(target, onexc=_falha)
+    else:
+        shutil.rmtree(target, onerror=_falha)
+    if falhas:
+        return False, tr("ftp:/%(p)s foi apagada só em parte: %(n)s item(ns) sem permissão "
+                         "(ex.: %(ex)s).", p=norm, n=len(falhas), ex=falhas[0])
+    return True, tr("Pasta ftp:/%(p)s apagada com todo o conteúdo.", p=norm)
 
 
 def fmt_epoch(ts: float | None) -> str:

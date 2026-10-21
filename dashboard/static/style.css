@@ -302,6 +302,12 @@ code { background: #eef2f0; padding: .05rem .3rem; border-radius: 4px; font-size
 .form-inline label { flex: 1 1 260px; margin: .3rem 0; }
 /* Botão de pausa dentro de uma célula de tabela, ao lado do estado. */
 .inline-form { display: inline; }
+/* FTP: apagar pasta com conteúdo (confirmação digitada, abre no lugar). */
+.folder-delete { display: inline-block; text-align: left; }
+.folder-delete > summary { list-style: none; display: inline-block; }
+.folder-delete > summary::-webkit-details-marker { display: none; }
+.folder-delete-form { display: flex; flex-direction: column; gap: .35rem; margin-top: .4rem;
+                      max-width: 22rem; margin-left: auto; }
 .status-pause { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
                 margin: .6rem 0 0; }
 .status-pause input { padding: .35rem .6rem; border: 1px solid var(--line);

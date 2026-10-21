@@ -179,6 +179,18 @@
               <input type="hidden" name="sub" value="{{ d.rel }}">
               <button class="btn btn-sm btn-danger" type="submit">{{ _('remover (vazia)') }}</button>
             </form>
+          {% else %}
+            {# Pasta com conteúdo: confirmação DIGITADA (re-conferida no servidor). #}
+            <details class="folder-delete">
+              <summary class="btn btn-sm btn-danger">{{ _('apagar…') }}</summary>
+              <form method="post" class="folder-delete-form" action="{{ url_for('ftp.folder_delete') }}">
+                <input type="hidden" name="sub" value="{{ d.rel }}">
+                <small>{{ _('Apaga <strong>ftp:/%(p)s</strong> e TUDO dentro dela, sem volta. Digite <code>%(n)s</code> para confirmar:', p=d.rel, n=d.name) }}</small>
+                <input name="confirm" required autocomplete="off" placeholder="{{ d.name }}"
+                       pattern="{{ d.name | replace('.', '\\.') }}">
+                <button class="btn btn-sm btn-danger" type="submit">{{ _('apagar definitivamente') }}</button>
+              </form>
+            </details>
           {% endif %}
         </td>
       </tr>
@@ -198,8 +210,10 @@
     </label>
     <button class="btn btn-primary" type="submit" {% if not folder.writable %}disabled{% endif %}>{{ _('Criar pasta') }}</button>
   </form>
-  <p class="meta">{{ _('Só pastas <strong>vazias</strong> podem ser removidas por aqui: a dashboard nunca apaga
-    dados do FTP (use uma conta de <em>escrita</em> num cliente FTP para isso).') }}</p>
+  <p class="meta">{{ _('Pastas vazias saem com um clique; pastas <strong>com conteúdo</strong> pedem que você
+    digite o nome da pasta. Por segurança, a dashboard se recusa a apagar uma pasta que seja ou
+    contenha um <strong>vínculo</strong> (apagaria os dados originais do servidor), que seja a pasta
+    de uma conta ou o destino de uma publicação — resolva isso antes.') }}</p>
 </section>
 
 {# ---------------------------------------------------------------- vínculos #}

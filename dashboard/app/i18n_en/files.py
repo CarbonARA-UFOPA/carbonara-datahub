@@ -2,7 +2,7 @@
 
 EN = {
     # ---------------------------------------------------------------- comuns
-    "Tratamento": "Processing",
+    "Tratamento": "Data Quality",
     "Configurações": "Settings",
     "Cancelar": "Cancel",
     "Salvar": "Save",
@@ -27,7 +27,7 @@ EN = {
 
     # ---------------------------------------------------------------- tratamento.html
     "Cada arquivo monitorado tem sua própria página de tratamento: se é ingerido no banco, o fuso dos carimbos, a reamostragem e, variável a variável, se entra no banco e as regras de qualidade (faixa física → <code>2</code>, salto → <code>3</code>, valor travado → <code>4</code>). Abra <em>Tratar</em> no arquivo desejado.":
-        "Each monitored file has its own processing page: whether it is ingested into the database, the time zone of its timestamps, resampling and, variable by variable, whether it goes into the database and its quality rules (physical range → <code>2</code>, spike → <code>3</code>, stuck value → <code>4</code>). Open <em>Process</em> on the file you want.",
+        "Each monitored file has its own data quality page: whether it is ingested into the database, the time zone of its timestamps, resampling and, variable by variable, whether it goes into the database and its quality rules (physical range → <code>2</code>, spike → <code>3</code>, stuck value → <code>4</code>). Open <em>Configure QC</em> on the file you want.",
     "Estado da ingestão indisponível: %(erro)s": "Ingestion status unavailable: %(erro)s",
     'API não configurada (<a href="%(url)s">Configurações</a>) — o estado "no banco" não aparece.':
         'API not configured (<a href="%(url)s">Settings</a>) — the "in the database" status is not shown.',
@@ -46,7 +46,7 @@ EN = {
     "%(n)s valores": "%(n)s values",
     "até %(quando)s": "up to %(quando)s",
     "⏳ sem leitura ainda": "⏳ not read yet",
-    "Tratar": "Process",
+    "Tratar": "Configure QC",
 
     # ---------------------------------------------------------------- tratamento_arquivo.html
     "← Todos os arquivos": "← All files",
@@ -86,7 +86,7 @@ EN = {
         "text: stored in the database as a text column (no chart and no QC rules)",
     "Sem variáveis mapeadas — mapeie as colunas em <em>Editar parse/colunas</em>.":
         "No mapped variables — map the columns in <em>Edit parsing/columns</em>.",
-    "Salvar tratamento": "Save processing",
+    "Salvar tratamento": "Save data quality settings",
     "alterações não salvas": "unsaved changes",
     "Para reaplicar estas regras ao histórico já gravado: no banco da estação, abra a tabela deste arquivo → <em>Zona de perigo</em> → <em>Zerar e reingerir</em>.":
         "To reapply these rules to the history already stored: in the station's database, open this file's table → <em>Danger zone</em> → <em>Reset and re-ingest</em>.",

@@ -345,4 +345,25 @@ EN = {
     "Ela roda no próximo ciclo do publicador.": "It runs in the publisher's next cycle.",
     "Use 'publicar agora' para executá-la.": "Use 'publish now' to run it.",
     "área ou pasta inválida": "invalid area or folder",
+
+    # Apagar pasta com conteúdo
+    "apagar…": "delete…",
+    "Apaga <strong>ftp:/%(p)s</strong> e TUDO dentro dela, sem volta. Digite <code>%(n)s</code> para confirmar:":
+        "Deletes <strong>ftp:/%(p)s</strong> and EVERYTHING inside it, permanently. Type <code>%(n)s</code> to confirm:",
+    "apagar definitivamente": "delete permanently",
+    "Pastas vazias saem com um clique; pastas <strong>com conteúdo</strong> pedem que você digite o nome da pasta. Por segurança, a dashboard se recusa a apagar uma pasta que seja ou contenha um <strong>vínculo</strong> (apagaria os dados originais do servidor), que seja a pasta de uma conta ou o destino de uma publicação — resolva isso antes.":
+        "Empty folders go with one click; folders <strong>with content</strong> require typing the folder name. For safety, the dashboard refuses to delete a folder that is or contains a <strong>link</strong> (it would delete the original data on the server), that is an account's folder, or a publication's destination — sort that out first.",
+    "contém o vínculo ftp:/%(d)s — desfaça o vínculo antes.": "contains the link ftp:/%(d)s — remove the link first.",
+    "é a pasta da conta %(u)s (ftp:/%(d)s) — mude a pasta da conta antes.":
+        "it is the folder of account %(u)s (ftp:/%(d)s) — change the account's folder first.",
+    "é o destino da publicação “%(n)s” (ftp:/%(d)s) — ela recriaria a pasta; apague ou mude a publicação antes.":
+        "it is the destination of publication “%(n)s” (ftp:/%(d)s) — it would recreate the folder; delete or change the publication first.",
+    "contém um ponto de montagem (ftp:/%(d)s) — nada foi apagado.": "contains a mount point (ftp:/%(d)s) — nothing was deleted.",
+    "não consegui examinar a pasta: %(e)s": "could not inspect the folder: %(e)s",
+    "Confirmação não confere: digite exatamente o nome da pasta (%(n)s).":
+        "Confirmation does not match: type the folder name exactly (%(n)s).",
+    "ftp:/%(p)s não foi apagada: %(m)s": "ftp:/%(p)s was not deleted: %(m)s",
+    "ftp:/%(p)s foi apagada só em parte: %(n)s item(ns) sem permissão (ex.: %(ex)s).":
+        "ftp:/%(p)s was only partly deleted: %(n)s item(s) without permission (e.g. %(ex)s).",
+    "Pasta ftp:/%(p)s apagada com todo o conteúdo.": "Folder ftp:/%(p)s deleted with all its content.",
 }

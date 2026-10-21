@@ -146,21 +146,21 @@ EN = {
         "Clear ALL data of this table (%(n)s variables) and re-ingest from scratch?",
     "Zerar os dados da tabela": "Clear the table data",
     "Remove todas as medições das %(n)s variáveis deste arquivo para a estação <code>%(schema)s</code> e zera o ledger — no próximo ciclo a ingestão relê o arquivo do início, com as regras atuais da aba Tratamento. É o jeito de reaplicar fuso, IDs ou regras de qualidade ao histórico.":
-        "Removes every measurement of the %(n)s variables of this file for station <code>%(schema)s</code> and resets the ledger — on the next cycle the ingestion re-reads the file from the beginning, with the current rules of the Processing tab. This is how you reapply time zone, IDs or quality rules to the history.",
+        "Removes every measurement of the %(n)s variables of this file for station <code>%(schema)s</code> and resets the ledger — on the next cycle the ingestion re-reads the file from the beginning, with the current rules of the Data Quality tab. This is how you reapply time zone, IDs or quality rules to the history.",
     "Digite <code>%(alvo)s</code> para confirmar": "Type <code>%(alvo)s</code> to confirm",
     "Zerar e reingerir": "Clear and re-ingest",
     "Apagar TODOS os dados da variável escolhida nesta estação?":
         "Delete ALL data of the selected variable at this station?",
     "Apagar uma variável": "Delete a variable",
     "Remove todas as medições de uma variável da estação <code>%(schema)s</code>. Se ela continuar marcada para o banco em Tratamento, os dados novos voltam a entrar (sem o histórico). Para tirá-la de vez, desmarque-a lá.":
-        "Removes every measurement of one variable of station <code>%(schema)s</code>. If it stays enabled for the database in Processing, new data keeps coming in (without the history). To remove it for good, uncheck it there.",
+        "Removes every measurement of one variable of station <code>%(schema)s</code>. If it stays enabled for the database in Data Quality, new data keeps coming in (without the history). To remove it for good, uncheck it there.",
     "Digite o ID da variável para confirmar": "Type the variable ID to confirm",
     "Apagar variável": "Delete variable",
     "Apagar a tabela %(alvo)s: todos os dados, a view e desligar a ingestão deste arquivo?":
         "Delete table %(alvo)s: all data, the view, and turn off ingestion of this file?",
     "Apagar a tabela inteira": "Delete the whole table",
     'Remove todas as medições das variáveis deste arquivo, a view <code>%(alvo)s</code> e o ledger, e <strong>desliga a ingestão</strong> do arquivo na dashboard (o registro e os gráficos por arquivo continuam; para voltar, marque "Ingerir no banco" em Tratamento e tudo é reingerido do zero).':
-        'Removes every measurement of the variables of this file, the view <code>%(alvo)s</code> and the ledger, and <strong>turns off ingestion</strong> of the file in the dashboard (the registration and the per-file charts remain; to undo, check "Ingest into database" in Processing and everything is re-ingested from scratch).',
+        'Removes every measurement of the variables of this file, the view <code>%(alvo)s</code> and the ledger, and <strong>turns off ingestion</strong> of the file in the dashboard (the registration and the per-file charts remain; to undo, check "Ingest into database" in Data Quality and everything is re-ingested from scratch).',
     "Apagar tabela": "Delete table",
     "Esvaziar a tabela %(alvo)s (todas as linhas)?": "Empty table %(alvo)s (all rows)?",
     "Esvaziar a tabela": "Empty the table",
@@ -289,7 +289,7 @@ EN = {
     "Arquivos com erro na ingestão": "Files with ingestion errors",
     "nenhum erro registrado no ledger": "no errors recorded in the ledger",
     "Corrija o registro (parse, fuso, colunas) na aba Tratamento/Editar e a ingestão tenta de novo no próximo ciclo.":
-        "Fix the registration (parse, time zone, columns) in the Processing/Edit tab and the ingestion retries on the next cycle.",
+        "Fix the registration (parse, time zone, columns) in the Data Quality/Edit tab and the ingestion retries on the next cycle.",
     "Atraso de ingestão (> 10 MB pendentes)": "Ingestion backlog (> 10 MB pending)",
     "ingestão em dia": "ingestion up to date",
     "Normal durante um backfill; persistindo, veja os logs da ingestão.":
@@ -310,7 +310,7 @@ EN = {
         "Same label with different IDs in the same station (possible duplicate)",
     "sem rótulos repetidos entre arquivos ingeridos": "no repeated labels across ingested files",
     "Se é a mesma grandeza medida duas vezes, tire uma do banco na aba Tratamento; se são sensores distintos, dê rótulos distintos.":
-        "If it is the same quantity measured twice, remove one from the database in the Processing tab; if they are different sensors, give them different labels.",
+        "If it is the same quantity measured twice, remove one from the database in the Data Quality tab; if they are different sensors, give them different labels.",
     "Séries no banco sem registro ativo (órfãs)": "Series in the database with no active registration (orphans)",
     "toda série tem um registro ativo": "every series has an active registration",
     "Ficaram de quando a variável/arquivo estava no banco. Histórico útil? Mantenha. Sujeira? Use 'Remover séries órfãs'.":
