@@ -39,9 +39,21 @@
           <a href="{{ url_for('pages.login') }}" class="nav-link{{ ' active' if request.path.startswith('/login') }}">{{ _('Entrar') }}</a>
         {% endif %}
       {% endif %}
-      {% set other = 'pt' if lang == 'en' else 'en' %}
-      <a href="{{ url_for('set_lang', code=other, next=request.full_path.rstrip('?')) }}"
-         class="nav-link lang-switch" title="{{ lang_labels[other] }}" hreflang="{{ other }}">{{ 'PT' if other == 'pt' else 'EN' }}</a>
+      {# Idioma: as duas bandeiras; a do idioma atual fica destacada, a outra troca. #}
+      <span class="lang-switch">
+        {% for code, flag in [('pt', 'br'), ('en', 'gb')] %}
+          {% if code == lang %}
+            <span class="lang-flag active" title="{{ lang_labels[code] }}">
+              <img src="{{ url_for('static', filename='flags/' ~ flag ~ '.svg') }}" alt="{{ lang_labels[code] }}">
+            </span>
+          {% else %}
+            <a class="lang-flag" href="{{ url_for('set_lang', code=code, next=request.full_path.rstrip('?')) }}"
+               title="{{ lang_labels[code] }}" hreflang="{{ code }}">
+              <img src="{{ url_for('static', filename='flags/' ~ flag ~ '.svg') }}" alt="{{ lang_labels[code] }}">
+            </a>
+          {% endif %}
+        {% endfor %}
+      </span>
     </nav>
   </header>
   <main class="{% block main_class %}{% endblock %}">

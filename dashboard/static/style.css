@@ -23,10 +23,14 @@ main { max-width: 1080px; margin: 0 auto; padding: 1rem 1.2rem 3rem; }
             font-size: .88rem; cursor: pointer; text-decoration: none; }
 .nav-link:hover { background: rgba(255,255,255,.12); color: #fff; }
 .nav-link.active { background: rgba(0,0,0,.18); color: #fff; font-weight: 600; }
-/* Botão de idioma (pt-BR ⇄ en): mostra o idioma para o qual vai trocar. */
-.nav-link.lang-switch { margin-left: .35rem; padding: .3rem .55rem; font-size: .75rem;
-                        font-weight: 700; letter-spacing: .05em;
-                        border: 1px solid rgba(255,255,255,.45); }
+/* Idioma (pt-BR ⇄ en): duas bandeiras; a do idioma atual destacada, a outra é o link. */
+.lang-switch { display: inline-flex; align-items: center; gap: .3rem; margin-left: .5rem; }
+.lang-flag { display: inline-flex; padding: 2px; border-radius: 4px; line-height: 0;
+             opacity: .5; transition: opacity .15s; }
+.lang-flag img { width: 24px; height: 16px; object-fit: cover; border-radius: 2px;
+                 box-shadow: 0 0 0 1px rgba(0,0,0,.25); }
+.lang-flag:hover { opacity: 1; }
+.lang-flag.active { opacity: 1; box-shadow: 0 0 0 2px rgba(255,255,255,.85); }
 .nav-cta { margin-left: .5rem; background: #fff; border-color: #fff; color: var(--accent);
            font-weight: 600; }
 .topbar .nav-cta { color: var(--accent); }
