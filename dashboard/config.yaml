@@ -1329,6 +1329,168 @@ stations:
     id: cr1k-x-ec-farm_time_series
     truncate_chars: null
     hour_offset: null
+  - path: incoming/fluxfarm/loggernet/CR1K-X-EC-FARM_FAST_ALL.dat
+    alias: loggernet/CR1K-X-EC-FARM_FAST_ALL
+    dynamic_path: false
+    tail_lines: 100
+    window_hours: null
+    separator: ','
+    quotechar: '"'
+    decimal: .
+    skip_header_lines: 4
+    header_line: 2
+    timestamp:
+      column: 0
+      format: '%Y-%m-%d %H:%M:%S'
+    variables:
+    - column: 1
+      label: RECORD
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: record
+    - column: 2
+      label: CH4
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: ch4
+    - column: 3
+      label: PRESS
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: press
+    - column: 4
+      label: TEMP
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: temp
+    - column: 5
+      label: DIAG
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: diag
+    - column: 6
+      label: RSSI
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: rssi
+    - column: 7
+      label: Ux
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: ux
+    - column: 8
+      label: Uy
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: uy
+    - column: 9
+      label: Uz
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: uz
+    - column: 10
+      label: T_SONIC
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: t_sonic
+    - column: 11
+      label: diag_sonic
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: diag_sonic
+    - column: 12
+      label: CO2_density
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: co2_density
+    - column: 13
+      label: CO2_density_fast_tmpr
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: co2_density_fast_tmpr
+    - column: 14
+      label: H2O_density
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: h2o_density
+    - column: 15
+      label: diag_irga
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: diag_irga
+    - column: 16
+      label: T_SONIC_corr
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: t_sonic_corr
+    - column: 17
+      label: TA_1_1_1
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: ta_1_1_1
+    - column: 18
+      label: PA
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: pa
+    - column: 19
+      label: CO2_sig_strgth
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: co2_sig_strgth
+    - column: 20
+      label: H2O_sig_strgth
+      unit: null
+      min: null
+      max: null
+      type: numero
+      variable_id: h2o_sig_strgth
+    ingest: false
+    timezone: null
+    resample: raw
+    data_type: datalogger
+    id: cr1k-x-ec-farm_fast_all
+    truncate_chars: null
+    hour_offset: null
+    table_name: null
 - id: profsfo
   name: Perfil Meteo_Soil
   heartbeat_file: null
