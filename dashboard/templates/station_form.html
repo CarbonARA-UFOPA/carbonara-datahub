@@ -1,47 +1,40 @@
 {% extends "base.html" %}
 {% set editing = station is not none and station.get('files') is not none %}
 {% block content %}
-<h1>{{ 'Editar estação' if editing else 'Nova estação' }}</h1>
+<h1>{{ _('Editar estação') if editing else _('Nova estação') }}</h1>
 
 <form method="post" class="card form"
       action="{{ url_for('pages.station_update', station_id=station['id']) if editing else url_for('pages.station_create') }}">
-  <label>Identificador (station_id)
+  <label>{{ _('Identificador (station_id)') }}
     <input name="id" value="{{ station['id'] if station else '' }}" {{ 'readonly' if editing }}
-           placeholder="ex.: flona01" pattern="[a-z0-9_-]+" required>
-    <small>Igual ao usado no rsync-hub (nome da pasta em <code>incoming/</code>). Minúsculas, números, <code>-</code> e <code>_</code>.</small>
+           placeholder="{{ _('ex.: flona01') }}" pattern="[a-z0-9_-]+" required>
+    <small>{{ _('Igual ao usado no rsync-hub (nome da pasta em <code>incoming/</code>). Minúsculas, números, <code>-</code> e <code>_</code>.') }}</small>
   </label>
 
-  <label>Nome de exibição
+  <label>{{ _('Nome de exibição') }}
     <input name="name" value="{{ station['name'] if station and station.get('name') else '' }}"
-           placeholder="ex.: FLONA Tapajós 01">
+           placeholder="{{ _('ex.: FLONA Tapajós 01') }}">
   </label>
 
   <div class="form-row">
-    <label>Latitude
+    <label>{{ _('Latitude') }}
       <input name="latitude" inputmode="decimal"
              value="{{ station['latitude'] if station and station.get('latitude') is not none else '' }}"
-             placeholder="ex.: -3.578041 (graus decimais)">
+             placeholder="{{ _('ex.: -3.578041 (graus decimais)') }}">
     </label>
-    <label>Longitude
+    <label>{{ _('Longitude') }}
       <input name="longitude" inputmode="decimal"
              value="{{ station['longitude'] if station and station.get('longitude') is not none else '' }}"
-             placeholder="ex.: -55.074330 (graus decimais)">
+             placeholder="{{ _('ex.: -55.074330 (graus decimais)') }}">
     </label>
   </div>
-  <small class="coords-hint">Coordenadas geográficas (WGS84, graus decimais; sul e oeste são negativos).
-  Necessárias para a estação aparecer na página <strong>Mapa</strong> — opcionais no restante do dashboard.</small>
+  <small class="coords-hint">{{ _('Coordenadas geográficas (WGS84, graus decimais; sul e oeste são negativos). Necessárias para a estação aparecer na página <strong>Mapa</strong> — opcionais no restante do dashboard.') }}</small>
 
-  <p class="meta">O status <strong>Online/Offline</strong> não se configura aqui: vem do
-    sinal de vida que a própria estação envia (<code>.carbonara-status</code> em
-    <code>incoming/{{ station['id'] if station else '&lt;id&gt;' }}/</code>), com o
-    intervalo de reciclagem declarado por ela. A janela de offline acompanha esse
-    intervalo — <strong>2× o intervalo + 2 min</strong>, a mesma regra do
-    <code>rsync-hub monitor</code> e do watchdog do cliente. Para mudá-la, mude o
-    tempo de reciclagem <em>na estação</em>.</p>
+  <p class="meta">{{ _('O status <strong>Online/Offline</strong> não se configura aqui: vem do sinal de vida que a própria estação envia (<code>.carbonara-status</code> em <code>incoming/%(id)s/</code>), com o intervalo de reciclagem declarado por ela. A janela de offline acompanha esse intervalo — <strong>2× o intervalo + 2 min</strong>, a mesma regra do <code>rsync-hub monitor</code> e do watchdog do cliente. Para mudá-la, mude o tempo de reciclagem <em>na estação</em>.', id=station['id'] if station else '<id>') }}</p>
 
   <div class="form-actions">
-    <button class="btn btn-primary" type="submit">Salvar</button>
-    <a class="btn" href="{{ url_for('pages.index') }}">Cancelar</a>
+    <button class="btn btn-primary" type="submit">{{ _('Salvar') }}</button>
+    <a class="btn" href="{{ url_for('pages.index') }}">{{ _('Cancelar') }}</a>
   </div>
 </form>
 
@@ -54,20 +47,14 @@
    download de arquivos do servidor não podem vazar para visitante sem login. #}
 <section class="card">
   <div class="page-head">
-    <h2>Arquivos desta estação no servidor</h2>
+    <h2>{{ _('Arquivos desta estação no servidor') }}</h2>
     <span>
-      <a class="btn btn-sm" href="{{ url_for('hub.files', area='archive', subpath=station['id'], estacao=station['id']) }}">Arquivados</a>
-      <a class="btn btn-sm" href="{{ url_for('hub.files', area='quarantine', subpath=station['id'], estacao=station['id']) }}">Quarentena</a>
-      <a class="btn btn-sm" href="{{ url_for('hub.station', station_id=station['id']) }}">Gerenciar na Coleta</a>
+      <a class="btn btn-sm" href="{{ url_for('hub.files', area='archive', subpath=station['id'], estacao=station['id']) }}">{{ _('Arquivados') }}</a>
+      <a class="btn btn-sm" href="{{ url_for('hub.files', area='quarantine', subpath=station['id'], estacao=station['id']) }}">{{ _('Quarentena') }}</a>
+      <a class="btn btn-sm" href="{{ url_for('hub.station', station_id=station['id']) }}">{{ _('Gerenciar na Coleta') }}</a>
     </span>
   </div>
-  <p class="empty" id="browse-hint">Navegue em <code>incoming/{{ station['id'] }}/</code>
-    — o diretório do <strong>Arquivo de watchdog</strong> cadastrado acima — e
-    <strong>marque os arquivos que quer monitorar</strong>. A navegação é
-    <strong>somente leitura</strong> (listar e baixar): a dashboard nunca apaga nem move
-    arquivos do hub. A seleção <strong>sobrevive à troca de pastas</strong>; ao final
-    clique em <em>Adicionar selecionados</em>. Depois use <em>Editar</em> em cada arquivo
-    para mapear as colunas e variáveis.</p>
+  <p class="empty" id="browse-hint">{{ _('Navegue em <code>incoming/%(id)s/</code> — o diretório do <strong>Arquivo de watchdog</strong> cadastrado acima — e <strong>marque os arquivos que quer monitorar</strong>. A navegação é <strong>somente leitura</strong> (listar e baixar): a dashboard nunca apaga nem move arquivos do hub. A seleção <strong>sobrevive à troca de pastas</strong>; ao final clique em <em>Adicionar selecionados</em>. Depois use <em>Editar</em> em cada arquivo para mapear as colunas e variáveis.', id=station['id']) }}</p>
 
   <form method="post" id="browse-form"
         data-url="{{ url_for('api.station_browse', station_id=station['id']) }}"
@@ -78,9 +65,9 @@
       <p class="mono" id="browse-crumbs"></p>
       {# Filtro 100% client-side (dashboard.js): esconde linhas da pasta atual, não
          refaz a listagem nem desmarca o que já foi selecionado. #}
-      <label class="discover-filter">Filtrar nesta pasta
+      <label class="discover-filter">{{ _('Filtrar nesta pasta') }}
         <input type="text" id="browse-filter" autocomplete="off"
-               placeholder="texto ou extensão — ex.: .dat, meteo">
+               placeholder="{{ _('texto ou extensão — ex.: .dat, meteo') }}">
       </label>
     </div>
     <div id="browse-results" style="overflow-x:auto"></div>
@@ -89,9 +76,9 @@
        da seleção acumulada — é o que permite marcar arquivos de pastas diferentes. #}
     <div id="browse-payload" hidden></div>
     <div class="form-actions">
-      <button type="button" class="btn" id="btn-browse-all">Marcar/desmarcar visíveis</button>
-      <button type="button" class="btn" id="btn-browse-clear">Limpar seleção</button>
-      <button class="btn btn-primary" type="submit" id="btn-browse-add">Adicionar selecionados</button>
+      <button type="button" class="btn" id="btn-browse-all">{{ _('Marcar/desmarcar visíveis') }}</button>
+      <button type="button" class="btn" id="btn-browse-clear">{{ _('Limpar seleção') }}</button>
+      <button class="btn btn-primary" type="submit" id="btn-browse-add">{{ _('Adicionar selecionados') }}</button>
     </div>
   </form>
 </section>
@@ -99,15 +86,14 @@
 
 <section class="card">
   <div class="page-head">
-    <h2>Arquivos monitorados desta estação</h2>
-    <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station['id']) }}">+ Adicionar arquivo</a>
+    <h2>{{ _('Arquivos monitorados desta estação') }}</h2>
+    <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station['id']) }}">{{ _('+ Adicionar arquivo') }}</a>
   </div>
   {% if not station.get('files') %}
-    <p class="empty">Nenhum arquivo ainda. É no cadastro do <strong>arquivo</strong> que se configura o
-    separador de colunas, o cabeçalho, o timestamp e as variáveis a plotar.</p>
+    <p class="empty">{{ _('Nenhum arquivo ainda. É no cadastro do <strong>arquivo</strong> que se configura o separador de colunas, o cabeçalho, o timestamp e as variáveis a plotar.') }}</p>
   {% else %}
     <table class="table">
-      <thead><tr><th>Arquivo · caminho</th><th>Apelido</th><th>Linhas do final</th><th>Variáveis</th><th></th></tr></thead>
+      <thead><tr><th>{{ _('Arquivo · caminho') }}</th><th>{{ _('Apelido') }}</th><th>{{ _('Linhas do final') }}</th><th>{{ _('Variáveis') }}</th><th></th></tr></thead>
       <tbody>
       {% for f in station['files'] %}
         <tr>
@@ -125,24 +111,24 @@
              conferir tudo sem abrir o cadastro. #}
           {% set rotulos = [] %}
           {% for v in f.variables %}
-            {% set _ = rotulos.append(v.label if v.label else 'coluna ' ~ v.column) %}
+            {% set _ok = rotulos.append(v.label if v.label else _('coluna') ~ ' ' ~ v.column) %}
           {% endfor %}
           <td class="vars-cell" title="{{ rotulos | join('\n') }}">
             {% if rotulos %}
-              <strong>{{ rotulos | length }}</strong> var.
+              <strong>{{ rotulos | length }}</strong> {{ _('var.') }}
               <small>{{ rotulos | join(' · ') | truncate(26, True, '…') }}</small>
             {% else %}
-              <span class="meta">nenhuma</span>
+              <span class="meta">{{ _('nenhuma') }}</span>
             {% endif %}
           </td>
           <td class="actions">
-            <a class="btn" href="{{ url_for('pages.file_edit', station_id=station['id'], file_id=f.id) }}">Editar</a>
+            <a class="btn" href="{{ url_for('pages.file_edit', station_id=station['id'], file_id=f.id) }}">{{ _('Editar') }}</a>
             <form method="post" style="display:inline"
                   action="{{ url_for('pages.file_delete', station_id=station['id'], file_id=f.id) }}"
-                  onsubmit="return confirm('Remover o arquivo \'{{ f.id }}\' do monitoramento? O arquivo em disco não é apagado — só deixa de ser exibido no dashboard.');">
+                  onsubmit='return confirm({{ _("Remover o arquivo %(id)s do monitoramento? O arquivo em disco não é apagado — só deixa de ser exibido no dashboard.", id=f.id) | tojson }});'>
               {# Mantém o admin nesta tela após excluir (o padrão da rota volta ao detalhe). #}
               <input type="hidden" name="back" value="edit">
-              <button class="btn btn-danger" type="submit">Remover</button>
+              <button class="btn btn-danger" type="submit">{{ _('Remover') }}</button>
             </form>
           </td>
         </tr>

@@ -30,6 +30,7 @@ from flask import (
 from werkzeug.security import check_password_hash
 
 from . import api_client, config_store, dbconn, hub, series, status
+from .i18n import gettext as _
 
 pages = Blueprint("pages", __name__)
 
@@ -89,8 +90,8 @@ def admin_required(view):
         if auth_enabled(cfg) and not session.get("admin"):
             if request.path.startswith("/api"):
                 from flask import jsonify
-                return jsonify({"error": "Login de administração necessário."}), 401
-            flash("Faça login para editar.", "error")
+                return jsonify({"error": _("Login de administração necessário.")}), 401
+            flash(_("Faça login para editar."), "error")
             return redirect(url_for("pages.login", next=request.path))
         return view(*args, **kwargs)
     return wrapped
@@ -106,18 +107,18 @@ def login_post():
     cfg = _load()
     if _check_login(cfg, request.form.get("username", ""), request.form.get("password", "")):
         session["admin"] = True
-        flash("Login de administração efetuado.", "ok")
+        flash(_("Login de administração efetuado."), "ok")
         nxt = request.form.get("next") or ""
         safe = nxt.startswith("/") and not nxt.startswith("//") and "\\" not in nxt
         return redirect(nxt if safe else url_for("pages.index"))
-    flash("Usuário ou senha incorretos.", "error")
+    flash(_("Usuário ou senha incorretos."), "error")
     return render_template("login.html"), 401
 
 
 @pages.post("/logout")
 def logout():
     session.pop("admin", None)
-    flash("Sessão de administração encerrada.", "ok")
+    flash(_("Sessão de administração encerrada."), "ok")
     return redirect(url_for("pages.index"))
 
 
@@ -153,7 +154,7 @@ def index():
             st["freshness"] = {"files": [], "level": "none", "total": 0,
                                "ok_count": 0, "problems": [], "unknown": [],
                                "newest": None, "newest_age": None,
-                               "tooltip": "falha ao ler os arquivos monitorados"}
+                               "tooltip": _("falha ao ler os arquivos monitorados")}
         stations.append(st)
     # Quantas estações do rsync-hub ainda não estão na dashboard (banner de importação).
     # Só varre para quem pode editar, e nunca deixa uma raiz mal configurada quebrar a página.
@@ -212,12 +213,12 @@ def settings_save():
         rewritten = sum(hub.rewrite_absolute_paths(cfg, ob, new_abs) for ob in old_bases)
     _save(cfg)
     if rewritten:
-        flash(f"{rewritten} caminho(s) absoluto(s) de cadastros (watchdog, arquivos "
-              "monitorados, log de conexões) foram reapontados para a nova raiz.", "ok")
+        flash(_("%(n)s caminho(s) absoluto(s) de cadastros (watchdog, arquivos "
+                "monitorados, log de conexões) foram reapontados para a nova raiz.", n=rewritten), "ok")
     if updated.get("data_root_adjusted"):
-        flash(f"A raiz apontava para uma pasta incoming/; ajustei para '{updated['data_root']}' "
-              "(a raiz do hub é a que CONTÉM incoming/).", "ok")
-    flash("Configuração master salva. Pastas, heartbeat e log passam a derivar da nova raiz.", "ok")
+        flash(_("A raiz apontava para uma pasta incoming/; ajustei para '%(raiz)s' "
+                "(a raiz do hub é a que CONTÉM incoming/).", raiz=updated['data_root']), "ok")
+    flash(_("Configuração master salva. Pastas, heartbeat e log passam a derivar da nova raiz."), "ok")
     return redirect(url_for("pages.settings"))
 
 
@@ -228,7 +229,7 @@ def stations_import_detected():
     try:
         detected = config_store.detect_hub_stations(cfg)
     except Exception as exc:  # noqa: BLE001
-        flash(f"Falha ao detectar estações do rsync-hub: {exc}", "error")
+        flash(_("Falha ao detectar estações do rsync-hub: %(erro)s", erro=exc), "error")
         return redirect(url_for("pages.index"))
     added = 0
     for d in detected:
@@ -238,11 +239,11 @@ def stations_import_detected():
         added += 1
     if added:
         _save(cfg)
-        flash(f"{added} estação(ões) importada(s) do rsync-hub. Pastas e heartbeat usam os "
-              "locais padrão sob a raiz do hub — abra cada uma para adicionar arquivos "
-              "de monitoramento.", "ok")
+        flash(_("%(n)s estação(ões) importada(s) do rsync-hub. Pastas e heartbeat usam os "
+                "locais padrão sob a raiz do hub — abra cada uma para adicionar arquivos "
+                "de monitoramento.", n=added), "ok")
     else:
-        flash("Nenhuma estação nova detectada no rsync-hub.", "ok")
+        flash(_("Nenhuma estação nova detectada no rsync-hub."), "ok")
     return redirect(url_for("pages.index"))
 
 
@@ -335,7 +336,7 @@ def station_create():
         return render_template("station_form.html", station=request.form), 400
     cfg["stations"].append(station)
     _save(cfg)
-    flash(f"Estação '{station['id']}' cadastrada.", "ok")
+    flash(_("Estação '%(id)s' cadastrada.", id=station['id']), "ok")
     return redirect(url_for("pages.station_detail", station_id=station["id"]))
 
 
@@ -406,7 +407,7 @@ def station_update(station_id):
     station["latitude"] = updated["latitude"]
     station["longitude"] = updated["longitude"]
     _save(cfg)
-    flash("Estação atualizada.", "ok")
+    flash(_("Estação atualizada."), "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))
 
 
@@ -417,8 +418,8 @@ def station_delete(station_id):
     _station_or_404(cfg, station_id)
     cfg["stations"] = [s for s in cfg["stations"] if s["id"] != station_id]
     _save(cfg)
-    flash(f"Estação '{station_id}' removida da dashboard. Os arquivos em disco e o que já estava no banco "
-          "continuam lá (séries órfãs: Banco → Diagnóstico para remover, se for o caso).", "ok")
+    flash(_("Estação '%(id)s' removida da dashboard. Os arquivos em disco e o que já estava no banco "
+            "continuam lá (séries órfãs: Banco → Diagnóstico para remover, se for o caso).", id=station_id), "ok")
     return redirect(url_for("pages.index"))
 
 
@@ -445,7 +446,7 @@ def file_create(station_id):
     entry["id"] = config_store.unique_file_id(station, entry["path"])
     station.setdefault("files", []).append(entry)
     _save(cfg)
-    flash(f"Arquivo '{entry['id']}' adicionado ao monitoramento.", "ok")
+    flash(_("Arquivo '%(id)s' adicionado ao monitoramento.", id=entry['id']), "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))
 
 
@@ -499,10 +500,10 @@ def files_discover_add(station_id):
 
     if added:
         _save(cfg)
-        flash(f"{added} arquivo(s) adicionado(s) ao monitoramento. Abra 'Editar' em cada "
-              "um para mapear as colunas e variáveis antes de aparecerem gráficos.", "ok")
+        flash(_("%(n)s arquivo(s) adicionado(s) ao monitoramento. Abra 'Editar' em cada "
+                "um para mapear as colunas e variáveis antes de aparecerem gráficos.", n=added), "ok")
     else:
-        flash("Nenhum arquivo novo foi selecionado.", "error")
+        flash(_("Nenhum arquivo novo foi selecionado."), "error")
     return redirect(url_for("pages.station_edit", station_id=station_id))
 
 
@@ -540,7 +541,7 @@ def file_update(station_id, file_id):
         for f in station["files"]
     ]
     _save(cfg)
-    flash("Configuração do arquivo atualizada.", "ok")
+    flash(_("Configuração do arquivo atualizada."), "ok")
     return redirect(url_for("pages.station_detail", station_id=station_id))
 
 
@@ -551,8 +552,9 @@ def file_delete(station_id, file_id):
     station = _station_or_404(cfg, station_id)
     station["files"] = [f for f in station.get("files", []) if f["id"] != file_id]
     _save(cfg)
-    flash(f"Arquivo '{file_id}' removido do monitoramento. O arquivo em disco e o que já estava no banco "
-          "continuam lá (para apagar do banco: Banco → tabela → Zona de perigo, ou Diagnóstico → séries órfãs).", "ok")
+    flash(_("Arquivo '%(id)s' removido do monitoramento. O arquivo em disco e o que já estava no banco "
+            "continuam lá (para apagar do banco: Banco → tabela → Zona de perigo, ou Diagnóstico → séries órfãs).",
+            id=file_id), "ok")
     # `back` é um RÓTULO mapeado via url_for (mesma regra dos botões do hub) — nunca
     # uma URL vinda do cliente, para não abrir redirect arbitrário.
     if request.form.get("back") == "edit":
@@ -587,21 +589,22 @@ def api_keys_create():
         days = int(request.form.get("days") or 365)
         rate = int(request.form.get("rate_limit") or 120)
     except ValueError:
-        flash("Validade e limite devem ser números.", "error")
+        flash(_("Validade e limite devem ser números."), "error")
         return redirect(url_for("pages.api_keys"))
     body = {"owner": (request.form.get("owner") or "").strip() or "sem-nome",
             "scopes": scopes or ["read"], "rate_limit": rate, "days": days if days > 0 else None}
     try:
         created = api_client.post(cfg, "/admin/keys", body) or {}
     except api_client.ApiError as exc:
-        flash(f"Não foi possível criar a chave: {exc}", "error")
+        flash(_("Não foi possível criar a chave: %(erro)s", erro=exc), "error")
         return redirect(url_for("pages.api_keys"))
     if not created.get("key"):
-        flash("A API não devolveu a chave.", "error")
+        flash(_("A API não devolveu a chave."), "error")
         return redirect(url_for("pages.api_keys"))
     session["new_api_key"] = {"key": created.get("key"), "owner": created.get("owner"),
                               "prefix": created.get("prefix")}
-    flash(f"Chave criada para '{created.get('owner')}'. Copie-a AGORA: ela não será mostrada de novo.", "ok")
+    flash(_("Chave criada para '%(dono)s'. Copie-a AGORA: ela não será mostrada de novo.",
+            dono=created.get('owner')), "ok")
     return redirect(url_for("pages.api_keys"))
 
 
@@ -611,9 +614,9 @@ def api_keys_revoke(key_id: int):
     cfg = _load()
     try:
         api_client.delete(cfg, f"/admin/keys/{key_id}")
-        flash(f"Chave #{key_id} revogada.", "ok")
+        flash(_("Chave #%(id)s revogada.", id=key_id), "ok")
     except api_client.ApiError as exc:
-        flash(f"Não foi possível revogar: {exc}", "error")
+        flash(_("Não foi possível revogar: %(erro)s", erro=exc), "error")
     return redirect(url_for("pages.api_keys"))
 
 
@@ -659,13 +662,13 @@ def _pending_reason(f: dict, seen: set | None, station_id: str, ledger: dict) ->
     if not f.get("ingest") or ledger.get((station_id, f.get("id"))):
         return None
     if seen is None or ledger.get("_error"):
-        return "estado indisponível: a API não respondeu (Configurações → API de dados)"
+        return _("estado indisponível: a API não respondeu (Configurações → API de dados)")
     if (station_id, f.get("id")) not in seen:
-        return ("a ingestão ainda não leu este registro — ela relê o config a cada ciclo (30 s); "
-                "se persistir, o serviço ingestion não está enxergando o config.yaml atual")
-    return ("nenhum arquivo casou com o caminho/padrão registrado (ou ainda está sendo escrito) — "
-            "confira o caminho em Editar parse/colunas e a verificação 'Registros ingeridos sem "
-            "nenhum arquivo encontrado' em Banco → Diagnóstico")
+        return _("a ingestão ainda não leu este registro — ela relê o config a cada ciclo (30 s); "
+                 "se persistir, o serviço ingestion não está enxergando o config.yaml atual")
+    return _("nenhum arquivo casou com o caminho/padrão registrado (ou ainda está sendo escrito) — "
+             "confira o caminho em Editar parse/colunas e a verificação 'Registros ingeridos sem "
+             "nenhum arquivo encontrado' em Banco → Diagnóstico")
 
 
 def _treat_summary(f: dict) -> dict:
@@ -722,7 +725,8 @@ def treatment_save(station_id, file_id):
         return redirect(url_for("pages.treatment_file", station_id=station_id, file_id=file_id))
     station["files"] = [novo if f["id"] == file_id else f for f in station["files"]]
     _save(cfg)
-    flash(f"Tratamento de {file_id} salvo" + (" — no banco." if novo.get("ingest") else " — fora do banco."), "ok")
+    flash(_("Tratamento de %(id)s salvo — no banco.", id=file_id) if novo.get("ingest")
+          else _("Tratamento de %(id)s salvo — fora do banco.", id=file_id), "ok")
     if request.form.get("back") == "file":
         return redirect(url_for("pages.treatment_file", station_id=station_id, file_id=file_id))
     return redirect(url_for("pages.treatment"))
@@ -841,7 +845,7 @@ def banco_new_schema():
     name = (request.form.get("name") or "").strip().lower()
     if _api_or_flash(cfg, api_client.post, "/admin/db/schemas",
                      {"name": name, "comment": (request.form.get("comment") or "").strip()}):
-        flash(f"Banco '{name}' criado.", "ok")
+        flash(_("Banco '%(nome)s' criado.", nome=name), "ok")
         return redirect(url_for("pages.banco_schema", schema=name))
     return redirect(url_for("pages.banco"))
 
@@ -874,10 +878,10 @@ def banco_new_table(schema):
             "comment": (request.form.get("comment") or "").strip(),
             "hypertable": bool(request.form.get("hypertable"))}
     if not cols:
-        flash("Defina pelo menos uma coluna.", "error")
+        flash(_("Defina pelo menos uma coluna."), "error")
         return redirect(url_for("pages.banco_schema", schema=schema))
     if _api_or_flash(cfg, api_client.post, "/admin/db/tables", body):
-        flash(f"Tabela '{body['name']}' criada.", "ok")
+        flash(_("Tabela '%(nome)s' criada.", nome=body['name']), "ok")
         return redirect(url_for("pages.banco_table", schema=schema, table=body["name"]))
     return redirect(url_for("pages.banco_schema", schema=schema))
 
@@ -907,7 +911,7 @@ def banco_insert(schema, table):
     cfg = _load()
     values = {k[4:]: v for k, v in request.form.items() if k.startswith("col_")}
     if _api_or_flash(cfg, api_client.post, "/admin/db/rows", {"schema": schema, "table": table, "values": values}):
-        flash("Linha inserida.", "ok")
+        flash(_("Linha inserida."), "ok")
         return redirect(url_for("pages.banco_table", schema=schema, table=table))
     return redirect(url_for("pages.banco_table", schema=schema, table=table, aba="inserir"))
 
@@ -919,7 +923,7 @@ def banco_delete_row(schema, table):
     ctid = (request.form.get("ctid") or "").strip()
     try:
         api_client.delete_json(cfg, "/admin/db/rows", {"schema": schema, "table": table, "ctid": ctid})
-        flash("Linha apagada.", "ok")
+        flash(_("Linha apagada."), "ok")
     except api_client.ApiError as exc:
         flash(str(exc), "error")
     return redirect(url_for("pages.banco_table", schema=schema, table=table,
@@ -933,7 +937,7 @@ def banco_drop_table(schema, table):
     try:
         api_client.delete_json(cfg, "/admin/db/tables",
                                {"schema": schema, "table": table, "confirm": (request.form.get("confirm") or "").strip()})
-        flash(f"Tabela '{table}' excluída.", "ok")
+        flash(_("Tabela '%(nome)s' excluída.", nome=table), "ok")
         return redirect(url_for("pages.banco_schema", schema=schema))
     except api_client.ApiError as exc:
         flash(str(exc), "error")
@@ -966,11 +970,11 @@ def banco_conexao_save():
     if mode == "local":
         host, port = "db", "5432"
     if not host or not port.isdigit() or not re.match(r"^[a-z_][a-z0-9_]*$", name) or not re.match(r"^[a-z_][a-z0-9_]*$", user):
-        flash("Confira host, porta (número), banco e usuário (minúsculas, números e '_').", "error")
+        flash(_("Confira host, porta (número), banco e usuário (minúsculas, números e '_')."), "error")
         return redirect(url_for("pages.banco_conexao"))
     if acao == "testar":
         ok, out = dbconn.test_connection(host, port, name, user, password or None)
-        flash(("Conexão OK — " if ok else "Falha na conexão — ") + out[-600:], "ok" if ok else "error")
+        flash((_("Conexão OK") if ok else _("Falha na conexão")) + " — " + out[-600:], "ok" if ok else "error")
         return redirect(url_for("pages.banco_conexao"))
     updates = {"COMPOSE_PROFILES": "local-db" if mode == "local" else "", "DB_HOST": host,
                "DB_INTERNAL_PORT": port, "DB_NAME": name, "DB_USER": user}
@@ -979,10 +983,11 @@ def banco_conexao_save():
     try:
         dbconn.write_env(updates)
     except OSError as exc:
-        flash(f"Não consegui gravar o .env: {exc}", "error")
+        flash(_("Não consegui gravar o .env: %(erro)s", erro=exc), "error")
         return redirect(url_for("pages.banco_conexao"))
-    flash(f"Conexão gravada em {dbconn.env_path()} (modo {mode}, {host}:{port}/{name}). "
-          "Clique em 'Aplicar aos serviços' para a API e a ingestão passarem a usar.", "ok")
+    flash(_("Conexão gravada em %(arq)s (modo %(modo)s, %(host)s:%(porta)s/%(banco)s). "
+            "Clique em 'Aplicar aos serviços' para a API e a ingestão passarem a usar.",
+            arq=dbconn.env_path(), modo=mode, host=host, porta=port, banco=name), "ok")
     return redirect(url_for("pages.banco_conexao"))
 
 
@@ -992,10 +997,10 @@ def banco_conexao_apply():
     acao = request.form.get("acao") or "aplicar"
     if acao == "parar-db-local":
         ok, out = dbconn.stop_local_db()
-        flash(("Banco local parado.\n" if ok else "Falha ao parar o banco local.\n") + out, "ok" if ok else "error")
+        flash((_("Banco local parado.") if ok else _("Falha ao parar o banco local.")) + "\n" + out, "ok" if ok else "error")
     else:
         ok, out = dbconn.apply(dbconn.current()["mode"])
-        flash(("Serviços atualizados.\n" if ok else "Falha ao aplicar.\n") + out, "ok" if ok else "error")
+        flash((_("Serviços atualizados.") if ok else _("Falha ao aplicar.")) + "\n" + out, "ok" if ok else "error")
     return redirect(url_for("pages.banco_conexao"))
 
 
@@ -1025,10 +1030,10 @@ def banco_manutencao():
     cfg = _load()
     action = request.form.get("action") or ""
     if action not in _MAINT_ACTIONS:
-        flash("Ação desconhecida.", "error")
+        flash(_("Ação desconhecida."), "error")
         return redirect(url_for("pages.banco_diagnostico"))
     if action.startswith("purge") and request.form.get("confirm") != "APAGAR":
-        flash("Para ações que apagam dados, digite APAGAR no campo de confirmação.", "error")
+        flash(_("Para ações que apagam dados, digite APAGAR no campo de confirmação."), "error")
         return redirect(url_for("pages.banco_diagnostico"))
     try:
         days = int(request.form.get("days") or 30)
@@ -1036,7 +1041,7 @@ def banco_manutencao():
         days = 30
     res = _api_or_flash(cfg, api_client.post, "/admin/db/maintenance", {"action": action, "days": days}, timeout=900)
     if res:
-        flash(f"{_MAINT_ACTIONS[action][0]}: {res.get('detail')} ({res.get('elapsed_ms')} ms).", "ok")
+        flash(f"{_(_MAINT_ACTIONS[action][0])}: {res.get('detail')} ({res.get('elapsed_ms')} ms).", "ok")
     return redirect(url_for("pages.banco_diagnostico"))
 
 
@@ -1071,7 +1076,7 @@ def banco_export(schema, table):
                 w.writerow(r[skip:])
             data = buf.getvalue().encode("utf-8")
     except api_client.ApiError as exc:
-        flash(f"Exportação falhou: {exc}", "error")
+        flash(_("Exportação falhou: %(erro)s", erro=exc), "error")
         return redirect(url_for("pages.banco_table", schema=schema, table=table))
     from werkzeug.utils import secure_filename
     resp = Response(data, mimetype="text/csv")
@@ -1099,7 +1104,7 @@ def _danger(cfg, path, body, ok_msg, back, **extra):
     import collections
     try:
         res = api_client.post(cfg, path, body, timeout=600) or {}
-        flash(ok_msg.format_map(collections.defaultdict(lambda: "?", {**res, **extra})), "ok")
+        flash(_(ok_msg).format_map(collections.defaultdict(lambda: "?", {**res, **extra})), "ok")
     except api_client.ApiError as exc:
         flash(str(exc), "error")
     return redirect(back)
@@ -1149,8 +1154,9 @@ def banco_station_drop_table(schema, table):
             if f.get("id") == fk or config_store.table_name_of(f) == table:
                 f["ingest"] = False
         _save(cfg)
-    flash(f"Tabela {schema}.{table} apagada: {res.get('deleted')} valor(es) removido(s), view removida e ingestão "
-          "do arquivo desligada (o arquivo em disco e o monitoramento dos gráficos continuam).", "ok")
+    flash(_("Tabela %(tabela)s apagada: %(n)s valor(es) removido(s), view removida e ingestão "
+            "do arquivo desligada (o arquivo em disco e o monitoramento dos gráficos continuam).",
+            tabela=f"{schema}.{table}", n=res.get('deleted')), "ok")
     return redirect(url_for("pages.banco_schema", schema=schema))
 
 

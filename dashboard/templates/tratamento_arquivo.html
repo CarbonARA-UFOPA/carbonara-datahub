@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Tratamento · {{ f.alias or f.id }} · CARBONARA{% endblock %}
+{% block title %}{{ _('Tratamento') }} · {{ f.alias or f.id }} · CARBONARA{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Tratamento — {{ f.alias or f.id }} <small>{{ station.name or station.id }} · <code>{{ f.path }}</code></small></h1>
+  <h1>{{ _('Tratamento') }} — {{ f.alias or f.id }} <small>{{ station.name or station.id }} · <code>{{ f.path }}</code></small></h1>
   <div>
-    <a class="btn" href="{{ url_for('pages.treatment') }}">← Todos os arquivos</a>
-    <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar parse/colunas</a>
+    <a class="btn" href="{{ url_for('pages.treatment') }}">{{ _('← Todos os arquivos') }}</a>
+    <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">{{ _('Editar parse/colunas') }}</a>
   </div>
 </div>
 
@@ -14,55 +14,55 @@
   <input type="hidden" name="back" value="file">
   <div class="grid-2">
     <label class="check-row"><input type="checkbox" name="ingest" value="1" {{ 'checked' if f.get('ingest') }}>
-      <span><strong>Ingerir este arquivo no banco</strong>
-        {% if lg %}<br><small class="meta">{{ '{:,}'.format(lg.n_values).replace(',', '.') }} valores no banco
-          {%- if lg.last_time %} · até {{ lg.last_time[:16] | replace('T', ' ') }} UTC{% endif %}
-          {%- if lg.pending %} · {{ (lg.pending / 1024) | round(0) | int }} kB pendentes{% endif %}
-          {%- if lg.errors %} · <span class="warn">erro: {{ lg.errors[0] }}</span>{% endif %}</small>
-        {% elif pendente %}<br><small class="warn">⏳ sem leitura ainda: {{ pendente }}.</small>{% endif %}</span></label>
-    <label>Tipo de dado
-      <input name="data_type" list="data-type-list" value="{{ f.data_type or '' }}" placeholder="ex.: datalogger, fluxo, radiacao">
+      <span><strong>{{ _('Ingerir este arquivo no banco') }}</strong>
+        {% if lg %}<br><small class="meta">{{ _('%(n)s valores no banco', n='{:,}'.format(lg.n_values).replace(',', '.')) }}
+          {%- if lg.last_time %} · {{ _('até %(quando)s UTC', quando=lg.last_time[:16] | replace('T', ' ')) }}{% endif %}
+          {%- if lg.pending %} · {{ _('%(n)s kB pendentes', n=(lg.pending / 1024) | round(0) | int) }}{% endif %}
+          {%- if lg.errors %} · <span class="warn">{{ _('erro: %(erro)s', erro=lg.errors[0]) }}</span>{% endif %}</small>
+        {% elif pendente %}<br><small class="warn">{{ _('⏳ sem leitura ainda: %(motivo)s.', motivo=pendente) }}</small>{% endif %}</span></label>
+    <label>{{ _('Tipo de dado') }}
+      <input name="data_type" list="data-type-list" value="{{ f.data_type or '' }}" placeholder="{{ _('ex.: datalogger, fluxo, radiacao') }}">
       <datalist id="data-type-list">{% for t in data_types %}<option value="{{ t }}">{% endfor %}</datalist>
-      <small>Agrupa os arquivos da estação; no banco: <code>{{ station.id }}__{{ f.data_type or 'tipo' }}</code>.</small></label>
-    <label>Nome da tabela no banco
+      <small>{{ _('Agrupa os arquivos da estação; no banco: <code>%(esquema)s</code>.', esquema=station.id ~ '__' ~ (f.data_type or _('tipo'))) }}</small></label>
+    <label>{{ _('Nome da tabela no banco') }}
       <input name="table_name" value="{{ f.table_name or '' }}" placeholder="{{ f.id }}" pattern="[A-Za-z][A-Za-z0-9_ ]{0,62}">
-      <small>Vazio = <code>{{ f.id }}</code>. Trocar o nome move a tabela (o histórico fica).</small></label>
-    <label>Fuso dos carimbos do arquivo
-      <input name="timezone" list="tz-list" value="{{ f.timezone or '' }}" placeholder="vazio = UTC">
-      <small>Epoch já é UTC e ignora este campo.</small></label>
-    <label>Reamostrar antes de gravar
+      <small>{{ _('Vazio = <code>%(id)s</code>. Trocar o nome move a tabela (o histórico fica).', id=f.id) }}</small></label>
+    <label>{{ _('Fuso dos carimbos do arquivo') }}
+      <input name="timezone" list="tz-list" value="{{ f.timezone or '' }}" placeholder="{{ _('vazio = UTC') }}">
+      <small>{{ _('Epoch já é UTC e ignora este campo.') }}</small></label>
+    <label>{{ _('Reamostrar antes de gravar') }}
       {% set rs = f.resample or 'raw' %}
       <select name="resample">
-        <option value="raw" {{ 'selected' if rs == 'raw' }}>Não — cada registro</option>
-        <option value="1min" {{ 'selected' if rs == '1min' }}>Média por 1 min</option>
-        <option value="30min" {{ 'selected' if rs == '30min' }}>Média por 30 min</option>
+        <option value="raw" {{ 'selected' if rs == 'raw' }}>{{ _('Não — cada registro') }}</option>
+        <option value="1min" {{ 'selected' if rs == '1min' }}>{{ _('Média por 1 min') }}</option>
+        <option value="30min" {{ 'selected' if rs == '30min' }}>{{ _('Média por 30 min') }}</option>
       </select></label>
   </div>
 
-  <h2>Variáveis <small class="meta">{{ resumo.no_banco }} de {{ resumo.total }} no banco</small></h2>
-  <p class="meta">As regras só marcam <code>quality</code>, nunca alteram o valor: <strong>Mín/Máx</strong> =
+  <h2>{{ _('Variáveis') }} <small class="meta">{{ _('%(n)s de %(total)s no banco', n=resumo.no_banco, total=resumo.total) }}</small></h2>
+  <p class="meta">{{ _('As regras só marcam <code>quality</code>, nunca alteram o valor: <strong>Mín/Máx</strong> =
     faixa física (flag 2) · <strong>Salto máx.</strong> = maior variação aceitável entre duas leituras
     seguidas, na unidade da variável (flag 3) · <strong>Travado (N)</strong> = N leituras iguais seguidas
-    marcam sensor travado (flag 4). Vazio = regra desligada.</p>
+    marcam sensor travado (flag 4). Vazio = regra desligada.') }}</p>
   <div class="treat-tools">
-    <input type="search" id="treat-filter" aria-label="filtrar variáveis" placeholder="filtrar variáveis (rótulo, ID, coluna)…">
+    <input type="search" id="treat-filter" aria-label="{{ _('filtrar variáveis') }}" placeholder="{{ _('filtrar variáveis (rótulo, ID, coluna)…') }}">
     <span class="meta" id="treat-count"></span>
-    <button type="button" class="btn" id="treat-all">Marcar visíveis</button>
-    <button type="button" class="btn" id="treat-none">Desmarcar visíveis</button>
-    <button type="button" class="btn" id="treat-invert">Inverter visíveis</button>
+    <button type="button" class="btn" id="treat-all">{{ _('Marcar visíveis') }}</button>
+    <button type="button" class="btn" id="treat-none">{{ _('Desmarcar visíveis') }}</button>
+    <button type="button" class="btn" id="treat-invert">{{ _('Inverter visíveis') }}</button>
   </div>
   <div class="treat-wrap">
   <table class="table treat-vars" id="treat-table">
-    <thead><tr><th>Banco</th><th>Variável</th><th>ID no banco</th><th>Mín</th><th>Máx</th>
-      <th title="salto máximo entre leituras seguidas (flag 3)">Salto máx.</th>
-      <th title="nº de leituras iguais seguidas que marca sensor travado (flag 4)">Travado (N)</th></tr></thead>
+    <thead><tr><th>{{ _('Banco') }}</th><th>{{ _('Variável') }}</th><th>{{ _('ID no banco') }}</th><th>{{ _('Mín') }}</th><th>{{ _('Máx') }}</th>
+      <th title="{{ _('salto máximo entre leituras seguidas (flag 3)') }}">{{ _('Salto máx.') }}</th>
+      <th title="{{ _('nº de leituras iguais seguidas que marca sensor travado (flag 4)') }}">{{ _('Travado (N)') }}</th></tr></thead>
     <tbody>
     {% for v in f.variables %}
       {% set i = loop.index0 %}
       {% set vt = v.type or 'numero' %}
       <tr data-text="{{ (v.label ~ ' ' ~ (v.variable_id or '') ~ ' ' ~ v.column ~ ' ' ~ vt) | lower }}">
         <td><input type="checkbox" name="v{{ i }}_ingest" value="1" class="treat-chk" {{ 'checked' if v.get('ingest') is not false }}
-                   {% if vt == 'texto' %}title="texto: entra no banco como coluna de texto (sem gráfico e sem regras de QC)"{% endif %}></td>
+                   {% if vt == 'texto' %}title="{{ _('texto: entra no banco como coluna de texto (sem gráfico e sem regras de QC)') }}"{% endif %}></td>
         <td><strong>{{ v.label }}</strong>{% if v.unit %} <small class="meta">({{ v.unit }})</small>{% endif %}
             <br><small class="meta">col {{ v.column }} · {{ vt }}</small></td>
         <td><input name="v{{ i }}_id" value="{{ v.variable_id or '' }}" placeholder="auto" class="num-input"></td>
@@ -75,14 +75,14 @@
     </tbody>
   </table>
   </div>
-  {% if not f.variables %}<p class="empty">Sem variáveis mapeadas — mapeie as colunas em <em>Editar parse/colunas</em>.</p>{% endif %}
+  {% if not f.variables %}<p class="empty">{{ _('Sem variáveis mapeadas — mapeie as colunas em <em>Editar parse/colunas</em>.') }}</p>{% endif %}
   <div class="form-actions sticky-actions">
-    <button class="btn btn-primary" type="submit">Salvar tratamento</button>
-    <a class="btn" href="{{ url_for('pages.treatment') }}">Cancelar</a>
-    <span class="meta" id="treat-dirty" hidden>alterações não salvas</span>
+    <button class="btn btn-primary" type="submit">{{ _('Salvar tratamento') }}</button>
+    <a class="btn" href="{{ url_for('pages.treatment') }}">{{ _('Cancelar') }}</a>
+    <span class="meta" id="treat-dirty" hidden>{{ _('alterações não salvas') }}</span>
   </div>
-  <p class="meta">Para reaplicar estas regras ao histórico já gravado: no banco da estação, abra a tabela deste arquivo
-    → <em>Zona de perigo</em> → <em>Zerar e reingerir</em>.</p>
+  <p class="meta">{{ _('Para reaplicar estas regras ao histórico já gravado: no banco da estação, abra a tabela deste arquivo
+    → <em>Zona de perigo</em> → <em>Zerar e reingerir</em>.') }}</p>
 </form>
 
 <datalist id="tz-list">
@@ -96,7 +96,7 @@
     function visiveis() { return rows.filter(function (r) { return !r.hidden; }); }
     function atualiza() {
       var marcadas = rows.filter(function (r) { var c = r.querySelector(".treat-chk"); return c && c.checked; }).length;
-      cont.textContent = visiveis().length + " de " + rows.length + " visíveis · " + marcadas + " no banco";
+      cont.textContent = t("%(v)s de %(n)s visíveis · %(m)s no banco", {v: visiveis().length, n: rows.length, m: marcadas});
     }
     filtro.addEventListener("input", function () {
       var q = filtro.value.trim().toLowerCase();

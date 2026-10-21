@@ -1,42 +1,42 @@
 {% extends "base.html" %}
-{% block title %}Coleta (rsync-hub) · CARBONARA{% endblock %}
+{% block title %}{{ _('Coleta (rsync-hub)') }} · CARBONARA{% endblock %}
 {% block content %}
 {# Tolerante a um processo antigo servindo este template (git pull sem reiniciar):
    sem `pause` no contexto, a página degrada em vez de estourar 500. #}
 {% set pause = pause if pause is defined and pause else {'all': None, 'stations': {}, 'paused_ids': [], 'any': False} %}
-<h1>Coleta — gerenciamento do rsync-hub</h1>
+<h1>{{ _('Coleta — gerenciamento do rsync-hub') }}</h1>
 
 <section class="card help-card">
-  Esta tela administra a <strong>coleta</strong> (o rsync-hub) pela dashboard:
+  {{ _('Esta tela administra a <strong>coleta</strong> (o rsync-hub) pela dashboard:
   autorizar e revogar estações, ver/baixar credenciais e navegar pelos arquivos de
   cada estação (botão <em>arquivos</em> na lista, ou <em>gerenciar</em> para
   recebidos/arquivados/quarentena). As operações de escrita executam o próprio <code>rsync-hub</code>
-  no host — a lógica de chaves continua num lugar só.
+  no host — a lógica de chaves continua num lugar só.') }}
 </section>
 
 {% if not info.can_write %}
 <div class="flash flash-error">
-  <strong>Gerenciamento em modo somente leitura.</strong>
+  <strong>{{ _('Gerenciamento em modo somente leitura.') }}</strong>
   {% if not info.bin %}
-    O executável <code>rsync-hub</code> não foi encontrado neste host — prepare-o com
-    <code>sudo ./collection/rsync-hub install</code>.
+    {{ _('O executável <code>rsync-hub</code> não foi encontrado neste host — prepare-o com
+    <code>sudo ./collection/rsync-hub install</code>.') }}
   {% else %}
-    A dashboard não tem permissão para executar <code>{{ info.bin }}</code> como root
-    sem senha.
+    {{ _('A dashboard não tem permissão para executar <code>%(bin)s</code> como root
+    sem senha.', bin=info.bin) }}
     {% if info.sudo_error %}
-      <br>Resposta do <code>sudo</code>:
+      <br>{{ _('Resposta do <code>sudo</code>:') }}
       <pre class="mono">{{ info.sudo_error }}</pre>
     {% endif %}
-    A dashboard roda como <strong>{{ info.user }}</strong> — é ESTE o usuário que
+    {{ _('A dashboard roda como <strong>%(user)s</strong> — é ESTE o usuário que
     precisa estar na regra (se o script foi rodado com outro nome, ou a partir de um
-    shell já root, a regra não vale aqui). Rode no servidor:
+    shell já root, a regra não vale aqui). Rode no servidor:', user=info.user) }}
     <pre class="mono">sudo dashboard/setup-hub-access.sh {{ info.user }}</pre>
-    Confira depois com <code>sudo -l -U {{ info.user }}</code>; se a regra aparece lá e
+    {{ _('Confira depois com <code>sudo -l -U %(user)s</code>; se a regra aparece lá e
     mesmo assim não vale, veja se o <code>/etc/sudoers</code> tem a linha
-    <code>#includedir /etc/sudoers.d</code>.
-    (ou libere manualmente no <code>visudo</code>: <code>{{ info.sudoers_hint }}</code>)
+    <code>#includedir /etc/sudoers.d</code>.', user=info.user) }}
+    {{ _('(ou libere manualmente no <code>visudo</code>: <code>%(hint)s</code>)', hint=info.sudoers_hint) }}
   {% endif %}
-  Enquanto isso, listagem, credenciais e downloads continuam funcionando.
+  {{ _('Enquanto isso, listagem, credenciais e downloads continuam funcionando.') }}
 </div>
 {% endif %}
 
@@ -44,69 +44,69 @@
 {# A raiz é assunto de Configurações (é lá que ela se edita e se migra) — aqui fica só
    o ponteiro, para quem chegou pela Coleta. #}
 <div class="flash flash-error">
-  A dashboard está lendo <code>{{ info.base }}</code>, mas o rsync-hub usa
-  <code>{{ info.conf_base }}</code>. Alinhe em
-  <a href="{{ url_for('pages.settings') }}">Configurações</a>.
+  {{ _('A dashboard está lendo <code>%(base)s</code>, mas o rsync-hub usa
+  <code>%(conf)s</code>. Alinhe em <a href="%(url)s">Configurações</a>.',
+  base=info.base, conf=info.conf_base, url=url_for('pages.settings')) }}
 </div>
 {% endif %}
 
 <section class="card">
-  <div class="page-head"><h2>Estações autorizadas no hub</h2></div>
+  <div class="page-head"><h2>{{ _('Estações autorizadas no hub') }}</h2></div>
   {% if not stations %}
-    <p class="empty">Nenhuma estação detectada sob <code>{{ info.base }}</code>.
-      Autorize a primeira no formulário abaixo.</p>
+    <p class="empty">{{ _('Nenhuma estação detectada sob <code>%(base)s</code>.
+      Autorize a primeira no formulário abaixo.', base=info.base) }}</p>
   {% else %}
     <table class="table">
       <thead><tr>
-        <th>Estação</th><th>Autenticação</th><th>Recepção</th><th>Credenciais no hub</th>
-        <th>Na dashboard?</th><th></th>
+        <th>{{ _('Estação') }}</th><th>{{ _('Autenticação') }}</th><th>{{ _('Recepção') }}</th><th>{{ _('Credenciais no hub') }}</th>
+        <th>{{ _('Na dashboard?') }}</th><th></th>
       </tr></thead>
       <tbody>
       {% for s in stations %}
         <tr>
           <td><strong><a href="{{ url_for('hub.station', station_id=s.id) }}">{{ s.id }}</a></strong></td>
           <td><small>
-            {% if s.key_mode %}chave SSH{% endif %}
+            {% if s.key_mode %}{{ _('chave SSH') }}{% endif %}
             {%- if s.key_mode and s.pw_mode %} · {% endif %}
-            {%- if s.pw_mode %}usuário+senha{% endif %}
-            {%- if not s.key_mode and not s.pw_mode %}<span class="meta">nenhuma (só dados)</span>{% endif %}
+            {%- if s.pw_mode %}{{ _('usuário+senha') }}{% endif %}
+            {%- if not s.key_mode and not s.pw_mode %}<span class="meta">{{ _('nenhuma (só dados)') }}</span>{% endif %}
           </small></td>
           <td>
             {% if s.paused %}
               <span class="dot dot-paused"></span>
-              <small>{% if s.paused_own %}pausada{% else %}pausa global{% endif %}</small>
+              <small>{% if s.paused_own %}{{ _('pausada') }}{% else %}{{ _('pausa global') }}{% endif %}</small>
             {% else %}
-              <span class="dot dot-online"></span> <small>ativa</small>
+              <span class="dot dot-online"></span> <small>{{ _('ativa') }}</small>
             {% endif %}
             {% if s.paused_own %}
               <form method="post" action="{{ url_for('hub.resume') }}" class="inline-form">
                 <input type="hidden" name="target" value="{{ s.id }}">
                 <input type="hidden" name="back" value="hub">
                 <button class="btn btn-sm" type="submit"
-                  {% if not info.can_write %}disabled{% endif %}>▶ retomar</button>
+                  {% if not info.can_write %}disabled{% endif %}>{{ _('▶ retomar') }}</button>
               </form>
             {% elif not pause.all %}
               <form method="post" action="{{ url_for('hub.pause') }}" class="inline-form"
-                    onsubmit="return confirm('Pausar a recepção de {{ s.id }}? Ela continua autorizada e reenvia os arquivos quando você retomar.');">
+                    onsubmit='return confirm({{ _("Pausar a recepção de %(id)s? Ela continua autorizada e reenvia os arquivos quando você retomar.", id=s.id) | tojson }});'>
                 <input type="hidden" name="target" value="{{ s.id }}">
                 <input type="hidden" name="back" value="hub">
                 <button class="btn btn-sm" type="submit"
-                  {% if not info.can_write %}disabled{% endif %}>⏸ pausar</button>
+                  {% if not info.can_write %}disabled{% endif %}>{{ _('⏸ pausar') }}</button>
               </form>
             {% endif %}
           </td>
           <td><small>{% if s.has_creds %}✓ stations/{{ s.id }}/{% else %}<span class="meta">—</span>{% endif %}</small></td>
           <td>
-            {% if s.in_dashboard %}<span style="color:var(--green)">✓ sim</span>
-            {% else %}<span class="meta">— ainda não</span>{% endif %}
+            {% if s.in_dashboard %}<span style="color:var(--green)">{{ _('✓ sim') }}</span>
+            {% else %}<span class="meta">{{ _('— ainda não') }}</span>{% endif %}
           </td>
           <td class="ta-right">
             {% if s.incoming %}
-              <a class="btn btn-sm" href="{{ url_for('hub.files', area='incoming', subpath=s.id) }}">arquivos</a>
+              <a class="btn btn-sm" href="{{ url_for('hub.files', area='incoming', subpath=s.id) }}">{{ _('arquivos') }}</a>
             {% endif %}
             <a class="btn btn-sm" href="{{ url_for('hub.station_kit', station_id=s.id) }}"
-               title="chave + INSTRUCOES.txt + cliente, num .zip">⬇ kit</a>
-            <a class="btn btn-sm" href="{{ url_for('hub.station', station_id=s.id) }}">gerenciar</a>
+               title="{{ _('chave + INSTRUCOES.txt + cliente, num .zip') }}">⬇ kit</a>
+            <a class="btn btn-sm" href="{{ url_for('hub.station', station_id=s.id) }}">{{ _('gerenciar') }}</a>
           </td>
         </tr>
       {% endfor %}
@@ -116,38 +116,38 @@
 </section>
 
 <section class="card">
-  <div class="page-head"><h2>Autorizar nova estação</h2></div>
+  <div class="page-head"><h2>{{ _('Autorizar nova estação') }}</h2></div>
   <form method="post" class="form" action="{{ url_for('hub.station_add') }}"
-        {% if not info.can_write %}title="indisponível: veja o aviso acima"{% endif %}>
-    <label>Identificador da estação
+        {% if not info.can_write %}title="{{ _('indisponível: veja o aviso acima') }}"{% endif %}>
+    <label>{{ _('Identificador da estação') }}
       <input name="id" required pattern="[a-z0-9][a-z0-9_]{1,30}"
-             placeholder="ex.: flona01" {% if not info.can_write %}disabled{% endif %}>
-      <small>Minúsculas, dígitos e <code>_</code> (mesma regra do rsync-hub).</small>
+             placeholder="{{ _('ex.: flona01') }}" {% if not info.can_write %}disabled{% endif %}>
+      <small>{{ _('Minúsculas, dígitos e <code>_</code> (mesma regra do rsync-hub).') }}</small>
     </label>
 
-    <label>Modo de autenticação
+    <label>{{ _('Modo de autenticação') }}
       <select name="mode" id="hub-add-mode" {% if not info.can_write %}disabled{% endif %}>
-        <option value="chave">Chave SSH (recomendado — criptografado, porta 22)</option>
-        <option value="senha">Usuário + senha (rsync daemon, porta 873 — dados SEM criptografia)</option>
+        <option value="chave">{{ _('Chave SSH (recomendado — criptografado, porta 22)') }}</option>
+        <option value="senha">{{ _('Usuário + senha (rsync daemon, porta 873 — dados SEM criptografia)') }}</option>
       </select>
     </label>
 
-    <label data-mode="chave">Chave pública da estação (opcional)
-      <textarea name="pubkey" rows="2" placeholder="vazio = GERAR o par aqui no hub (fica em stations/&lt;id&gt;/ com o INSTRUCOES.txt) · ou cole a linha 'ssh-ed25519 AAAA…'"
+    <label data-mode="chave">{{ _('Chave pública da estação (opcional)') }}
+      <textarea name="pubkey" rows="2" placeholder="{{ _("vazio = GERAR o par aqui no hub (fica em stations/<id>/ com o INSTRUCOES.txt) · ou cole a linha 'ssh-ed25519 AAAA…'") }}"
                 {% if not info.can_write %}disabled{% endif %}></textarea>
     </label>
 
-    <label data-mode="senha" hidden>Senha (opcional)
+    <label data-mode="senha" hidden>{{ _('Senha (opcional)') }}
       <input name="password" autocomplete="off"
-             placeholder="vazio = gerar uma senha aleatória" {% if not info.can_write %}disabled{% endif %}>
-      <small>Sem <code>:</code> nem espaços. A senha final fica no
+             placeholder="{{ _('vazio = gerar uma senha aleatória') }}" {% if not info.can_write %}disabled{% endif %}>
+      <small>{{ _('Sem <code>:</code> nem espaços. A senha final fica no
       <code>INSTRUCOES.txt</code> da estação. Este modo exige a porta 873/tcp aberta
-      até a estação e o tráfego de dados NÃO é criptografado.</small>
+      até a estação e o tráfego de dados NÃO é criptografado.') }}</small>
     </label>
 
     <div class="form-actions">
       <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>
-        Autorizar estação
+        {{ _('Autorizar estação') }}
       </button>
     </div>
   </form>
@@ -155,62 +155,62 @@
 
 <section class="card pause-card {{ 'pause-card-on' if pause.all }}">
   <div class="page-head">
-    <h2>Recepção de dados</h2>
+    <h2>{{ _('Recepção de dados') }}</h2>
     <span class="pause-state">
-      {% if pause.all %}<span class="dot dot-paused"></span> PAUSADA (todas as estações)
-      {% else %}<span class="dot dot-online"></span> Ativa{% endif %}
+      {% if pause.all %}<span class="dot dot-paused"></span> {{ _('PAUSADA (todas as estações)') }}
+      {% else %}<span class="dot dot-online"></span> {{ _('Ativa') }}{% endif %}
     </span>
   </div>
-  <p class="meta">Pausar suspende a <strong>chegada</strong> de arquivos ao servidor sem
+  <p class="meta">{{ _('Pausar suspende a <strong>chegada</strong> de arquivos ao servidor sem
     revogar credenciais e sem apagar nada: as estações continuam autorizadas, tentam
     enviar, recebem uma recusa e <strong>reenviam tudo quando a recepção voltar</strong>.
     Vale para os dois modos de autenticação (chave SSH e usuário+senha). Útil em
-    manutenção do servidor (disco cheio, migração da raiz de dados, banco parado).</p>
+    manutenção do servidor (disco cheio, migração da raiz de dados, banco parado).') }}</p>
 
   {% if info.can_write and not info.can_pause %}
     <div class="flash flash-error">
-      A regra do <code>sudo</code> deste servidor é anterior à pausa e não libera
-      <code>pause</code>/<code>resume</code>. Atualize-a rodando no servidor:
-      <pre class="mono">sudo dashboard/setup-hub-access.sh &lt;usuario-que-roda-a-dashboard&gt;</pre>
+      {{ _('A regra do <code>sudo</code> deste servidor é anterior à pausa e não libera
+      <code>pause</code>/<code>resume</code>. Atualize-a rodando no servidor:') }}
+      <pre class="mono">sudo dashboard/setup-hub-access.sh {{ _('&lt;usuario-que-roda-a-dashboard&gt;') }}</pre>
     </div>
   {% endif %}
 
   {% if pause.all %}
-    <p>Pausada {% if pause.all.since_display %}em <strong>{{ pause.all.since_display }}</strong>{% endif %}
-      {%- if pause.all.by %} por <strong>{{ pause.all.by }}</strong>{% endif %}
-      {%- if pause.all.reason %} · motivo: <em>{{ pause.all.reason }}</em>{% endif %}.</p>
+    <p>{{ _('Pausada') }} {% if pause.all.since_display %}{{ _('em <strong>%(quando)s</strong>', quando=pause.all.since_display) }}{% endif %}
+      {%- if pause.all.by %} {{ _('por <strong>%(quem)s</strong>', quem=pause.all.by) }}{% endif %}
+      {%- if pause.all.reason %} · {{ _('motivo:') }} <em>{{ pause.all.reason }}</em>{% endif %}.</p>
     <form method="post" action="{{ url_for('hub.resume') }}">
       <input type="hidden" name="target" value="todas">
       <input type="hidden" name="back" value="hub">
       <button class="btn btn-primary" type="submit"
-              {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
-        ▶ Retomar a recepção de todas as estações</button>
+              {% if not info.can_write %}disabled title="{{ _('gerenciamento em modo somente leitura') }}"{% endif %}>
+        {{ _('▶ Retomar a recepção de todas as estações') }}</button>
     </form>
   {% else %}
     <form method="post" class="form form-inline" action="{{ url_for('hub.pause') }}"
-          onsubmit="return confirm('Pausar a recepção de TODAS as estações? Elas continuam autorizadas e reenviam os arquivos quando você retomar.');">
+          onsubmit='return confirm({{ _("Pausar a recepção de TODAS as estações? Elas continuam autorizadas e reenviam os arquivos quando você retomar.") | tojson }});'>
       <input type="hidden" name="target" value="todas">
       <input type="hidden" name="back" value="hub">
-      <label>Motivo (opcional — aparece para todo mundo na dashboard)
-        <input name="reason" autocomplete="off" placeholder="ex.: manutenção do servidor"
+      <label>{{ _('Motivo (opcional — aparece para todo mundo na dashboard)') }}
+        <input name="reason" autocomplete="off" placeholder="{{ _('ex.: manutenção do servidor') }}"
                {% if not info.can_write %}disabled{% endif %}>
       </label>
       <button class="btn btn-danger" type="submit"
-              {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
-        ⏸ Pausar a recepção de todas as estações</button>
+              {% if not info.can_write %}disabled title="{{ _('gerenciamento em modo somente leitura') }}"{% endif %}>
+        {{ _('⏸ Pausar a recepção de todas as estações') }}</button>
     </form>
   {% endif %}
 
   {% if pause.paused_ids %}
-    <p class="meta">Pausas individuais em vigor (independentes da global):
+    <p class="meta">{{ _('Pausas individuais em vigor (independentes da global):') }}
       {% for sid in pause.paused_ids %}<code>{{ sid }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
-      — retome cada uma na linha da estação abaixo.</p>
+      {{ _('— retome cada uma na linha da estação abaixo.') }}</p>
   {% endif %}
 </section>
 
-<p class="meta">Base do hub: <code>{{ info.base }}</code>
+<p class="meta">{{ _('Base do hub:') }} <code>{{ info.base }}</code>
   {% if info.version %} · rsync-hub <code>{{ info.version }}</code>{% endif %}
-  {% if info.bin %} · executável: <code>{{ info.bin }}</code>{% endif %}
+  {% if info.bin %} · {{ _('executável:') }} <code>{{ info.bin }}</code>{% endif %}
 </p>
 
 <script>

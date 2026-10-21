@@ -22,6 +22,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .i18n import gettext as _
+
 CONN_KEYS = ("COMPOSE_PROFILES", "DB_HOST", "DB_INTERNAL_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD",
              "DB_BIND", "DB_PORT")
 _LINE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
@@ -101,14 +103,14 @@ def current() -> dict:
 
 def docker_ok() -> tuple[bool, str]:
     if not shutil.which("docker"):
-        return False, "docker não encontrado no PATH da dashboard"
+        return False, _("docker não encontrado no PATH da dashboard")
     try:
         r = subprocess.run(["docker", "compose", "version"], cwd=str(repo_root()), capture_output=True,
                            text=True, timeout=20)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, f"docker compose indisponível: {exc}"
+        return False, _("docker compose indisponível: %(erro)s", erro=exc)
     if r.returncode != 0:
-        return False, (r.stderr or r.stdout).strip()[:300] or "docker compose falhou"
+        return False, (r.stderr or r.stdout).strip()[:300] or _("docker compose falhou")
     return True, r.stdout.strip()
 
 

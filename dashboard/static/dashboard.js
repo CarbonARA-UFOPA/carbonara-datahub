@@ -1,6 +1,13 @@
 /* Dashboard CARBONARA — gráficos (Chart.js) e formulário de arquivo (preview). */
 "use strict";
 
+/* Idioma: /i18n.js (no <head>) define window.LANG e window.t(texto, vars). O
+   fallback abaixo mantém a dashboard em português se esse script falhar. */
+if (typeof window.t !== "function") {
+  window.t = (s, v) => (v ? String(s).replace(/%\((\w+)\)s/g, (m, n) => (n in v ? String(v[n]) : m)) : s);
+}
+const LOCALE = window.LANG === "en" ? "en-US" : "pt-BR";
+
 const PALETTE = ["#1f6f4a", "#3568b0", "#d64545", "#8a5cd6", "#c98a1f",
                  "#2a9d8f", "#b03568", "#6b7a72"];
 const LIMIT_COLOR = "#d64545";
@@ -12,7 +19,7 @@ const limitLinesPlugin = {
     const lim = chart.$limits;
     if (!lim || (lim.min == null && lim.max == null)) return;
     const y = chart.scales.y, area = chart.chartArea, ctx = chart.ctx;
-    [["máx", lim.max, -4], ["mín", lim.min, 11]].forEach(([name, val, dy]) => {
+    [[t("máx"), lim.max, -4], [t("mín"), lim.min, 11]].forEach(([name, val, dy]) => {
       if (val == null) return;
       const py = y.getPixelForValue(val);
       if (py < area.top - 1 || py > area.bottom + 1) return;
@@ -45,14 +52,14 @@ function fmtByType(v, value, curto) {
   switch (v.type) {
     case "epoch": {
       const d = new Date(value * 1000);
-      let t = `${p(d.getHours())}:${p(d.getMinutes())}`;
-      if (v.ts_res === "s" || v.ts_res === "ms") t += `:${p(d.getSeconds())}`;
-      if (v.ts_res === "ms") t += `.${p(d.getMilliseconds(), 3)}`;
-      return curto ? t : `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${t}`;
+      let hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+      if (v.ts_res === "s" || v.ts_res === "ms") hm += `:${p(d.getSeconds())}`;
+      if (v.ts_res === "ms") hm += `.${p(d.getMilliseconds(), 3)}`;
+      return curto ? hm : `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${hm}`;
     }
-    case "booleano": return value >= 0.5 ? "sim" : "não";
-    case "inteiro": return Math.round(value).toLocaleString("pt-BR");
-    default: return (Math.round(value * 100) / 100).toLocaleString("pt-BR");
+    case "booleano": return value >= 0.5 ? t("sim") : t("não");
+    case "inteiro": return Math.round(value).toLocaleString(LOCALE);
+    default: return (Math.round(value * 100) / 100).toLocaleString(LOCALE);
   }
 }
 
@@ -131,8 +138,8 @@ function makeOrUpdateChart(canvas, labels, v, color, opts = {}) {
             callback: (val) => {
               const varc = (canvas._chart && canvas._chart.$var) || v;
               if (varc.type === "epoch") return fmtByType(varc, val, true);
-              if (varc.type === "booleano") return val >= 0.5 ? "sim" : "não";
-              if (varc.type === "inteiro") return Math.round(val).toLocaleString("pt-BR");
+              if (varc.type === "booleano") return val >= 0.5 ? t("sim") : t("não");
+              if (varc.type === "inteiro") return Math.round(val).toLocaleString(LOCALE);
               return val;
             },
             stepSize: v.type === "booleano" ? 1 : undefined,
@@ -155,7 +162,7 @@ function fmtBps(bps) {
   const u = ["B/s", "kB/s", "MB/s", "GB/s"];
   let v = bps, i = 0;
   while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
-  return `${v >= 100 || i === 0 ? Math.round(v) : (Math.round(v * 10) / 10).toLocaleString("pt-BR")} ${u[i]}`;
+  return `${v >= 100 || i === 0 ? Math.round(v) : (Math.round(v * 10) / 10).toLocaleString(LOCALE)} ${u[i]}`;
 }
 
 function initNetSpeed() {
@@ -171,8 +178,8 @@ function initNetSpeed() {
     const p = d.interfaces.find((i) => i.primary) || d.interfaces[0];
     const medindo = d.measuring || p.rx_bps == null;
     main.innerHTML = `<span class="net-iface">${esc(p.name)}</span>` +
-      (p.primary ? "" : ' <span class="meta">(sem rota padrão)</span>') +
-      (medindo ? ' <span class="meta">medindo…</span>'
+      (p.primary ? "" : ' <span class="meta">(' + t("sem rota padrão") + ')</span>') +
+      (medindo ? ` <span class="meta">${t("medindo…")}</span>`
                : ` ↓ <strong>${esc(fmtBps(p.rx_bps))}</strong> ↑ ${esc(fmtBps(p.tx_bps))}`);
     const outras = d.interfaces.filter((i) => i !== p);
     det.hidden = !outras.length;
@@ -247,15 +254,15 @@ async function loadSeries(block) {
       const chip = block.querySelector(".file-chip");
       if (chip && chip.textContent.trim() !== nomeArquivo) chip.textContent = nomeArquivo;
       if (liveEl) {
-        liveEl.textContent = pi.fallback ? "(o arquivo do momento ainda não chegou)" : "";
+        liveEl.textContent = pi.fallback ? t("(o arquivo do momento ainda não chegou)") : "";
       }
     } else if (liveEl) {
       liveEl.textContent = "";
     }
     errEl.textContent = (data.problems || []).join(" · ");
-    infoEl.textContent = ` · ${data.rows_read} linhas lidas` +
-      (data.decimated ? " (decimado p/ o gráfico)" : "") +
-      ` · atualizado ${data.generated_at}`;
+    infoEl.textContent = " · " + t("%(n)s linhas lidas", { n: data.rows_read }) +
+      (data.decimated ? " " + t("(decimado p/ o gráfico)") : "") +
+      " · " + t("atualizado %(quando)s", { quando: data.generated_at });
 
     data.variables.forEach((v, i) => {
       if (v.type === "texto") {          /* texto não tem gráfico: só o último valor */
@@ -269,7 +276,7 @@ async function loadSeries(block) {
                         { legend: true, height: "230px" });
     });
   } catch (e) {
-    errEl.textContent = "Falha ao buscar os dados: " + e;
+    errEl.textContent = t("Falha ao buscar os dados: %(erro)s", { erro: e });
   }
 }
 
@@ -294,7 +301,7 @@ function initCompare() {
     items.forEach((it) => byUrl.set(it.series_url, null));
     await Promise.all([...byUrl.keys()].map(async (url) => {
       try { byUrl.set(url, await (await fetch(url)).json()); }
-      catch (e) { byUrl.set(url, { error: "falha ao buscar os dados: " + e }); }
+      catch (e) { byUrl.set(url, { error: t("falha ao buscar os dados: %(erro)s", { erro: e }) }); }
     }));
 
     const problems = [], series = [];
@@ -309,12 +316,12 @@ function initCompare() {
     items.forEach((it) => {
       const src = `${it.sname} · ${it.fid}`;
       const data = byUrl.get(it.series_url);
-      if (!data || data.error) { addProblem(`${src}: ${data ? data.error : "sem resposta"}`); return; }
+      if (!data || data.error) { addProblem(`${src}: ${data ? data.error : t("sem resposta")}`); return; }
       (data.problems || []).forEach((p) => addProblem(`${src}: ${p}`));
       generatedAt = data.generated_at || generatedAt;
       const v = data.variables[it.idx];
-      if (!v) { addProblem(`${src}: variável não encontrada na série`); return; }
-      if (!data.epochs) { addProblem(`${src}: recarregue a dashboard no servidor (API sem eixo de tempo comum)`); return; }
+      if (!v) { addProblem(`${src}: ${t("variável não encontrada na série")}`); return; }
+      if (!data.epochs) { addProblem(`${src}: ${t("recarregue a dashboard no servidor (API sem eixo de tempo comum)")}`); return; }
       // Instantes EXATOS, em milissegundos (inteiros — float acumularia ruído e o
       // mesmo instante viraria chaves diferentes entre séries). O agrupamento vem
       // depois, com um passo medido nos próprios dados (cmpAxisStep).
@@ -322,7 +329,7 @@ function initCompare() {
       data.epochs.forEach((e, j) => {
         if (e != null) raw.push([Math.round(e * 1000), v.values[j]]);
       });
-      if (!raw.length) { addProblem(`${src}: nenhum timestamp reconhecido`); return; }
+      if (!raw.length) { addProblem(`${src}: ${t("nenhum timestamp reconhecido")}`); return; }
       raw.sort((a, b) => a[0] - b[0]);
       const unit = v.unit ? ` (${v.unit})` : "";
       series.push({
@@ -358,9 +365,10 @@ function initCompare() {
       borderColor: s.color, backgroundColor: s.color + "22",
       borderWidth: 1.5, pointRadius: 0, spanGaps: true, fill: false, tension: 0.15,
     }));
-    infoEl.textContent = `${series.length} série(s) · ${epochs.length} instantes no eixo comum ` +
-      `· passo de ${cmpFmtStep(step)}` +
-      (generatedAt ? ` · atualizado ${generatedAt}` : "");
+    infoEl.textContent =
+      t("%(n)s série(s) · %(m)s instantes no eixo comum · passo de %(passo)s",
+        { n: series.length, m: epochs.length, passo: cmpFmtStep(step) }) +
+      (generatedAt ? " · " + t("atualizado %(quando)s", { quando: generatedAt }) : "");
 
     canvas.$cmp = { epochs, series, step };  // lido pelo cursor (linha vertical) e handlers
     renderCmpTable(epochs, series, step);
@@ -408,7 +416,7 @@ function initCompare() {
 /* Formatação compartilhada da tela Comparar */
 function cmpFmtNum(v) {
   if (v == null || !Number.isFinite(v)) return "—";
-  return (Math.round(v * 100) / 100).toLocaleString("pt-BR");
+  return (Math.round(v * 100) / 100).toLocaleString(LOCALE);
 }
 /* Instante do eixo comum (em MILISSEGUNDOS). A resolução do relógio segue o passo
    do eixo: dado de minuto para em HH:MM (segundos seriam ruído), dado de 1 s mostra
@@ -448,7 +456,7 @@ function cmpFmtStep(ms) {
   if (ms < 1000) return `${ms} ms`;
   const seg = ms / 1000;
   if (seg >= 60) return `${Math.round(seg / 60)} min`;
-  return `${(Math.round(seg * 10) / 10).toLocaleString("pt-BR")} s`;
+  return `${(Math.round(seg * 10) / 10).toLocaleString(LOCALE)} s`;
 }
 /* Último ponto da série em t OU ANTES (busca binária) — o "valor vigente". */
 function cmpLastAtOrBefore(s, t) {
@@ -495,17 +503,17 @@ function installCmpCursor(canvas) {
     if (px < area.left || px > area.right) { hideCmpCursor(canvas); return; }
     let idx = Math.round(ch.scales.x.getValueForPixel(px));
     idx = Math.max(0, Math.min(cmp.epochs.length - 1, idx));
-    const t = cmp.epochs[idx];
+    const ti = cmp.epochs[idx];
 
     ch.$crossX = ch.scales.x.getPixelForValue(idx);
     ch.draw();
 
-    let html = `<div class="cmp-tip-title">${esc(cmpFmtEpoch(t, true, cmp.step))}</div>`;
+    let html = `<div class="cmp-tip-title">${esc(cmpFmtEpoch(ti, true, cmp.step))}</div>`;
     cmp.series.forEach((s) => {
-      const hit = s.pts.has(t) ? { e: t, v: s.pts.get(t) } : cmpLastAtOrBefore(s, t);
+      const hit = s.pts.has(ti) ? { e: ti, v: s.pts.get(ti) } : cmpLastAtOrBefore(s, ti);
       const val = hit ? cmpFmtNum(hit.v) : "—";
       const unit = s.unit ? ` ${esc(s.unit)}` : "";
-      const carried = hit && hit.e !== t
+      const carried = hit && hit.e !== ti
         ? ` <span class="carried">(${esc(cmpFmtEpoch(hit.e, false, cmp.step))})</span>` : "";
       html += `<div class="cmp-tip-row">` +
         `<span class="cmp-dot" style="background:${s.color}"></span>` +
@@ -542,17 +550,17 @@ function renderCmpTable(epochs, series, step) {
   const total = epochs.length;
   const n = Math.min(total, MAX_ROWS);
 
-  let html = "<thead><tr><th>Data/hora</th>";
+  let html = `<thead><tr><th>${t("Data/hora")}</th>`;
   series.forEach((s) => {
     html += `<th><span class="cmp-dot" style="background:${s.color}"></span> ` +
             `${esc(s.fullLabel)}</th>`;
   });
   html += "</tr></thead><tbody>";
   for (let i = total - 1; i >= total - n; i--) {
-    const t = epochs[i];
-    html += `<tr><td><small>${esc(cmpFmtEpoch(t, true, step))}</small></td>`;
+    const ti = epochs[i];
+    html += `<tr><td><small>${esc(cmpFmtEpoch(ti, true, step))}</small></td>`;
     series.forEach((s) => {
-      html += `<td class="num">${s.pts.has(t) ? cmpFmtNum(s.pts.get(t)) : "—"}</td>`;
+      html += `<td class="num">${s.pts.has(ti) ? cmpFmtNum(s.pts.get(ti)) : "—"}</td>`;
     });
     html += "</tr>";
   }
@@ -560,17 +568,17 @@ function renderCmpTable(epochs, series, step) {
   table.innerHTML = html;
   if (note) {
     note.textContent = total > n
-      ? `— mostrando os ${n} instantes mais recentes de ${total} (mais recente primeiro); ` +
-        `“—” = a série não tem ponto naquele instante`
-      : "— um instante por linha (mais recente primeiro); “—” = a série não tem ponto naquele instante";
+      ? t("— mostrando os %(n)s instantes mais recentes de %(total)s (mais recente primeiro); “—” = a série não tem ponto naquele instante",
+          { n, total })
+      : t("— um instante por linha (mais recente primeiro); “—” = a série não tem ponto naquele instante");
   }
 }
 
 
 /* --- Página Mapa: estações georreferenciadas + gráficos ao clicar --------------- */
 const STATUS_LABEL = {
-  receiving: "Recebendo dados", online: "Online",
-  offline: "Offline", unknown: "Sem sinal", paused: "Recepção pausada",
+  receiving: t("Recebendo dados"), online: t("Online"),
+  offline: t("Offline"), unknown: t("Sem sinal"), paused: t("Recepção pausada"),
 };
 
 function statusColor(status) {
@@ -612,7 +620,7 @@ function initMapPage() {
   const map = L.map(mapEl, { layers: [relevo] }); // relevo é a camada inicial
   // Controle recolhido (ícone padrão do Leaflet): expande ao passar o mouse.
   L.control.layers(
-    { "Relevo": relevo, "Satélite": satelite, "Padrão (OpenStreetMap)": osm },
+    { [t("Relevo")]: relevo, [t("Satélite")]: satelite, [t("Padrão (OpenStreetMap)")]: osm },
     null, { collapsed: true }
   ).addTo(map);
 
@@ -627,7 +635,7 @@ function initMapPage() {
 
   function fmtVal(v) {
     if (v == null || !Number.isFinite(v)) return "—";
-    return (Math.round(v * 100) / 100).toLocaleString("pt-BR");
+    return (Math.round(v * 100) / 100).toLocaleString(LOCALE);
   }
 
   function markerTooltip(s, cached, loading) {
@@ -636,9 +644,9 @@ function initMapPage() {
       `<span class="station-tip-status">${STATUS_LABEL[s.status] || esc(s.status)}</span></div>`;
     let mid = "";
     if (cached) mid = `<div class="station-tip-values">${cached.values}</div>`;
-    else if (loading) mid = '<div class="station-tip-values"><em>carregando últimos valores…</em></div>';
+    else if (loading) mid = `<div class="station-tip-values"><em>${t("carregando últimos valores…")}</em></div>`;
     const foot = (cached || loading)
-      ? `<div class="station-tip-foot">última leitura: <strong>${esc((cached && cached.ts) || "—")}</strong></div>`
+      ? `<div class="station-tip-foot">${t("última leitura:")} <strong>${esc((cached && cached.ts) || "—")}</strong></div>`
       : "";
     return `<div class="station-tip">${head}${mid}${foot}</div>`;
   }
@@ -674,7 +682,7 @@ function initMapPage() {
         `<span class="station-tip-count">${rows.length}</span></summary>` +
         rows.join("") + `</details>`);
     });
-    if (!lines.length) return { values: "<em>sem dados disponíveis</em>", ts: null };
+    if (!lines.length) return { values: `<em>${t("sem dados disponíveis")}</em>`, ts: null };
     return { values: lines.join(""), ts: lastTs };
   }
 
@@ -759,7 +767,7 @@ function initMapPage() {
     filesEl.querySelectorAll("canvas").forEach((c) => c._chart && c._chart.destroy());
     filesEl.innerHTML = "";
     if (!s.files.length) {
-      filesEl.innerHTML = "<p class='empty'>Nenhum arquivo em monitoramento nesta estação.</p>";
+      filesEl.innerHTML = `<p class='empty'>${t("Nenhum arquivo em monitoramento nesta estação.")}</p>`;
     }
     s.files.forEach((f) => {
       // <details>: cada arquivo .dat (sensor/equipamento) pode ser recolhido
@@ -770,7 +778,7 @@ function initMapPage() {
       block.innerHTML =
         `<summary><span class="file-chip">${esc(f.id)}</span>` +
         (f.alias ? `<span class="file-alias">${esc(f.alias)}</span>` : "") +
-        `<span class="meta">${f.variables.length} variável(is)</span>` +
+        `<span class="meta">${t("%(n)s variável(is)", { n: f.variables.length })}</span>` +
         `<span class="series-info meta"></span></summary>` +
         `<p class="series-error warn"></p>` +
         `<div class="charts">` +
@@ -787,7 +795,7 @@ function initMapPage() {
   function renderPanelStatus(status, lastSignal) {
     document.getElementById("map-panel-status").innerHTML =
       `<span class="dot dot-${esc(status)}"></span>${STATUS_LABEL[status] || esc(status)}` +
-      ` · último sinal: ${esc(lastSignal || "—")}`;
+      ` · ${t("último sinal:")} ${esc(lastSignal || "—")}`;
   }
 
   function closeModal() {
@@ -828,7 +836,7 @@ function initMapPage() {
     ctx.font = `${Math.round(11 * scale)}px sans-serif`;
     ctx.fillStyle = "#6b7a72";
     const statusTxt = STATUS_LABEL[currentStation.status] || currentStation.status;
-    ctx.fillText(`${statusTxt} · imagem gerada em ${now.toLocaleString("pt-BR")}`,
+    ctx.fillText(`${statusTxt} · ${t("imagem gerada em %(quando)s", { quando: now.toLocaleString(LOCALE) })}`,
                  pad, pad + lineH / 2 + lineH);
 
     let y = headerH + pad;
@@ -910,16 +918,16 @@ function initFileForm() {
     const tr = document.createElement("tr");
     tr.innerHTML =
       '<td><input name="var_column" class="num-input" ' +
-      'title="Índice da coluna (0 = primeira, -1 = última) ou o nome dela"></td>' +
+      `title="${esc(t("Índice da coluna (0 = primeira, -1 = última) ou o nome dela"))}"></td>` +
       '<td><input name="var_label"></td>' +
       '<td><input name="var_id" class="num-input" placeholder="auto" ' +
-      'title="Identificador da série no banco (gerado do rótulo se vazio)"></td>' +
+      `title="${esc(t("Identificador da série no banco (gerado do rótulo se vazio)"))}"></td>` +
       '<td><select name="var_type">' +
-      '<option value="numero">Número</option><option value="inteiro">Inteiro</option>' +
-      '<option value="booleano">Booleano</option>' +
-      '<option value="epoch">Data/hora (epoch)</option>' +
-      '<option value="timestamp">Data/hora (texto)</option>' +
-      '<option value="texto">Texto</option></select></td>' +
+      `<option value="numero">${t("Número")}</option><option value="inteiro">${t("Inteiro")}</option>` +
+      `<option value="booleano">${t("Booleano")}</option>` +
+      `<option value="epoch">${t("Data/hora (epoch)")}</option>` +
+      `<option value="timestamp">${t("Data/hora (texto)")}</option>` +
+      `<option value="texto">${t("Texto")}</option></select></td>` +
       '<td><input name="var_unit"></td>' +
       '<td><input name="var_min" placeholder="—" class="num-input"></td>' +
       '<td><input name="var_max" placeholder="—" class="num-input"></td>' +
@@ -942,7 +950,7 @@ function initFileForm() {
      — casa por índice ou pelo nome da coluna (configs antigas por nome). */
   document.getElementById("btn-fill-cols").addEventListener("click", async () => {
     const area = document.getElementById("preview-area");
-    area.innerHTML = "<p class='meta'>Lendo as colunas do arquivo…</p>";
+    area.innerHTML = `<p class='meta'>${t("Lendo as colunas do arquivo…")}</p>`;
     try {
       const resp = await fetch("/api/preview", { method: "POST", body: new FormData(form) });
       const data = await resp.json();
@@ -951,7 +959,7 @@ function initFileForm() {
       const ncols = Math.max(...(data.rows || []).map((r) => r.length),
                              (header || []).length);
       if (!Number.isFinite(ncols) || ncols < 1) {
-        area.innerHTML = "<p class='warn'>Não foi possível determinar as colunas do arquivo.</p>";
+        area.innerHTML = `<p class='warn'>${t("Não foi possível determinar as colunas do arquivo.")}</p>`;
         return;
       }
       const clean = (h) => (h || "").trim().replace(/^"|"$/g, "");
@@ -977,15 +985,15 @@ function initFileForm() {
         const name = header ? clean(header[i]) : "";
         const prev = existing.get(String(i)) || (name && existing.get(name)) || null;
         tbody.appendChild(makeVarRow(i,
-          prev ? prev.label : (name || `coluna ${i}`),
+          prev ? prev.label : (name || t("coluna %(n)s", { n: i })),
           prev ? prev.unit : "", prev ? prev.min : "", prev ? prev.max : "",
           prev ? prev.vid : "", prev ? prev.type : "numero"));
       }
-      area.innerHTML = `<p class="diag" style="color:var(--green)">✓ ${tbody.rows.length} ` +
-        "colunas listadas (a do timestamp ficou de fora). Ajuste rótulos, unidades e " +
-        "limites e clique em Salvar.</p>";
+      area.innerHTML = `<p class="diag" style="color:var(--green)">✓ ` +
+        t("%(n)s colunas listadas (a do timestamp ficou de fora). Ajuste rótulos, unidades e limites e clique em Salvar.",
+          { n: tbody.rows.length }) + "</p>";
     } catch (e) {
-      area.innerHTML = `<p class="warn">Falha ao listar as colunas: ${esc(String(e))}</p>`;
+      area.innerHTML = `<p class="warn">${t("Falha ao listar as colunas: %(erro)s", { erro: esc(String(e)) })}</p>`;
     }
   });
 
@@ -997,7 +1005,7 @@ function initFileForm() {
 
   document.getElementById("btn-preview").addEventListener("click", async () => {
     const area = document.getElementById("preview-area");
-    area.innerHTML = "<p class='meta'>Lendo o final do arquivo…</p>";
+    area.innerHTML = `<p class='meta'>${t("Lendo o final do arquivo…")}</p>`;
     try {
       const resp = await fetch("/api/preview", { method: "POST", body: new FormData(form) });
       const data = await resp.json();
@@ -1005,7 +1013,7 @@ function initFileForm() {
       let html = "";
       const diags = data.diagnostics || [], rows = data.rows || [];
       diags.forEach((d) => (html += `<p class="warn diag">⚠ ${esc(d)}</p>`));
-      if (!diags.length) html += `<p class="diag" style="color:var(--green)">✓ Parse OK.</p>`;
+      if (!diags.length) html += `<p class="diag" style="color:var(--green)">✓ ${t("Parse OK.")}</p>`;
 
       /* Mapa coluna(índice) -> rótulo configurado NO FORMULÁRIO (variáveis + timestamp),
          para o preview mostrar EM QUAL coluna cada rótulo (ex.: RECORD) caiu. Resolve
@@ -1019,19 +1027,20 @@ function initFileForm() {
       };
       const colLabels = new Map();
       const tsIdx = resolveIdx(form.elements.ts_column ? form.elements.ts_column.value : "");
-      if (tsIdx !== null && Number.isFinite(tsIdx)) colLabels.set(tsIdx, { label: "carimbo de tempo", ts: true });
+      if (tsIdx !== null && Number.isFinite(tsIdx)) colLabels.set(tsIdx, { label: t("carimbo de tempo"), ts: true });
       Array.from(tbody.rows).forEach((tr) => {
         const colInp = tr.querySelector('[name="var_column"]');
         if (!colInp) return;
         const idx = resolveIdx(colInp.value);
         if (idx === null || !Number.isFinite(idx)) return;
         const labInp = tr.querySelector('[name="var_label"]');
-        colLabels.set(idx, { label: (labInp && labInp.value) || `coluna ${idx}`, ts: false });
+        colLabels.set(idx, { label: (labInp && labInp.value) || t("coluna %(n)s", { n: idx }), ts: false });
       });
       const cellCls = (c) => (colLabels.has(c) ? (colLabels.get(c).ts ? " class='col-mapped col-ts'" : " class='col-mapped'") : "");
 
-      html += "<p class='meta'>Colunas destacadas = mapeadas no formulário (rótulo abaixo do número); " +
-        "azul = carimbo de tempo. As demais ainda não têm rótulo.</p>";
+      html += "<p class='meta'>" +
+        t("Colunas destacadas = mapeadas no formulário (rótulo abaixo do número); azul = carimbo de tempo. As demais ainda não têm rótulo.") +
+        "</p>";
       html += "<div style='overflow-x:auto'><table class='table'><thead><tr>";
       const ncols = Math.max(...rows.map((r) => r.length), (data.header || []).length);
       for (let c = 0; c < ncols; c++) {
@@ -1066,7 +1075,7 @@ function initFileForm() {
       html += "</tbody></table></div>";
       area.innerHTML = html;
     } catch (e) {
-      area.innerHTML = `<p class="warn">Falha no preview: ${esc(String(e))}</p>`;
+      area.innerHTML = `<p class="warn">${t("Falha no preview: %(erro)s", { erro: esc(String(e)) })}</p>`;
     }
   });
 }
@@ -1098,8 +1107,8 @@ function initStationBrowser() {
   function selCount() {
     const n = picked.size;
     count.textContent = n
-      ? `${n} arquivo(s) selecionado(s) — de qualquer pasta; clique em "Adicionar selecionados".`
-      : "Nenhum arquivo selecionado ainda.";
+      ? t('%(n)s arquivo(s) selecionado(s) — de qualquer pasta; clique em "Adicionar selecionados".', { n })
+      : t("Nenhum arquivo selecionado ainda.");
   }
 
   function applyFilter() {
@@ -1112,20 +1121,20 @@ function initStationBrowser() {
     });
     const total = results.querySelectorAll("tr[data-search]").length;
     if (q && shown !== total) {
-      hint.innerHTML = `<span class="meta">${shown} de ${total} item(ns) exibido(s) ` +
-        `nesta pasta — filtro "${esc(filter.value.trim())}". O filtro só esconde linhas; ` +
-        "a seleção continua valendo.</span>";
+      hint.innerHTML = '<span class="meta">' +
+        t('%(shown)s de %(total)s item(ns) exibido(s) nesta pasta — filtro "%(filtro)s". O filtro só esconde linhas; a seleção continua valendo.',
+          { shown, total, filtro: esc(filter.value.trim()) }) + "</span>";
     }
   }
 
   async function load(sub) {
-    results.innerHTML = "<p class='empty'>Carregando…</p>";
+    results.innerHTML = `<p class='empty'>${t("Carregando…")}</p>`;
     let data;
     try {
       const url = form.dataset.url + (sub ? "?sub=" + encodeURIComponent(sub) : "");
       data = await (await fetch(url)).json();
     } catch (e) {
-      results.innerHTML = `<p class="warn">Falha ao listar a pasta: ${esc(String(e))}</p>`;
+      results.innerHTML = `<p class="warn">${t("Falha ao listar a pasta: %(erro)s", { erro: esc(String(e)) })}</p>`;
       return;
     }
     if (data.error) {
@@ -1147,32 +1156,32 @@ function initStationBrowser() {
     crumbsEl.innerHTML = cr;
 
     if (d.missing) {
-      results.innerHTML = "<p class='empty'>Esta pasta ainda não existe no servidor " +
-        "(nada foi recebido da estação até agora).</p>";
+      results.innerHTML = "<p class='empty'>" +
+        t("Esta pasta ainda não existe no servidor (nada foi recebido da estação até agora).") + "</p>";
       return;
     }
     const dirs = d.dirs || [];
     const files = d.files || [];
     if (!dirs.length && !files.length) {
-      results.innerHTML = "<p class='empty'>Pasta vazia.</p>";
+      results.innerHTML = `<p class='empty'>${t("Pasta vazia.")}</p>`;
       return;
     }
 
-    let html = "<table class='table'><thead><tr><th></th><th>Nome</th><th>Tipo</th>" +
-      "<th>Tamanho</th><th>Modificado</th><th>Apelido (monitoramento)</th><th></th>" +
+    let html = `<table class='table'><thead><tr><th></th><th>${t("Nome")}</th><th>${t("Tipo")}</th>` +
+      `<th>${t("Tamanho")}</th><th>${t("Modificado")}</th><th>${t("Apelido (monitoramento)")}</th><th></th>` +
       "</tr></thead><tbody>";
     if (d.rel) {
       const parts = d.rel.split("/");
       parts.pop();
       html += "<tr><td colspan='7'>" +
-        `<a href="#" data-go="${esc(parts.join("/"))}">↩ pasta acima</a></td></tr>`;
+        `<a href="#" data-go="${esc(parts.join("/"))}">↩ ${t("pasta acima")}</a></td></tr>`;
     }
     dirs.forEach((dir) => {
       html += `<tr data-search="${esc(dir.name.toLowerCase())}">` +
         "<td></td>" +
         `<td>📁 <a href="#" data-go="${esc(dir.rel)}"><strong>${esc(dir.name)}/</strong></a>` +
-        (dir.hidden ? " <small class='meta'>(oculto — a ingestão ignora)</small>" : "") +
-        "</td><td class='meta'>pasta</td><td class='meta'>—</td>" +
+        (dir.hidden ? ` <small class='meta'>${t("(oculto — a ingestão ignora)")}</small>` : "") +
+        `</td><td class='meta'>${t("pasta")}</td><td class='meta'>—</td>` +
         `<td><small>${esc(dir.mtime)}</small></td><td></td><td></td></tr>`;
     });
     files.forEach((f) => {
@@ -1181,8 +1190,8 @@ function initStationBrowser() {
       const sel = picked.has(f.path);
       const alias = sel ? picked.get(f.path).alias : (f.suggested_alias || "");
       let note = "";
-      if (f.monitored) note = " <small class='meta'>(já monitorado)</small>";
-      else if (f.hidden) note = " <small class='meta'>(oculto — a ingestão ignora)</small>";
+      if (f.monitored) note = ` <small class='meta'>${t("(já monitorado)")}</small>`;
+      else if (f.hidden) note = ` <small class='meta'>${t("(oculto — a ingestão ignora)")}</small>`;
       html += `<tr data-search="${esc((f.name + " " + (f.ext || "")).toLowerCase())}">` +
         `<td><input type="checkbox" class="browse-pick" data-path="${esc(f.path)}" ` +
         `data-rel="${esc(f.rel)}" ${blocked ? "disabled" : ""} ${sel ? "checked" : ""}></td>` +
@@ -1193,13 +1202,14 @@ function initStationBrowser() {
         `<td><input class="browse-alias" data-path="${esc(f.path)}" value="${esc(alias)}" ` +
         `${blocked ? "disabled" : ""}></td>` +
         `<td class="ta-right"><a class="btn btn-sm" ` +
-        `href="${form.dataset.download}?sub=${encodeURIComponent(f.rel)}">baixar</a></td>` +
+        `href="${form.dataset.download}?sub=${encodeURIComponent(f.rel)}">${t("baixar")}</a></td>` +
         "</tr>";
     });
     html += "</tbody></table>";
     if (d.truncated) {
-      html += `<p class="flash flash-error">Listagem truncada em ${d.max_entries} ` +
-        "entradas — esta pasta tem mais itens; use as subpastas ou o filtro.</p>";
+      html += '<p class="flash flash-error">' +
+        t("Listagem truncada em %(n)s entradas — esta pasta tem mais itens; use as subpastas ou o filtro.",
+          { n: d.max_entries }) + "</p>";
     }
     results.innerHTML = html;
   }
@@ -1264,8 +1274,7 @@ function initStationBrowser() {
   form.addEventListener("submit", (ev) => {
     if (!picked.size) {
       ev.preventDefault();
-      hint.innerHTML = "<span class='warn'>Marque ao menos um arquivo antes de " +
-        "adicionar.</span>";
+      hint.innerHTML = `<span class='warn'>${t("Marque ao menos um arquivo antes de adicionar.")}</span>`;
       return;
     }
     // Monta os campos que o servidor espera (pick + path_<n> + alias_<n>) a partir da

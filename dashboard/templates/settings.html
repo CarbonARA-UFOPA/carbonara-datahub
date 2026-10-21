@@ -1,183 +1,183 @@
 {% extends "base.html" %}
-{% block title %}Configurações · CARBONARA{% endblock %}
+{% block title %}{{ _('Configurações') }} · CARBONARA{% endblock %}
 {% block content %}
-<h1>Configurações</h1>
+<h1>{{ _('Configurações') }}</h1>
 
 <section class="card help-card">
-  A dashboard é <strong>complementar ao rsync-hub</strong>: você só precisa apontar a
+  {{ _('A dashboard é <strong>complementar ao rsync-hub</strong>: você só precisa apontar a
   <strong>raiz do hub</strong> aqui. As demais localizações — <code>incoming/&lt;id&gt;/</code>,
   o heartbeat <code>.carbonara-status</code> e o <code>log/connections.log</code> — têm
   locais padrão derivados dessa raiz. Se a raiz mudar (ex.: sair de
-  <code>/srv/carbonara</code>), altere só aqui e tudo acompanha.
+  <code>/srv/carbonara</code>), altere só aqui e tudo acompanha.') }}
 </section>
 
 {% if hub_info and hub_info.base_mismatch %}
 <div class="flash flash-error">
-  <strong>A dashboard está lendo a raiz errada.</strong>
-  Ela lê de <code>{{ hub_info.base }}</code>, mas o rsync-hub usa
-  <code>{{ hub_info.conf_base }}</code> (em <code>/etc/rsync-hub.conf</code>) — é o
+  <strong>{{ _('A dashboard está lendo a raiz errada.') }}</strong>
+  {{ _('Ela lê de <code>%(base)s</code>, mas o rsync-hub usa
+  <code>%(conf)s</code> (em <code>/etc/rsync-hub.conf</code>) — é o
   rastro de um <code>rsync-hub move-root</code> feito pelo terminal: o hub migra, mas o
   config da dashboard é outro arquivo e o script não tem como atualizá-lo. Enquanto
   estiver assim, as estações aparecem sem dados novos, porque a dashboard está olhando
-  a árvore antiga, congelada.
+  a árvore antiga, congelada.', base=hub_info.base, conf=hub_info.conf_base) }}
   <form method="post" action="{{ url_for('hub.align_root') }}" class="form-actions">
     <button class="btn btn-primary" type="submit">
-      Alinhar a dashboard com {{ hub_info.conf_base }}</button>
+      {{ _('Alinhar a dashboard com %(conf)s', conf=hub_info.conf_base) }}</button>
   </form>
-  <small>Troca o <code>data_root</code> e reaponta os caminhos absolutos dos cadastros
-    (heartbeat, arquivos monitorados, log de conexões). Nada em disco é movido.</small>
+  <small>{{ _('Troca o <code>data_root</code> e reaponta os caminhos absolutos dos cadastros
+    (heartbeat, arquivos monitorados, log de conexões). Nada em disco é movido.') }}</small>
 </div>
 {% endif %}
 
 <form method="post" class="card form" action="{{ url_for('pages.settings_save') }}">
-  <label>Pasta raiz do hub (rsync-hub)
+  <label>{{ _('Pasta raiz do hub (rsync-hub)') }}
     <input name="data_root" required value="{{ cfg.data_root or '' }}"
-           placeholder="ex.: /srv/carbonara">
-    <small>Onde ficam <code>incoming/</code>, <code>archive/</code>, <code>log/</code> e
+           placeholder="{{ _('ex.: /srv/carbonara') }}">
+    <small>{{ _('Onde ficam <code>incoming/</code>, <code>archive/</code>, <code>log/</code> e
     <code>stations/</code>. Caminho absoluto (produção) ou relativo à pasta do
-    <code>config.yaml</code> (dev usa <code>./data</code>).</small>
+    <code>config.yaml</code> (dev usa <code>./data</code>).') }}</small>
   </label>
 
   <details class="adv">
-    <summary>Ajustes avançados (opcionais)</summary>
+    <summary>{{ _('Ajustes avançados (opcionais)') }}</summary>
 
-    <label>Log de conexões (override)
+    <label>{{ _('Log de conexões (override)') }}
       <input name="connections_log" value="{{ cfg.connections_log or '' }}"
-             placeholder="vazio = &lt;raiz&gt;/log/connections.log (padrão)">
-      <small>Só se o <code>connections.log</code> do rsync-hub não estiver no local padrão.</small>
+             placeholder="{{ _('vazio = &lt;raiz&gt;/log/connections.log (padrão)') }}">
+      <small>{{ _('Só se o <code>connections.log</code> do rsync-hub não estiver no local padrão.') }}</small>
     </label>
 
-    <label>Fuso horário de exibição
+    <label>{{ _('Fuso horário de exibição') }}
       <input name="timezone" value="{{ cfg.timezone or '' }}"
-             placeholder="ex.: America/Santarem (vazio = fuso do processo)">
-      <small>Afeta apenas a EXIBIÇÃO do "último sinal". O status (online/offline) é
-      calculado em epoch, imune a fuso.</small>
+             placeholder="{{ _('ex.: America/Santarem (vazio = fuso do processo)') }}">
+      <small>{{ _('Afeta apenas a EXIBIÇÃO do "último sinal". O status (online/offline) é
+      calculado em epoch, imune a fuso.') }}</small>
     </label>
 
-    <label>Fallback de offline (segundos)
+    <label>{{ _('Fallback de offline (segundos)') }}
       <input name="stale_fallback_seconds" type="number" min="60" max="86400"
              value="{{ cfg.stale_fallback_seconds or 3600 }}">
-      <small>Janela usada só quando a estação não tem heartbeat com <code>interval_min</code>.
-      Espelha o <code>RSYNC_HUB_STALE</code> (padrão 3600 = 1 h).</small>
+      <small>{{ _('Janela usada só quando a estação não tem heartbeat com <code>interval_min</code>.
+      Espelha o <code>RSYNC_HUB_STALE</code> (padrão 3600 = 1 h).') }}</small>
     </label>
   </details>
 
-  <h2>API de dados</h2>
-  <p class="meta">Serviço <code>api</code> do Docker Compose (porta 8000). A dashboard usa a
+  <h2>{{ _('API de dados') }}</h2>
+  <p class="meta">{{ _('Serviço <code>api</code> do Docker Compose (porta 8000). A dashboard usa a
     <em>URL interna</em> para ler as séries dos arquivos marcados com "Ingerir no banco" e
-    para gerir as chaves; a <em>URL pública</em> é só o que se mostra aos usuários.</p>
+    para gerir as chaves; a <em>URL pública</em> é só o que se mostra aos usuários.') }}</p>
   <div class="form-row">
-    <label>URL interna da API
+    <label>{{ _('URL interna da API') }}
       <input name="api_url" value="{{ cfg.api.url if cfg.api and cfg.api.url else '' }}"
-             placeholder="ex.: http://127.0.0.1:8000">
+             placeholder="{{ _('ex.: http://127.0.0.1:8000') }}">
     </label>
-    <label>Chave de serviço da dashboard
+    <label>{{ _('Chave de serviço da dashboard') }}
       <input name="api_key" autocomplete="off"
-             placeholder="{{ 'configurada (' ~ cfg.api.key[:12] ~ '…) — vazio mantém, - remove' if cfg.api and cfg.api.key else 'cole a chave (escopos read,admin)' }}">
-      <small>Crie com <code>docker compose exec api python -m app.keys_cli create --owner dashboard --scopes read,admin</code>.</small>
+             placeholder="{{ _('configurada (%(prefixo)s…) — vazio mantém, - remove', prefixo=cfg.api.key[:12]) if cfg.api and cfg.api.key else _('cole a chave (escopos read,admin)') }}">
+      <small>{{ _('Crie com <code>docker compose exec api python -m app.keys_cli create --owner dashboard --scopes read,admin</code>.') }}</small>
     </label>
-    <label>URL pública (opcional)
+    <label>{{ _('URL pública (opcional)') }}
       <input name="api_public_url" value="{{ cfg.api.public_url if cfg.api and cfg.api.public_url else '' }}"
-             placeholder="ex.: http://200.x.y.z:8000">
+             placeholder="{{ _('ex.: http://200.x.y.z:8000') }}">
     </label>
   </div>
 
   <div class="form-actions">
-    <button class="btn btn-primary" type="submit">Salvar configuração master</button>
-    <a class="btn" href="{{ url_for('pages.index') }}">Voltar</a>
+    <button class="btn btn-primary" type="submit">{{ _('Salvar configuração master') }}</button>
+    <a class="btn" href="{{ url_for('pages.index') }}">{{ _('Voltar') }}</a>
   </div>
 </form>
 
 <section class="card">
-  <div class="page-head"><h2>Mover a raiz de dados (avançado)</h2></div>
-  <p class="meta">Migra a raiz <strong>inteira</strong> do hub — <code>incoming/</code>,
+  <div class="page-head"><h2>{{ _('Mover a raiz de dados (avançado)') }}</h2></div>
+  <p class="meta">{{ _('Migra a raiz <strong>inteira</strong> do hub — <code>incoming/</code>,
     <code>archive/</code>, <code>quarantine/</code>, <code>stations/</code> (chaves),
     log e configuração — para outra pasta, executando <code>rsync-hub move-root</code>
     no host. O comando copia preservando dono/permissões, muda o home da conta de
     serviço, regrava <code>/etc/rsync-hub.conf</code> e reinicia o rsyncd; a raiz
     <strong>antiga fica intacta</strong> como cópia de segurança (a remoção é manual,
     depois de conferir). Só a raiz completa é movível — <code>incoming/</code> sozinho
-    quebraria os invariantes do hub (home do sshd, caminhos do rsyncd).</p>
+    quebraria os invariantes do hub (home do sshd, caminhos do rsyncd).') }}</p>
   {% if hub_info and hub_info.can_write %}
     <form method="post" class="form" action="{{ url_for('hub.move_root') }}"
-          onsubmit="return confirm('Migrar a raiz de dados AGORA? A cópia pode demorar; não feche esta página até terminar.');">
+          onsubmit="return confirm(t('Migrar a raiz de dados AGORA? A cópia pode demorar; não feche esta página até terminar.'));">
     <div class="help-card">
-      <strong>O destino precisa cumprir três coisas</strong> — o hub recusa a migração
-      (sem mover nada) quando falta alguma:
+      {{ _('<strong>O destino precisa cumprir três coisas</strong> — o hub recusa a migração
+      (sem mover nada) quando falta alguma:') }}
       <ul class="help-list">
-        <li><strong>Sistema de arquivos Linux</strong> (ext4/xfs…). <em>Pendrive ou HD
+        <li>{{ _('<strong>Sistema de arquivos Linux</strong> (ext4/xfs…). <em>Pendrive ou HD
           externo em exFAT/NTFS não serve</em>: eles não guardam dono e permissão, e o
           sshd passa a recusar o <code>authorized_keys</code> — <strong>todas</strong> as
           estações cairiam com <code>Permission denied (publickey)</code>.
-          Confira com <code>df -Th &lt;destino&gt;</code>.</li>
-        <li><strong>Montagem fixa e permanente</strong> (via <code>/etc/fstab</code>), não
+          Confira com <code>df -Th &lt;destino&gt;</code>.') }}</li>
+        <li>{{ _('<strong>Montagem fixa e permanente</strong> (via <code>/etc/fstab</code>), não
           <code>/media/&lt;usuário&gt;</code>: a raiz é o <em>home</em> da conta de
           serviço — com o disco desmontado, o sshd não acha as chaves. Pastas em
           <code>/media</code> ainda nascem <code>700</code> a cada montagem, fora do
-          alcance da conta do hub.</li>
-        <li><strong>Pasta vazia</strong>, e de preferência uma <em>subpasta</em> do ponto
+          alcance da conta do hub.') }}</li>
+        <li>{{ _('<strong>Pasta vazia</strong>, e de preferência uma <em>subpasta</em> do ponto
           de montagem (<code>/srv/dados/carbonara</code>, não <code>/srv/dados</code>) —
-          um disco recém-formatado já vem com <code>lost+found</code>.</li>
+          um disco recém-formatado já vem com <code>lost+found</code>.') }}</li>
       </ul>
     </div>
-      <label>Nova raiz (caminho absoluto)
-        <input name="new_root" required pattern="/.*" placeholder="ex.: /dados/carbonara">
-        <small>Raiz atual: <code>{{ hub_info.conf_base or hub_info.base }}</code>.
-          Ideal antes de migrar: <code>docker compose stop ingestion</code>.
-          {% if hub_info.version %}<br>Executando <code>rsync-hub {{ hub_info.version }}</code>
-          ({{ hub_info.bin }}) — as mensagens de erro desta migração vêm dele, não da
-          dashboard; atualize a cópia instalada para ter as verificações mais novas.{% endif %}
+      <label>{{ _('Nova raiz (caminho absoluto)') }}
+        <input name="new_root" required pattern="/.*" placeholder="{{ _('ex.: /dados/carbonara') }}">
+        <small>{{ _('Raiz atual: <code>%(raiz)s</code>.', raiz=hub_info.conf_base or hub_info.base) }}
+          {{ _('Ideal antes de migrar: <code>docker compose stop ingestion</code>.') }}
+          {% if hub_info.version %}<br>{{ _('Executando <code>rsync-hub %(versao)s</code>
+          (%(bin)s) — as mensagens de erro desta migração vêm dele, não da
+          dashboard; atualize a cópia instalada para ter as verificações mais novas.', versao=hub_info.version, bin=hub_info.bin) }}{% endif %}
         </small>
       </label>
       <label><input type="checkbox" name="ack" required>
-        Entendi que as <strong>estações não precisam de nenhuma mudança</strong>
+        {{ _('Entendi que as <strong>estações não precisam de nenhuma mudança</strong>
         (o servidor decide o destino a cada conexão) e que, <em>somente se</em> este
         servidor rodar a pilha Docker do projeto (banco/ingestão/FTP), preciso ao
         final ajustar <code>CARBONARA_ROOT</code> no <code>.env</code> e rodar
         <code>docker compose up -d</code>. A raiz do dashboard é atualizada
-        automaticamente.
+        automaticamente.') }}
       </label>
       <div class="form-actions">
-        <button class="btn btn-danger" type="submit">Migrar raiz de dados</button>
+        <button class="btn btn-danger" type="submit">{{ _('Migrar raiz de dados') }}</button>
       </div>
     </form>
-    <p class="meta">Para volumes muito grandes, prefira o terminal (a página não
-      precisa ficar aberta): <code>sudo rsync-hub move-root /nova/raiz</code>.</p>
+    <p class="meta">{{ _('Para volumes muito grandes, prefira o terminal (a página não
+      precisa ficar aberta): <code>sudo rsync-hub move-root /nova/raiz</code>.') }}</p>
   {% else %}
-    <p class="empty">Indisponível: o gerenciamento está em modo somente leitura
-      (veja a página <a href="{{ url_for('hub.index') }}">Coleta</a>). Habilite
-      rodando no servidor: <code>sudo dashboard/setup-hub-access.sh &lt;usuario-da-dashboard&gt;</code>.</p>
+    <p class="empty">{{ _('Indisponível: o gerenciamento está em modo somente leitura
+      (veja a página <a href="%(url)s">Coleta</a>). Habilite
+      rodando no servidor: <code>sudo dashboard/setup-hub-access.sh &lt;usuario-da-dashboard&gt;</code>.', url=url_for('hub.index')) }}</p>
   {% endif %}
 </section>
 
 <section class="card">
   <div class="page-head">
-    <h2>Estações detectadas no rsync-hub</h2>
+    <h2>{{ _('Estações detectadas no rsync-hub') }}</h2>
     {% if detected | selectattr('in_dashboard', 'equalto', false) | list %}
       <form method="post" action="{{ url_for('pages.stations_import_detected') }}">
-        <button class="btn btn-primary" type="submit">Importar as que faltam</button>
+        <button class="btn btn-primary" type="submit">{{ _('Importar as que faltam') }}</button>
       </form>
     {% endif %}
   </div>
   {% if not detected %}
-    <p class="empty">Nenhuma estação detectada sob <code>{{ cfg.data_root }}</code>.
+    <p class="empty">{{ _('Nenhuma estação detectada sob <code>%(raiz)s</code>.
       Procuramos em <code>incoming/</code>, <code>stations/</code>,
       <code>.ssh/authorized_keys</code> e <code>rsyncd.secrets</code> dessa raiz.
       <br>Dica: a <strong>raiz do hub</strong> é a pasta que <strong>contém</strong>
       <code>incoming/</code> — ex.: se seus dados estão em
       <code>/srv/carbonara/incoming/&lt;estação&gt;</code>, a raiz é
-      <code>/srv/carbonara</code> (não <code>/srv/carbonara/incoming</code>).</p>
+      <code>/srv/carbonara</code> (não <code>/srv/carbonara/incoming</code>).', raiz=cfg.data_root) }}</p>
   {% else %}
     <table class="table">
-      <thead><tr><th>Estação</th><th>Fontes</th><th>Na dashboard?</th></tr></thead>
+      <thead><tr><th>{{ _('Estação') }}</th><th>{{ _('Fontes') }}</th><th>{{ _('Na dashboard?') }}</th></tr></thead>
       <tbody>
       {% for d in detected %}
         <tr>
           <td><strong>{{ d.id }}</strong></td>
           <td><small>{{ d.sources | join(' · ') }}</small></td>
           <td>
-            {% if d.in_dashboard %}<span style="color:var(--green)">✓ sim</span>
-            {% else %}<span class="meta">— ainda não</span>{% endif %}
+            {% if d.in_dashboard %}<span style="color:var(--green)">{{ _('✓ sim') }}</span>
+            {% else %}<span class="meta">{{ _('— ainda não') }}</span>{% endif %}
           </td>
         </tr>
       {% endfor %}

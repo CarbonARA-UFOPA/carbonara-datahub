@@ -1,111 +1,111 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Nova publicação' if is_new else 'Editar publicação' }} · FTP · CARBONARA{% endblock %}
+{% block title %}{{ _('Nova publicação') if is_new else _('Editar publicação') }} · FTP · CARBONARA{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>{{ 'Nova publicação' if is_new else 'Editar publicação' }} <small>hub → FTP</small></h1>
-  <a class="btn" href="{{ url_for('ftp.index') }}">← Voltar ao FTP</a>
+  <h1>{{ _('Nova publicação') if is_new else _('Editar publicação') }} <small>hub → FTP</small></h1>
+  <a class="btn" href="{{ url_for('ftp.index') }}">{{ _('← Voltar ao FTP') }}</a>
 </div>
 
 <section class="card help-card">
-  Uma publicação copia, com <code>rsync</code>, uma <strong>pasta do hub</strong> (origem)
+  {{ _('Uma publicação copia, com <code>rsync</code>, uma <strong>pasta do hub</strong> (origem)
   para uma <strong>subpasta do FTP</strong> (destino), repetidamente. Só o que mudou é
   copiado a cada vez; a origem nunca é alterada. Escolha as pastas navegando nos seletores
   ou digite o caminho. A origem pode ser <strong>qualquer pasta do servidor</strong>
   (área <em>Sistema de arquivos</em>). Para espelhar sem gastar disco, prefira um
-  <a href="{{ url_for('ftp.index') }}#vinculos">vínculo</a>; a publicação por cópia é para quando a
-  cópia é desejada (ex.: congelar um recorte, ou filtrar tipos de arquivo).
+  <a href="%(url)s">vínculo</a>; a publicação por cópia é para quando a
+  cópia é desejada (ex.: congelar um recorte, ou filtrar tipos de arquivo).', url=url_for('ftp.index') ~ '#vinculos') }}
 </section>
 
 <form method="post" class="card form"
       action="{{ url_for('ftp.publication_create') if is_new else url_for('ftp.publication_update', pid=rule.id) }}">
-  <label>Nome
-    <input name="name" required maxlength="80" value="{{ rule.name }}" placeholder="ex.: Dados brutos da torre km67">
-    {% if not is_new %}<small>Identificador: <code>{{ rule.id }}</code></small>{% endif %}
+  <label>{{ _('Nome') }}
+    <input name="name" required maxlength="80" value="{{ rule.name }}" placeholder="{{ _('ex.: Dados brutos da torre km67') }}">
+    {% if not is_new %}<small>{{ _('Identificador:') }} <code>{{ rule.id }}</code></small>{% endif %}
   </label>
 
   <div class="grid-2">
     <div>
-      <label>Origem (pasta do hub)
+      <label>{{ _('Origem (pasta do hub)') }}
         <input name="source" id="f-source" required value="{{ rule.source }}"
-               placeholder="relativa à raiz do hub (ex.: incoming/km67) ou absoluta">
-        <small>Raiz do hub: <code>{{ info.hub_base }}</code>. Hoje: pastas de
-          <code>incoming/</code>; no futuro, a saída do tratamento de dados — qualquer pasta serve.</small>
+               placeholder="{{ _('relativa à raiz do hub (ex.: incoming/km67) ou absoluta') }}">
+        <small>{{ _('Raiz do hub: <code>%(base)s</code>. Hoje: pastas de
+          <code>incoming/</code>; no futuro, a saída do tratamento de dados — qualquer pasta serve.', base=info.hub_base) }}</small>
       </label>
       <div class="dir-picker" data-picker="f-source">
         <div class="dir-picker-head">
           <select data-role="area">
-            {% for key, label in pick_areas.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            {% for key, label in pick_areas.items() %}<option value="{{ key }}">{{ _(label) }}</option>{% endfor %}
           </select>
           <span class="mono" data-role="crumbs"></span>
         </div>
         <ul data-role="list"></ul>
         <div class="dir-picker-foot">
           <span class="meta" data-role="info"></span>
-          <button class="btn btn-sm" type="button" data-role="use">usar esta pasta como origem</button>
+          <button class="btn btn-sm" type="button" data-role="use">{{ _('usar esta pasta como origem') }}</button>
         </div>
       </div>
     </div>
 
     <div>
-      <label>Destino (subpasta do FTP)
-        <input name="dest" id="f-dest" required value="{{ rule.dest }}" placeholder="ex.: dados/km67">
-        <small>Dentro de <code>{{ info.root }}</code>; criada se não existir. A raiz inteira não
-          é aceita como destino — dê uma subpasta, é ela que as contas de leitura recebem.</small>
+      <label>{{ _('Destino (subpasta do FTP)') }}
+        <input name="dest" id="f-dest" required value="{{ rule.dest }}" placeholder="{{ _('ex.: dados/km67') }}">
+        <small>{{ _('Dentro de <code>%(root)s</code>; criada se não existir. A raiz inteira não
+          é aceita como destino — dê uma subpasta, é ela que as contas de leitura recebem.', root=info.root) }}</small>
       </label>
       <div class="dir-picker" data-picker="f-dest" data-require-sub="1">
         <div class="dir-picker-head">
-          <select data-role="area"><option value="ftp">FTP (raiz servida)</option></select>
+          <select data-role="area"><option value="ftp">{{ _('FTP (raiz servida)') }}</option></select>
           <span class="mono" data-role="crumbs"></span>
         </div>
         <ul data-role="list"></ul>
         <div class="dir-picker-foot">
           <span class="meta" data-role="info"></span>
-          <button class="btn btn-sm" type="button" data-role="use">usar esta pasta como destino</button>
+          <button class="btn btn-sm" type="button" data-role="use">{{ _('usar esta pasta como destino') }}</button>
         </div>
       </div>
     </div>
   </div>
 
   <details class="adv" {% if rule.include or rule.exclude or rule.delete or rule.hidden %}open{% endif %}>
-    <summary>Filtros e modo de cópia (opcionais)</summary>
+    <summary>{{ _('Filtros e modo de cópia (opcionais)') }}</summary>
     <div class="grid-2">
-      <label>Só estes tipos/nomes (separe por vírgula)
-        <input name="include" value="{{ rule.include | join(', ') }}" placeholder="ex.: *.dat, *.csv">
-        <small>Vazio = tudo. Padrões de nome (<code>*</code>, <code>?</code>); as subpastas são percorridas.</small>
+      <label>{{ _('Só estes tipos/nomes (separe por vírgula)') }}
+        <input name="include" value="{{ rule.include | join(', ') }}" placeholder="{{ _('ex.: *.dat, *.csv') }}">
+        <small>{{ _('Vazio = tudo. Padrões de nome (<code>*</code>, <code>?</code>); as subpastas são percorridas.') }}</small>
       </label>
-      <label>Exceto (separe por vírgula)
-        <input name="exclude" value="{{ rule.exclude | join(', ') }}" placeholder="ex.: *.tmp, *.bak, temp/">
-        <small>Padrões descartados antes de qualquer inclusão.</small>
+      <label>{{ _('Exceto (separe por vírgula)') }}
+        <input name="exclude" value="{{ rule.exclude | join(', ') }}" placeholder="{{ _('ex.: *.tmp, *.bak, temp/') }}">
+        <small>{{ _('Padrões descartados antes de qualquer inclusão.') }}</small>
       </label>
     </div>
     <label class="check-row">
       <input type="checkbox" name="delete" value="1" {% if rule.delete %}checked{% endif %}>
-      <span><strong>Espelhar</strong>: apagar no destino o que sumiu da origem. Só alcança os
+      <span>{{ _('<strong>Espelhar</strong>: apagar no destino o que sumiu da origem. Só alcança os
         arquivos que esta regra cobre (o resto da pasta não é tocado). Padrão desmarcado =
-        acumular, nada é removido do FTP.</span>
+        acumular, nada é removido do FTP.') }}</span>
     </label>
     <label class="check-row">
       <input type="checkbox" name="hidden" value="1" {% if rule.hidden %}checked{% endif %}>
-      <span>Incluir arquivos e pastas ocultos (<code>.carbonara-status</code>,
-        <code>.rsync-parcial/</code>…). Normalmente não — são controle, não dado.</span>
+      <span>{{ _('Incluir arquivos e pastas ocultos (<code>.carbonara-status</code>,
+        <code>.rsync-parcial/</code>…). Normalmente não — são controle, não dado.') }}</span>
     </label>
   </details>
 
   <div class="grid-2">
-    <label>Intervalo (minutos)
+    <label>{{ _('Intervalo (minutos)') }}
       <input name="interval_min" type="number" min="0" max="10080" value="{{ rule.interval_min }}">
-      <small><code>0</code> = só manual (botão "publicar agora"). Com a origem recebendo a cada
-        30 min, 60 min é um bom padrão.</small>
+      <small>{{ _('<code>0</code> = só manual (botão "publicar agora"). Com a origem recebendo a cada
+        30 min, 60 min é um bom padrão.') }}</small>
     </label>
     <label class="check-row" style="align-self:end">
       <input type="checkbox" name="enabled" value="1" {% if rule.enabled %}checked{% endif %}>
-      <span>Habilitada (executa pela agenda). Desmarcada, fica cadastrada mas só roda sob demanda.</span>
+      <span>{{ _('Habilitada (executa pela agenda). Desmarcada, fica cadastrada mas só roda sob demanda.') }}</span>
     </label>
   </div>
 
   <div class="form-actions">
-    <button class="btn btn-primary" type="submit">{{ 'Criar publicação' if is_new else 'Salvar alterações' }}</button>
-    <a class="btn" href="{{ url_for('ftp.index') }}">Cancelar</a>
+    <button class="btn btn-primary" type="submit">{{ _('Criar publicação') if is_new else _('Salvar alterações') }}</button>
+    <a class="btn" href="{{ url_for('ftp.index') }}">{{ _('Cancelar') }}</a>
   </div>
 </form>
 

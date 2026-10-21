@@ -3,12 +3,12 @@
 {% block head %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Estações</h1>
+  <h1>{{ _('Estações') }}</h1>
   {# Rede do SERVIDOR: preenchido por JS e escondido quando não há /proc (não-Linux). #}
   <div id="netspeed" class="netspeed" hidden>
     <span class="netspeed-main"></span>
     <details class="netspeed-all" hidden>
-      <summary>outras interfaces</summary>
+      <summary>{{ _('outras interfaces') }}</summary>
       <ul class="netspeed-list"></ul>
     </details>
   </div>
@@ -16,50 +16,46 @@
 
 {% if is_admin and new_count %}
   <div class="flash flash-ok import-banner">
-    <span>🔎 <strong>{{ new_count }}</strong> estação(ões) configurada(s) no rsync-hub ainda
-      não estão na dashboard.</span>
+    <span>🔎 {{ _('<strong>%(n)s</strong> estação(ões) configurada(s) no rsync-hub ainda não estão na dashboard.', n=new_count) }}</span>
     <form method="post" action="{{ url_for('pages.stations_import_detected') }}">
-      <button class="btn btn-primary" type="submit">Importar do rsync-hub</button>
+      <button class="btn btn-primary" type="submit">{{ _('Importar do rsync-hub') }}</button>
     </form>
   </div>
 {% endif %}
 
 {% if not stations %}
-  <p class="empty">Nenhuma estação cadastrada ainda.
-     {% if is_admin %}Autorize a primeira na aba
-     <a href="{{ url_for('hub.index') }}">Coleta</a> — depois ela aparece aqui
-     (ou use "Importar do rsync-hub", quando já houver estações no hub).{% endif %}</p>
+  <p class="empty">{{ _('Nenhuma estação cadastrada ainda.') }}
+     {% if is_admin %}{{ _('Autorize a primeira na aba <a href="%(url)s">Coleta</a> — depois ela aparece aqui (ou use "Importar do rsync-hub", quando já houver estações no hub).', url=url_for('hub.index')) }}{% endif %}</p>
 {% else %}
 <table class="table">
   <thead>
-    <tr><th>Status</th><th>Estação</th><th>Último sinal</th><th>Velocidade</th>
-        <th>Consumo</th><th>Ping</th><th>Janela</th><th>Arqv. mon.</th>
-        <th title="Último carimbo de tempo lido de cada arquivo monitorado. Amarelo: parado há mais de 1 dia. Vermelho: mais de 7 dias.">Últ. dado</th><th></th></tr>
+    <tr><th>{{ _('Status') }}</th><th>{{ _('Estação') }}</th><th>{{ _('Último sinal') }}</th><th>{{ _('Velocidade') }}</th>
+        <th>{{ _('Consumo') }}</th><th>{{ _('Ping') }}</th><th>{{ _('Janela') }}</th><th>{{ _('Arqv. mon.') }}</th>
+        <th title="{{ _('Último carimbo de tempo lido de cada arquivo monitorado. Amarelo: parado há mais de 1 dia. Vermelho: mais de 7 dias.') }}">{{ _('Últ. dado') }}</th><th></th></tr>
   </thead>
   <tbody>
   {% for s in stations %}
     <tr>
       <td>
         <span class="dot dot-{{ s.status }}"></span>
-        {% if s.status == 'paused' %}Pausada
-        {% elif s.status == 'receiving' %}Recebendo dados
-        {% elif s.status == 'online' %}Online
-        {% elif s.status == 'offline' %}Offline
-        {% else %}Sem sinal{% endif %}
-        {% if s.paused and s.pause_scope != 'todas' %}<br><small class="meta">recepção
-          pausada só desta estação</small>{% endif %}
+        {% if s.status == 'paused' %}{{ _('Pausada') }}
+        {% elif s.status == 'receiving' %}{{ _('Recebendo dados') }}
+        {% elif s.status == 'online' %}{{ _('Online') }}
+        {% elif s.status == 'offline' %}{{ _('Offline') }}
+        {% else %}{{ _('Sem sinal') }}{% endif %}
+        {% if s.paused and s.pause_scope != 'todas' %}<br><small class="meta">{{ _('recepção pausada só desta estação') }}</small>{% endif %}
       </td>
       <td><a href="{{ url_for('pages.station_detail', station_id=s.id) }}"><strong>{{ s.id }}</strong></a><br><small>{{ s.name }}</small></td>
       <td>{{ s.last_signal or '—' }}</td>
       {# Velocidade útil: payload entregue ÷ duração da sessão (log do rsync-hub). #}
-      <td class="speed-cell" title="velocidade da última transmissão medida; abaixo, a média de {{ s.speed_sessions }} sessão(ões)">
+      <td class="speed-cell" title="{{ _('velocidade da última transmissão medida; abaixo, a média de %(n)s sessão(ões)', n=s.speed_sessions) }}">
         {% if s.last_bps %}{{ s.last_bps | bps }}<br>
-          <small class="meta">méd {{ s.avg_bps | bps }}</small>
+          <small class="meta">{{ _('méd') }} {{ s.avg_bps | bps }}</small>
         {% else %}<span class="meta">—</span>{% endif %}
       </td>
       {# Consumo: mesmo formato da coluna Velocidade — o valor em destaque é o da
          ÚLTIMA transmissão; o acumulado de 30 dias fica na linha de apoio. #}
-      <td class="speed-cell" title="volume da última transmissão medida; abaixo, o acumulado dos últimos 30 dias">
+      <td class="speed-cell" title="{{ _('volume da última transmissão medida; abaixo, o acumulado dos últimos 30 dias') }}">
         {% if s.last_bytes %}{{ s.last_bytes | hbytes }}<br>
           <small class="meta">30 d {{ s.bytes_30d | hbytes }}</small>
         {% elif s.bytes_30d %}<span class="meta">—</span><br>
@@ -68,15 +64,15 @@
       </td>
       {# Ping medido ao contrário: é o RTT que o kernel do servidor já mantém para a
          conexão TCP da própria estação (campo rtt= no log) — nada é enviado a ela. #}
-      <td class="speed-cell" title="ping da última transmissão medida; abaixo, a média de {{ s.rtt_sessions }} sessão(ões)">
+      <td class="speed-cell" title="{{ _('ping da última transmissão medida; abaixo, a média de %(n)s sessão(ões)', n=s.rtt_sessions) }}">
         {% if s.last_rtt_ms %}{{ s.last_rtt_ms | pingms }}<br>
-          <small class="meta">méd {{ s.avg_rtt_ms | pingms }}</small>
+          <small class="meta">{{ _('méd') }} {{ s.avg_rtt_ms | pingms }}</small>
         {% else %}<span class="meta">—</span>{% endif %}
       </td>
       {# Só o tempo declarado pela estação: o limite de offline (2×+2) é regra interna,
          não informação de tela — quem precisa dele vê no monitor do rsync-hub. #}
       <td><small>{% if s.interval_min %}{{ s.interval_min }} min
-        {%- else %}fallback {{ s.limit_seconds // 60 }} min{% endif %}</small></td>
+        {%- else %}{{ _('fallback %(n)s min', n=s.limit_seconds // 60) }}{% endif %}</small></td>
       <td>{{ s.files }}</td>
       {# Saúde do DADO, não do transporte: a estação pode estar online (o rsync entrega
          em dia) e um sensor parado há dias — o arquivo chega, mas com carimbo velho.
@@ -89,29 +85,29 @@
         {% else %}
           <span class="fresh-top">
             <span class="fresh-dot fresh-dot-{{ s.freshness.level }}"></span>
-            {{ s.freshness.newest or 'sem leitura' }}
+            {{ s.freshness.newest or _('sem leitura') }}
           </span>
           {% for f in s.freshness.problems[:3] %}
-            <span class="fresh-tag fresh-{{ f.level }}">{{ f.label }} · há {{ f.age_display }}</span>
+            <span class="fresh-tag fresh-{{ f.level }}">{{ f.label }} · {{ _('há %(t)s', t=f.age_display) }}</span>
           {% endfor %}
           {% if s.freshness.problems | length > 3 %}
-            <span class="fresh-tag fresh-alert">+{{ s.freshness.problems | length - 3 }} atrasado(s)</span>
+            <span class="fresh-tag fresh-alert">{{ _('+%(n)s atrasado(s)', n=s.freshness.problems | length - 3) }}</span>
           {% endif %}
           {% for f in s.freshness.unknown[:2] %}
-            <span class="fresh-tag fresh-unknown">{{ f.label }} · {{ f.note or 'sem leitura' }}</span>
+            <span class="fresh-tag fresh-unknown">{{ f.label }} · {{ _(f.note) if f.note else _('sem leitura') }}</span>
           {% endfor %}
           {% if s.freshness.unknown | length > 2 %}
-            <span class="fresh-tag fresh-unknown">+{{ s.freshness.unknown | length - 2 }} sem leitura</span>
+            <span class="fresh-tag fresh-unknown">{{ _('+%(n)s sem leitura', n=s.freshness.unknown | length - 2) }}</span>
           {% endif %}
         {% endif %}
       </td>
       <td class="actions">
-        <a class="btn" href="{{ url_for('pages.station_detail', station_id=s.id) }}">Ver</a>
+        <a class="btn" href="{{ url_for('pages.station_detail', station_id=s.id) }}">{{ _('Ver') }}</a>
         {% if is_admin %}
-          <a class="btn" href="{{ url_for('pages.station_edit', station_id=s.id) }}">Editar</a>
+          <a class="btn" href="{{ url_for('pages.station_edit', station_id=s.id) }}">{{ _('Editar') }}</a>
           <form method="post" action="{{ url_for('pages.station_delete', station_id=s.id) }}"
-                onsubmit="return confirm('Remover esta estação do dashboard? (dados em disco não são apagados)');">
-            <button class="btn btn-danger" type="submit">Remover</button>
+                onsubmit='return confirm({{ _("Remover esta estação do dashboard? (dados em disco não são apagados)") | tojson }});'>
+            <button class="btn btn-danger" type="submit">{{ _('Remover') }}</button>
           </form>
         {% endif %}
       </td>

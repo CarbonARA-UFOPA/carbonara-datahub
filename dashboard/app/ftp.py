@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import config_store, hub
+from .i18n import gettext as tr
 
 # Nome de conta: vira argumento de comando, nome de arquivo de perfil e usuário do SO.
 USER_RE = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
@@ -154,8 +155,8 @@ def _run(cfg: dict, args: list[str], stdin_text: str | None = None,
     registrada — só vai para quem chamou, que a mostra uma vez."""
     bin_path = ftp_hub_bin(cfg)
     if not bin_path:
-        return False, ("ftp-hub não encontrado neste host. Instale com: "
-                       "sudo ./ftp/ftp-hub install <usuario-da-dashboard>"), None
+        return False, tr("ftp-hub não encontrado neste host. Instale com: "
+                         "sudo ./ftp/ftp-hub install <usuario-da-dashboard>"), None
     cmd = [bin_path, *args]
     if not (hasattr(os, "geteuid") and os.geteuid() == 0):
         cmd = ["sudo", "-n", *cmd]
@@ -164,9 +165,9 @@ def _run(cfg: dict, args: list[str], stdin_text: str | None = None,
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **io_kw)
     except FileNotFoundError:
-        return False, "sudo não encontrado — rode a dashboard como root ou instale o sudo.", None
+        return False, tr("sudo não encontrado — rode a dashboard como root ou instale o sudo."), None
     except subprocess.TimeoutExpired:
-        return False, f"tempo esgotado executando: {' '.join(cmd)}", None
+        return False, tr("tempo esgotado executando: %(cmd)s", cmd=" ".join(cmd)), None
     password = None
     kept = []
     for line in (r.stdout or "").splitlines():
@@ -179,10 +180,12 @@ def _run(cfg: dict, args: list[str], stdin_text: str | None = None,
         out = (out + "\n" + r.stderr.strip()).strip()
     if r.returncode != 0:
         if "password is required" in (r.stderr or "") or "senha é necessária" in (r.stderr or ""):
-            out = ("sudo pediu senha (a dashboard só executa em modo não interativo).\n"
-                   f"Rode no servidor: sudo {REPO_BIN} install {hub.dashboard_user()}\n"
-                   f"(ou libere no visudo: {sudoers_hint(bin_path)})")
-        return False, out or f"falha (rc={r.returncode}) executando: {' '.join(cmd)}", None
+            out = tr("sudo pediu senha (a dashboard só executa em modo não interativo).\n"
+                     "Rode no servidor: sudo %(bin)s install %(user)s\n"
+                     "(ou libere no visudo: %(hint)s)",
+                     bin=REPO_BIN, user=hub.dashboard_user(), hint=sudoers_hint(bin_path))
+        return False, out or tr("falha (rc=%(rc)s) executando: %(cmd)s",
+                                rc=r.returncode, cmd=" ".join(cmd)), None
     return True, out, password
 
 
@@ -219,7 +222,7 @@ def server_info(cfg: dict) -> dict:
     bin_path = ftp_hub_bin(cfg)
     can_write, sudo_error = hub._probe_sudo(bin_path, ["add", "__sonda__"])
     if not bin_path:
-        sudo_error = "ftp-hub não instalado neste host."
+        sudo_error = tr("ftp-hub não instalado neste host.")
     port = int(conf.get("listen_port") or 21)
     disk = None
     try:
@@ -412,28 +415,28 @@ def normalize_subfolder(raw: str) -> tuple[str | None, str]:
         return "", ""
     for part in s.split("/"):
         if part in (".", "..") or not SUB_COMPONENT_RE.match(part):
-            return None, ("subpasta inválida: use letras, dígitos, '.', '_' e '-' em cada "
-                          "componente (sem '..', sem componente começando por '.').")
+            return None, tr("subpasta inválida: use letras, dígitos, '.', '_' e '-' em cada "
+                            "componente (sem '..', sem componente começando por '.').")
     return s, ""
 
 
 def validate_password(pw: str) -> str:
     if len(pw) < 8:
-        return "a senha precisa ter pelo menos 8 caracteres."
+        return tr("a senha precisa ter pelo menos 8 caracteres.")
     if len(pw) > 128:
-        return "senha longa demais (máx. 128)."
+        return tr("senha longa demais (máx. 128).")
     if ":" in pw or "\n" in pw or "\r" in pw:
-        return "a senha não pode conter ':' nem quebras de linha."
+        return tr("a senha não pode conter ':' nem quebras de linha.")
     return ""
 
 
 def add_account(cfg: dict, user: str, profile: str, sub: str,
                 password: str | None) -> tuple[bool, str, str | None]:
     if not valid_user(user):
-        return False, ("nome inválido: minúsculas, dígitos, '_' e '-', 3–32 caracteres, "
-                       "começando por letra."), None
+        return False, tr("nome inválido: minúsculas, dígitos, '_' e '-', 3–32 caracteres, "
+                         "começando por letra."), None
     if profile not in PROFILES:
-        return False, "perfil inválido.", None
+        return False, tr("perfil inválido."), None
     norm, err = normalize_subfolder(sub)
     if norm is None:
         return False, err, None
@@ -451,7 +454,7 @@ def add_account(cfg: dict, user: str, profile: str, sub: str,
 
 def set_password(cfg: dict, user: str, password: str | None) -> tuple[bool, str, str | None]:
     if not valid_user(user):
-        return False, "nome inválido.", None
+        return False, tr("nome inválido."), None
     pw = (password or "").strip()
     if pw:
         err = validate_password(pw)
@@ -463,14 +466,14 @@ def set_password(cfg: dict, user: str, password: str | None) -> tuple[bool, str,
 
 def set_profile(cfg: dict, user: str, profile: str) -> tuple[bool, str]:
     if not valid_user(user) or profile not in PROFILES:
-        return False, "usuário ou perfil inválido."
+        return False, tr("usuário ou perfil inválido.")
     ok, out, _ = _run(cfg, ["perfil", user, profile])
     return ok, out
 
 
 def set_folder(cfg: dict, user: str, sub: str) -> tuple[bool, str]:
     if not valid_user(user):
-        return False, "nome inválido."
+        return False, tr("nome inválido.")
     norm, err = normalize_subfolder(sub)
     if norm is None:
         return False, err
@@ -480,7 +483,7 @@ def set_folder(cfg: dict, user: str, sub: str) -> tuple[bool, str]:
 
 def set_enabled(cfg: dict, user: str, enabled: bool) -> tuple[bool, str]:
     if not valid_user(user):
-        return False, "nome inválido."
+        return False, tr("nome inválido.")
     ok, out, _ = _run(cfg, ["ativar" if enabled else "desativar", user])
     return ok, out
 
@@ -489,7 +492,7 @@ def remove_account(cfg: dict, user: str) -> tuple[bool, str]:
     """Remove SÓ a conta (userdel sem -r + perfil): os arquivos ficam — é o ftp-hub que
     garante isso, e é ele que recusa nomes que não sejam contas FTP."""
     if not valid_user(user):
-        return False, "nome inválido."
+        return False, tr("nome inválido.")
     ok, out, _ = _run(cfg, ["remove", user])
     return ok, out
 
@@ -560,7 +563,7 @@ def validate_publication(form: dict, cfg: dict, current_id: str | None = None) -
     errors: list[str] = []
     name = " ".join((form.get("name") or "").split())[:80]
     if not name:
-        errors.append("Dê um nome à publicação.")
+        errors.append(tr("Dê um nome à publicação."))
     pid = current_id or slugify(name)
     if not current_id:
         existing = {p["id"] for p in publications(cfg)}
@@ -572,9 +575,9 @@ def validate_publication(form: dict, cfg: dict, current_id: str | None = None) -
     source = (form.get("source") or "").strip().rstrip("/")
     src_abs = None
     if not source:
-        errors.append("Informe a pasta de origem (ex.: incoming/km67).")
+        errors.append(tr("Informe a pasta de origem (ex.: incoming/km67)."))
     elif any(c in source for c in "\n\r\0"):
-        errors.append("Origem inválida.")
+        errors.append(tr("Origem inválida."))
     else:
         src_abs = resolve_source(cfg, source)
         try:
@@ -582,17 +585,17 @@ def validate_publication(form: dict, cfg: dict, current_id: str | None = None) -
         except OSError:
             src_res = src_abs
         if not src_abs.is_dir():
-            errors.append(f"A origem não existe ou não é uma pasta: {src_abs}")
+            errors.append(tr("A origem não existe ou não é uma pasta: %(p)s", p=src_abs))
         elif source_forbidden(src_abs):
-            errors.append("Origem recusada: " + source_forbidden(src_abs))
+            errors.append(tr("Origem recusada:") + " " + source_forbidden(src_abs))
         elif _is_within(src_res, ftp_root(cfg).resolve()):
-            errors.append("A origem não pode estar DENTRO da raiz do FTP (copiaria o FTP sobre ele mesmo).")
+            errors.append(tr("A origem não pode estar DENTRO da raiz do FTP (copiaria o FTP sobre ele mesmo)."))
 
     dest_norm, err = normalize_subfolder(form.get("dest") or "")
     if dest_norm is None:
-        errors.append("Destino: " + err)
+        errors.append(tr("Destino:") + " " + err)
     elif not dest_norm:
-        errors.append("Informe uma SUBPASTA de destino dentro do FTP (a raiz inteira não é permitida como destino).")
+        errors.append(tr("Informe uma SUBPASTA de destino dentro do FTP (a raiz inteira não é permitida como destino)."))
     elif src_abs is not None:
         d_abs = dest_path(cfg, dest_norm)
         try:
@@ -601,13 +604,13 @@ def validate_publication(form: dict, cfg: dict, current_id: str | None = None) -
         except OSError:
             d_res, s_res = d_abs, src_abs
         if d_res == s_res or _is_within(d_res, s_res) or _is_within(s_res, d_res):
-            errors.append("Origem e destino se sobrepõem — a cópia entraria em laço.")
+            errors.append(tr("Origem e destino se sobrepõem — a cópia entraria em laço."))
 
     include = _split_patterns(form.get("include") or "")
     exclude = _split_patterns(form.get("exclude") or "")
     for pat in include + exclude:
         if len(pat) > 120 or re.search(r"[\s\0]", pat):
-            errors.append(f"Filtro inválido: '{pat}' (sem espaços; separe por vírgula).")
+            errors.append(tr("Filtro inválido: '%(pat)s' (sem espaços; separe por vírgula).", pat=pat))
             break
 
     raw_int = (form.get("interval_min") or "").strip()
@@ -618,7 +621,7 @@ def validate_publication(form: dict, cfg: dict, current_id: str | None = None) -
             if not (0 <= interval <= 10080):
                 raise ValueError
         except ValueError:
-            errors.append("Intervalo: minutos entre 0 (só manual) e 10080 (7 dias).")
+            errors.append(tr("Intervalo: minutos entre 0 (só manual) e 10080 (7 dias)."))
 
     rule = {
         "id": pid, "name": name, "source": source, "dest": dest_norm or "",
@@ -727,7 +730,7 @@ def _normalize_system_rel(sub: str) -> tuple[str | None, str]:
         return "", ""
     for part in s.split("/"):
         if part in (".", "..") or "\0" in part or "\n" in part:
-            return None, "caminho inválido."
+            return None, tr("caminho inválido.")
     return s, ""
 
 
@@ -753,11 +756,11 @@ def source_forbidden(path: Path) -> str:
         pass
     for s in candidates:
         if s == "/":
-            return "a origem não pode ser a raiz do sistema."
+            return tr("a origem não pode ser a raiz do sistema.")
         for f in FORBIDDEN_SOURCES:
             if f != "/" and (s == f or s.startswith(f + "/")):
-                return (f"a origem não pode estar em {f} (pastas do sistema/segredos do host "
-                        "nunca vão para o FTP).")
+                return tr("a origem não pode estar em %(f)s (pastas do sistema/segredos do host "
+                          "nunca vão para o FTP).", f=f)
     return ""
 
 
@@ -812,24 +815,24 @@ def add_link(cfg: dict, dest: str, source: str, rw: bool = False) -> tuple[bool,
     """``ftp-hub link <sub> <origem> [--rw]`` — bind mount da origem dentro do FTP."""
     norm, err = normalize_subfolder(dest)
     if norm is None:
-        return False, "Destino: " + err
+        return False, tr("Destino:") + " " + err
     if not norm:
-        return False, "informe uma SUBPASTA do FTP como destino do vínculo."
+        return False, tr("informe uma SUBPASTA do FTP como destino do vínculo.")
     src = (source or "").strip().rstrip("/")
     if any(c in src for c in "\n\r\t\0") or not src:
-        return False, "informe a pasta de origem."
+        return False, tr("informe a pasta de origem.")
     if not src.startswith("/"):
         # Valor vindo do seletor das áreas do hub (``incoming/km67``): vira absoluto
         # sob a BASE — o ftp-hub só aceita caminho absoluto.
         src = str(hub.hub_base(cfg) / src)
     p = Path(src)
     if not p.is_dir():
-        return False, f"a origem não existe ou não é uma pasta: {src}"
+        return False, tr("a origem não existe ou não é uma pasta: %(p)s", p=src)
     why = source_forbidden(p)
     if why:
         return False, why
     if _is_within(p.resolve(), ftp_root(cfg).resolve()):
-        return False, "a origem já está dentro do FTP — organize com uma pasta ou publique noutra subpasta."
+        return False, tr("a origem já está dentro do FTP — organize com uma pasta ou publique noutra subpasta.")
     args = ["link", norm, src] + (["--rw"] if rw else [])
     ok, out, _ = _run(cfg, args, timeout=60)
     return ok, out
@@ -838,7 +841,7 @@ def add_link(cfg: dict, dest: str, source: str, rw: bool = False) -> tuple[bool,
 def remove_link(cfg: dict, dest: str) -> tuple[bool, str]:
     norm, err = normalize_subfolder(dest)
     if norm is None or not norm:
-        return False, "vínculo inválido."
+        return False, tr("vínculo inválido.")
     ok, out, _ = _run(cfg, ["unlink", norm], timeout=60)
     return ok, out
 
@@ -893,26 +896,26 @@ def create_folder(cfg: dict, parent: str, name: str) -> tuple[bool, str, str]:
     """Cria ``<raiz>/<parent>/<name>`` (2775). Retorna (ok, msg, rel_da_nova)."""
     pnorm, err = normalize_subfolder(parent)
     if pnorm is None:
-        return False, "Pasta-mãe: " + err, ""
+        return False, tr("Pasta-mãe:") + " " + err, ""
     nnorm, err = normalize_subfolder(name)
     if nnorm is None or not nnorm or "/" in nnorm:
-        return False, "Nome inválido: use letras, dígitos, '.', '_' e '-' (sem barras).", ""
+        return False, tr("Nome inválido: use letras, dígitos, '.', '_' e '-' (sem barras)."), ""
     rel = f"{pnorm}/{nnorm}" if pnorm else nnorm
     root = ftp_root(cfg)
     target = root / rel
     try:
         if not _is_within(target.parent.resolve(), root.resolve()):
-            return False, "fora da raiz do FTP.", ""
+            return False, tr("fora da raiz do FTP."), ""
         if target.exists():
-            return False, f"já existe: ftp:/{rel}", rel
+            return False, tr("já existe: ftp:/%(rel)s", rel=rel), rel
         target.mkdir(mode=0o2775)
         os.chmod(target, 0o2775)
     except PermissionError:
-        return False, (f"sem permissão para criar em {target.parent} (a pasta-mãe não é "
-                       "gravável pelo usuário da dashboard)."), ""
+        return False, tr("sem permissão para criar em %(p)s (a pasta-mãe não é "
+                         "gravável pelo usuário da dashboard).", p=target.parent), ""
     except OSError as exc:
-        return False, f"falha ao criar a pasta: {exc}", ""
-    return True, f"Pasta ftp:/{rel} criada.", rel
+        return False, tr("falha ao criar a pasta: %(e)s", e=exc), ""
+    return True, tr("Pasta ftp:/%(rel)s criada.", rel=rel), rel
 
 
 def remove_folder(cfg: dict, sub: str) -> tuple[bool, str]:
@@ -920,22 +923,22 @@ def remove_folder(cfg: dict, sub: str) -> tuple[bool, str]:
     nunca apaga dados do FTP."""
     norm, err = normalize_subfolder(sub)
     if norm is None or not norm:
-        return False, "pasta inválida."
+        return False, tr("pasta inválida.")
     root = ftp_root(cfg)
     target = root / norm
     try:
         if not _is_within(target.resolve(), root.resolve()) or target.resolve() == root.resolve():
-            return False, "fora da raiz do FTP."
+            return False, tr("fora da raiz do FTP.")
         if str(target) in _mountpoints():
-            return False, "esta pasta é um vínculo — desfaça o vínculo em vez de removê-la."
+            return False, tr("esta pasta é um vínculo — desfaça o vínculo em vez de removê-la.")
         if not target.is_dir():
-            return False, "não é uma pasta."
+            return False, tr("não é uma pasta.")
         target.rmdir()
     except OSError as exc:
         if getattr(exc, "errno", None) in (39, 66):  # ENOTEMPTY
-            return False, f"ftp:/{norm} não está vazia — a dashboard só remove pastas vazias."
-        return False, f"não consegui remover: {exc}"
-    return True, f"Pasta vazia ftp:/{norm} removida."
+            return False, tr("ftp:/%(p)s não está vazia — a dashboard só remove pastas vazias.", p=norm)
+        return False, tr("não consegui remover: %(e)s", e=exc)
+    return True, tr("Pasta vazia ftp:/%(p)s removida.", p=norm)
 
 
 def fmt_epoch(ts: float | None) -> str:

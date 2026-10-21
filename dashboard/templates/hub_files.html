@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}{{ l.label }} · Coleta · CARBONARA{% endblock %}
+{% block title %}{{ _(l.label) }} · {{ _('Coleta') }} · CARBONARA{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Arquivos — {{ l.label }}</h1>
+  <h1>{{ _('Arquivos') }} — {{ _(l.label) }}</h1>
   {% if back_station %}
-    <a class="btn" href="{{ url_for('pages.station_edit', station_id=back_station) }}">← Voltar à estação {{ back_station }}</a>
+    <a class="btn" href="{{ url_for('pages.station_edit', station_id=back_station) }}">{{ _('← Voltar à estação %(id)s', id=back_station) }}</a>
   {% elif l.area == 'ftp' %}
-    <a class="btn" href="{{ url_for('ftp.index') }}">← Voltar ao FTP</a>
+    <a class="btn" href="{{ url_for('ftp.index') }}">{{ _('← Voltar ao FTP') }}</a>
   {% else %}
-    <a class="btn" href="{{ url_for('hub.index') }}">← Voltar ao gerenciamento</a>
+    <a class="btn" href="{{ url_for('hub.index') }}">{{ _('← Voltar ao gerenciamento') }}</a>
   {% endif %}
 </div>
 
@@ -16,7 +16,7 @@
   <p class="mono">
     {% for slug, (sub, label) in areas.items() %}
       <a class="btn btn-sm{{ ' btn-primary' if slug == l.area }}"
-         href="{{ url_for('hub.files', area=slug, estacao=back_station) }}">{{ label }}</a>
+         href="{{ url_for('hub.files', area=slug, estacao=back_station) }}">{{ _(label) }}</a>
     {% endfor %}
   </p>
   <p class="mono">
@@ -25,26 +25,26 @@
   </p>
 
   {% if l.missing %}
-    <p class="empty">Esta pasta ainda não existe no hub (nada foi recebido/movido para cá).</p>
+    <p class="empty">{{ _('Esta pasta ainda não existe no hub (nada foi recebido/movido para cá).') }}</p>
   {% elif not l.dirs and not l.files %}
-    <p class="empty">Pasta vazia.</p>
+    <p class="empty">{{ _('Pasta vazia.') }}</p>
   {% else %}
     <table class="table">
-      <thead><tr><th>Nome</th><th>Tamanho</th><th>Modificado</th><th></th></tr></thead>
+      <thead><tr><th>{{ _('Nome') }}</th><th>{{ _('Tamanho') }}</th><th>{{ _('Modificado') }}</th><th></th></tr></thead>
       <tbody>
       {% if l.rel %}
         {% set parent = l.crumbs[-2].rel if l.crumbs | length > 1 else '' %}
         <tr>
           <td colspan="4">
-            {% if parent %}<a href="{{ url_for('hub.files', area=l.area, subpath=parent, estacao=back_station) }}">↩ pasta acima</a>
-            {% else %}<a href="{{ url_for('hub.files', area=l.area, estacao=back_station) }}">↩ pasta acima</a>{% endif %}
+            {% if parent %}<a href="{{ url_for('hub.files', area=l.area, subpath=parent, estacao=back_station) }}">{{ _('↩ pasta acima') }}</a>
+            {% else %}<a href="{{ url_for('hub.files', area=l.area, estacao=back_station) }}">{{ _('↩ pasta acima') }}</a>{% endif %}
           </td>
         </tr>
       {% endif %}
       {% for d in l.dirs %}
         <tr>
           <td>📁 <a href="{{ url_for('hub.files', area=l.area, subpath=d.rel, estacao=back_station) }}"><strong>{{ d.name }}/</strong></a>
-              {% if d.hidden %}<small class="meta">(oculto — a ingestão ignora)</small>{% endif %}</td>
+              {% if d.hidden %}<small class="meta">{{ _('(oculto — a ingestão ignora)') }}</small>{% endif %}</td>
           <td class="meta">—</td>
           <td><small>{{ d.mtime }}</small></td>
           <td></td>
@@ -53,22 +53,22 @@
       {% for f in l.files %}
         <tr>
           <td><code>{{ f.name }}</code>
-              {% if f.hidden %}<small class="meta">(oculto — a ingestão ignora)</small>{% endif %}</td>
+              {% if f.hidden %}<small class="meta">{{ _('(oculto — a ingestão ignora)') }}</small>{% endif %}</td>
           <td>{{ f.size | hsize }}</td>
           <td><small>{{ f.mtime }}</small></td>
           <td class="ta-right">
-            <a class="btn btn-sm" href="{{ url_for('hub.download', area=l.area, subpath=f.rel) }}">baixar</a>
+            <a class="btn btn-sm" href="{{ url_for('hub.download', area=l.area, subpath=f.rel) }}">{{ _('baixar') }}</a>
           </td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
     {% if l.truncated %}
-      <p class="flash flash-error">Listagem truncada em {{ l.max_entries }} entradas —
-        esta pasta tem mais itens; navegue pelas subpastas.</p>
+      <p class="flash flash-error">{{ _('Listagem truncada em %(n)s entradas —
+        esta pasta tem mais itens; navegue pelas subpastas.', n=l.max_entries) }}</p>
     {% endif %}
   {% endif %}
-  <p class="meta">Navegação <strong>somente leitura</strong>: a dashboard nunca apaga nem move
-    arquivos do hub — quem move <code>incoming/ → archive/ | quarantine/</code> é a ingestão.</p>
+  <p class="meta">{{ _('Navegação <strong>somente leitura</strong>: a dashboard nunca apaga nem move
+    arquivos do hub — quem move <code>incoming/ → archive/ | quarantine/</code> é a ingestão.') }}</p>
 </section>
 {% endblock %}

@@ -825,6 +825,23 @@ computes live station status. Viewing is open; edits require the admin login
   Human-written aliases (`%YYYY`, `%mm`, `%DD`…) are normalized to strftime on save
   (`normalize_time_tokens`): strftime would expand `%YYYY` to `2026YYY` **without
   erroring**, giving a silently empty chart.
+- **Bilingual UI (pt-BR ⇄ en)** — `app/i18n.py`, no extra dependency. The PORTUGUESE text
+  is the key (gettext-style): templates use `{{ _('texto') }}` / `_('… %(x)s …', x=v)`,
+  Python uses `from .i18n import gettext as _` (or `tr` where the module already uses `_`
+  as a variable), JS uses the global `t('texto', {x: v})` from `/i18n.js` (loaded in
+  `<head>`, so inline scripts can use it; `LOCALE` in dashboard.js for numbers).
+  Catalogs: one module per area in `app/i18n_en/*.py` (dict `EN`), merged; keys are
+  whitespace-normalized; missing translation = Portuguese, never an error. Language =
+  cookie `lang` (top-bar button → `/lang/<code>?next=` — local paths only), else
+  `server.language`, else `pt`. **Every new user-visible string must be wrapped AND get
+  a catalog entry.** Template `_` returns Markup ONLY for catalog text (so `_(variable)`
+  with a file name or exception message is escaped — keep it that way). Translate at
+  USE time, never in module constants or in shared caches (status/series caches keep
+  Portuguese and translate on output; the FTP publisher thread has no request → pt,
+  states are translated in the template/JS). Never translate values that are compared
+  or stored (states, types, `value=`, the typed `APAGAR`/table-name confirmations), raw
+  rsync-hub/ftp-hub output, or the station-side texts (INSTRUCOES.txt, kit LEIA-ME).
+  Never `{% set _ = … %}` in a template — it shadows the translator.
 - Chart.js is **vendored** in `dashboard/static/` (no CDN — the host may be offline).
 - Read-only over the data: removing stations/files from the dashboard never touches disk.
 - **Hub management page** (`/hub`, blueprint `app/hub_views.py` + logic `app/hub.py`):

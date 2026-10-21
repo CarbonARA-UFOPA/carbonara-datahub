@@ -17,12 +17,12 @@
       var cur = {area: areaSel.value, rel: "", value: ""};
 
       function load(area, rel) {
-        list.innerHTML = '<li class="meta">carregando…</li>';
+        list.innerHTML = '<li class="meta">' + t('carregando…') + '</li>';
         fetch(BROWSE + "?area=" + encodeURIComponent(area) + "&sub=" + encodeURIComponent(rel),
               {credentials: "same-origin"})
           .then(function (r) { return r.json(); })
           .then(function (d) {
-            if (d.error) { list.innerHTML = '<li class="warn">' + d.error + '</li>'; return; }
+            if (d.error) { list.innerHTML = '<li class="warn">' + t(d.error) + '</li>'; return; }
             cur = {area: d.area, rel: d.rel, value: d.value};
             var parts = d.rel ? d.rel.split("/") : [];
             crumbs.innerHTML = "";
@@ -39,11 +39,11 @@
               crumbs.appendChild(a);
             });
             list.innerHTML = "";
-            if (d.missing) { list.innerHTML = '<li class="meta">(pasta ainda não existe)</li>'; }
-            if (d.denied) { list.innerHTML = '<li class="warn">sem permissão para listar esta pasta</li>'; }
+            if (d.missing) { list.innerHTML = '<li class="meta">' + t('(pasta ainda não existe)') + '</li>'; }
+            if (d.denied) { list.innerHTML = '<li class="warn">' + t('sem permissão para listar esta pasta') + '</li>'; }
             if (d.rel) {
               var up = document.createElement("li");
-              var upA = document.createElement("a"); upA.href = "#"; upA.textContent = "↩ pasta acima";
+              var upA = document.createElement("a"); upA.href = "#"; upA.textContent = t("↩ pasta acima");
               upA.addEventListener("click", function (ev) { ev.preventDefault(); load(cur.area, parts.slice(0, -1).join("/")); });
               up.appendChild(upA); list.appendChild(up);
             }
@@ -57,16 +57,16 @@
               li.appendChild(a); list.appendChild(li);
             });
             if (!d.dirs.length && !d.missing && !d.denied) {
-              var e = document.createElement("li"); e.className = "meta"; e.textContent = "(sem subpastas)"; list.appendChild(e);
+              var e = document.createElement("li"); e.className = "meta"; e.textContent = t("(sem subpastas)"); list.appendChild(e);
             }
-            info.textContent = (d.files ? d.files + " arquivo(s) aqui · " : "") + "valor: " + (d.value || "(raiz)");
+            info.textContent = (d.files ? t("%(n)s arquivo(s) aqui · ", {n: d.files}) : "") + t("valor: ") + (d.value || t("(raiz)"));
           })
-          .catch(function () { list.innerHTML = '<li class="warn">falha ao listar</li>'; });
+          .catch(function () { list.innerHTML = '<li class="warn">' + t('falha ao listar') + '</li>'; });
       }
       areaSel.addEventListener("change", function () { load(areaSel.value, ""); });
       useBtn.addEventListener("click", function () {
         if (requireSub && !cur.rel) {
-          info.textContent = "escolha uma SUBPASTA (a raiz não é aceita aqui)"; return;
+          info.textContent = t("escolha uma SUBPASTA (a raiz não é aceita aqui)"); return;
         }
         target.value = cur.value; target.dispatchEvent(new Event("change"));
       });

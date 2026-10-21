@@ -4,43 +4,43 @@
 {% block content %}
 {% set sinfo = schemas | selectattr('schema', 'equalto', schema) | list | first %}
 <h1>{% if sinfo and sinfo.kind == 'estacao' %}📡 {{ sinfo.station }} › <a href="{{ url_for('pages.banco_schema', schema=schema) }}">📁 {{ sinfo.data_type }}</a> › {% else %}<a href="{{ url_for('pages.banco_schema', schema=schema) }}"><code>{{ schema }}</code></a> . {% endif %}<code>{{ table }}</code>
-  <small>{% if structure %}{% if structure.generated %}view gerada pela ingestão{% elif structure.kind == 'view' %}view{% elif structure.kind == 'matview' %}view materializada{% else %}tabela{% endif %}
-    {% if structure.editable %}· <span class="badge on">editável</span>{% else %}· somente leitura{% endif %}{% endif %}</small></h1>
+  <small>{% if structure %}{% if structure.generated %}{{ _('view gerada pela ingestão') }}{% elif structure.kind == 'view' %}view{% elif structure.kind == 'matview' %}{{ _('view materializada') }}{% else %}{{ _('tabela') }}{% endif %}
+    {% if structure.editable %}· <span class="badge on">{{ _('editável') }}</span>{% else %}· {{ _('somente leitura') }}{% endif %}{% endif %}</small></h1>
 <div class="db-layout">
 {% include "_banco_side.html" %}
 <div>
   <nav class="tabs">
-    <a href="{{ url_for('pages.banco_table', schema=schema, table=table) }}" class="{{ 'active' if tab == 'dados' }}">Dados</a>
-    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='estrutura') }}" class="{{ 'active' if tab == 'estrutura' }}">Estrutura</a>
+    <a href="{{ url_for('pages.banco_table', schema=schema, table=table) }}" class="{{ 'active' if tab == 'dados' }}">{{ _('Dados') }}</a>
+    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='estrutura') }}" class="{{ 'active' if tab == 'estrutura' }}">{{ _('Estrutura') }}</a>
     {% if structure and structure.editable %}
-    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='inserir') }}" class="{{ 'active' if tab == 'inserir' }}">Inserir</a>
+    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='inserir') }}" class="{{ 'active' if tab == 'inserir' }}">{{ _('Inserir') }}</a>
     {% endif %}
     <a href="{{ url_for('pages.banco') }}#sql-box">SQL</a>
     {% if structure and (structure.generated or structure.editable) %}
-    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='perigo') }}" class="{{ 'active' if tab == 'perigo' }} tab-danger">Zona de perigo</a>
+    <a href="{{ url_for('pages.banco_table', schema=schema, table=table, aba='perigo') }}" class="{{ 'active' if tab == 'perigo' }} tab-danger">{{ _('Zona de perigo') }}</a>
     {% endif %}
     {% if structure %}
     <form method="get" action="{{ url_for('pages.banco_export', schema=schema, table=table) }}" class="tabs-export">
-      {% if structure.generated %}<input name="start" value="now-30d" class="num-input" title="início (ISO ou now-30d)"><input name="end" value="now" class="num-short" title="fim">{% endif %}
-      <button class="btn" type="submit" title="{{ 'CSV longo (time, variável, valor, flag) do período, via API' if structure.generated else 'até 500 linhas em CSV' }}">⬇ CSV</button>
+      {% if structure.generated %}<input name="start" value="now-30d" class="num-input" title="{{ _('início (ISO ou now-30d)') }}"><input name="end" value="now" class="num-short" title="{{ _('fim') }}">{% endif %}
+      <button class="btn" type="submit" title="{{ _('CSV longo (time, variável, valor, flag) do período, via API') if structure.generated else _('até 500 linhas em CSV') }}">⬇ CSV</button>
     </form>
     {% endif %}
   </nav>
 
   {% if not structure %}
-    <p class="empty">Tabela indisponível.</p>
+    <p class="empty">{{ _('Tabela indisponível.') }}</p>
   {% elif tab == 'dados' %}
     <section class="card">
       <form method="get" class="treat-tools" action="{{ url_for('pages.banco_table', schema=schema, table=table) }}">
         {% if structure.generated or structure.hypertable %}
-          <span class="meta">{{ 'Tabela gerada do arquivo' if structure.generated else 'Tabela de séries (milhões de linhas)' }}: paginada por tempo (mais recente primeiro); para filtrar ou ordenar por valor use a <a href="{{ url_for('pages.banco') }}#sql-box">consulta SQL</a>.</span>
-          <a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, dir=('asc' if params.dir == 'desc' else 'desc')) }}">{{ 'Mais antigos primeiro' if params.dir == 'desc' else 'Mais recentes primeiro' }}</a>
+          <span class="meta">{% if structure.generated %}{{ _('Tabela gerada do arquivo: paginada por tempo (mais recente primeiro); para filtrar ou ordenar por valor use a <a href="%(url)s">consulta SQL</a>.', url=url_for('pages.banco') ~ '#sql-box') }}{% else %}{{ _('Tabela de séries (milhões de linhas): paginada por tempo (mais recente primeiro); para filtrar ou ordenar por valor use a <a href="%(url)s">consulta SQL</a>.', url=url_for('pages.banco') ~ '#sql-box') }}{% endif %}</span>
+          <a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, dir=('asc' if params.dir == 'desc' else 'desc')) }}">{{ _('Mais antigos primeiro') if params.dir == 'desc' else _('Mais recentes primeiro') }}</a>
         {% else %}
-        <input type="search" name="q" value="{{ params.q }}" placeholder="filtrar (texto em qualquer coluna)">
+        <input type="search" name="q" value="{{ params.q }}" placeholder="{{ _('filtrar (texto em qualquer coluna)') }}">
         <input type="hidden" name="sort" value="{{ params.sort or '' }}"><input type="hidden" name="dir" value="{{ params.dir }}">
-        <button class="btn" type="submit">Filtrar</button>
+        <button class="btn" type="submit">{{ _('Filtrar') }}</button>
         {% endif %}
-        {% if data %}<span class="meta">{{ data.row_count }} linha(s) a partir de {{ params.offset }}{{ ' (há mais)' if data.truncated }} · {{ data.elapsed_ms }} ms · ordenado por <code>{{ data.sort }}</code> {{ data.dir }} · carimbos em UTC</span>{% endif %}
+        {% if data %}<span class="meta">{{ _('%(n)s linha(s) a partir de %(offset)s', n=data.row_count, offset=params.offset) }}{{ ' ' ~ _('(há mais)') if data.truncated }} · {{ data.elapsed_ms }} ms · {{ _('ordenado por') }} <code>{{ data.sort }}</code> {{ data.dir }} · {{ _('carimbos em UTC') }}</span>{% endif %}
       </form>
       {% if data and data.rows %}
       {% set cols = data.columns | reject('equalto', '_ctid') | list %}
@@ -52,105 +52,105 @@
         <tbody>{% for row in data.rows %}
           {% set ctid = row[0] if can_del else none %}
           <tr>{% if can_del %}
-            <td><form method="post" action="{{ url_for('pages.banco_delete_row', schema=schema, table=table) }}" onsubmit="return confirm('Apagar esta linha?');">
+            <td><form method="post" action="{{ url_for('pages.banco_delete_row', schema=schema, table=table) }}" onsubmit="return confirm('{{ _('Apagar esta linha?') }}');">
               <input type="hidden" name="ctid" value="{{ ctid }}"><input type="hidden" name="offset" value="{{ params.offset }}"><input type="hidden" name="q" value="{{ params.q }}">
-              <button class="btn btn-danger" type="submit" title="apagar linha" aria-label="apagar linha">×</button></form></td>{% endif %}
+              <button class="btn btn-danger" type="submit" title="{{ _('apagar linha') }}" aria-label="{{ _('apagar linha') }}">×</button></form></td>{% endif %}
             {% for v in (row[1:] if can_del else row) %}<td class="{{ 'null' if v is none }}">{{ 'NULL' if v is none else v }}</td>{% endfor %}
           </tr>
         {% endfor %}</tbody>
       </table></div>
       <div class="form-actions">
-        {% if params.offset > 0 %}<a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, offset=[0, params.offset - 50] | max, sort=params.sort, dir=params.dir, q=params.q) }}">← Anteriores</a>{% endif %}
-        {% if data.truncated %}<a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, offset=params.offset + 50, sort=params.sort, dir=params.dir, q=params.q) }}">Próximas 50 →</a>{% endif %}
+        {% if params.offset > 0 %}<a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, offset=[0, params.offset - 50] | max, sort=params.sort, dir=params.dir, q=params.q) }}">{{ _('← Anteriores') }}</a>{% endif %}
+        {% if data.truncated %}<a class="btn" href="{{ url_for('pages.banco_table', schema=schema, table=table, offset=params.offset + 50, sort=params.sort, dir=params.dir, q=params.q) }}">{{ _('Próximas 50 →') }}</a>{% endif %}
       </div>
-      {% elif data %}<p class="empty">Nenhuma linha{{ ' para este filtro' if params.q }}.</p>{% endif %}
+      {% elif data %}<p class="empty">{{ _('Nenhuma linha para este filtro.') if params.q else _('Nenhuma linha.') }}</p>{% endif %}
     </section>
 
   {% elif tab == 'estrutura' %}
     <section class="card">
       <table class="table">
-        <thead><tr><th>#</th><th>Coluna</th><th>Tipo</th><th>Nula?</th><th>Padrão</th><th>PK</th><th>Descrição</th></tr></thead>
+        <thead><tr><th>#</th><th>{{ _('Coluna') }}</th><th>{{ _('Tipo') }}</th><th>{{ _('Nula?') }}</th><th>{{ _('Padrão') }}</th><th>PK</th><th>{{ _('Descrição') }}</th></tr></thead>
         <tbody>{% for c in structure.columns %}
-          <tr><td>{{ loop.index }}</td><td><code>{{ c.name }}</code></td><td>{{ c.type }}</td><td>{{ 'sim' if c.nullable else 'não' }}</td>
+          <tr><td>{{ loop.index }}</td><td><code>{{ c.name }}</code></td><td>{{ c.type }}</td><td>{{ _('sim') if c.nullable else _('não') }}</td>
             <td><small>{{ c.default_value or '' }}</small></td><td>{{ '🔑' if c.pk }}</td><td><small class="meta">{{ c.comment or '' }}</small></td></tr>
         {% endfor %}</tbody>
       </table>
       {% if structure.comment %}<p class="meta">{{ structure.comment }}</p>{% endif %}
-      {% if structure.definition %}<details class="adv"><summary>Definição da view (SQL)</summary><pre style="white-space:pre-wrap;font-size:.8rem">{{ structure.definition }}</pre></details>{% endif %}
+      {% if structure.definition %}<details class="adv"><summary>{{ _('Definição da view (SQL)') }}</summary><pre style="white-space:pre-wrap;font-size:.8rem">{{ structure.definition }}</pre></details>{% endif %}
     </section>
 
   {% elif tab == 'perigo' %}
     <section class="card help-card" style="border-color:#e0a9a9;background:#fff6f6">
-      <strong>Zona de perigo.</strong> As ações abaixo apagam dados de forma irreversível. Cada uma exige digitar
+      {{ _('<strong>Zona de perigo.</strong> As ações abaixo apagam dados de forma irreversível. Cada uma exige digitar
       exatamente o texto indicado; a API confere de novo antes de executar e registra quem fez em <code>pipeline_runs</code>.
-      Os arquivos em <code>incoming/</code> nunca são tocados — o histórico pode ser reingerido a partir deles.
+      Os arquivos em <code>incoming/</code> nunca são tocados — o histórico pode ser reingerido a partir deles.') }}
     </section>
     {% if structure.generated %}
       {% set vars = structure.columns | map(attribute='name') | reject('in', ['time', 'flags']) | list %}
       <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_station_clear', schema=schema, table=table) }}"
-            onsubmit="return confirm('Zerar TODOS os dados desta tabela ({{ vars | length }} variáveis) e reingerir do zero?');">
-        <h2>Zerar os dados da tabela</h2>
-        <p class="meta">Remove todas as medições das {{ vars | length }} variáveis deste arquivo para a estação <code>{{ schema }}</code>
+            onsubmit="return confirm('{{ _('Zerar TODOS os dados desta tabela (%(n)s variáveis) e reingerir do zero?', n=vars | length) }}');">
+        <h2>{{ _('Zerar os dados da tabela') }}</h2>
+        <p class="meta">{{ _('Remove todas as medições das %(n)s variáveis deste arquivo para a estação <code>%(schema)s</code>
           e zera o ledger — no próximo ciclo a ingestão relê o arquivo do início, com as regras atuais da aba Tratamento.
-          É o jeito de reaplicar fuso, IDs ou regras de qualidade ao histórico.</p>
-        <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off" placeholder="{{ table }}"></label>
-        <div class="form-actions"><button class="btn btn-danger" type="submit">Zerar e reingerir</button></div>
+          É o jeito de reaplicar fuso, IDs ou regras de qualidade ao histórico.', n=vars | length, schema=schema) }}</p>
+        <label>{{ _('Digite <code>%(alvo)s</code> para confirmar', alvo=table) }} <input name="confirm" required autocomplete="off" placeholder="{{ table }}"></label>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">{{ _('Zerar e reingerir') }}</button></div>
       </form>
       <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_station_drop_variable', schema=schema, table=table) }}"
-            onsubmit="return confirm('Apagar TODOS os dados da variável escolhida nesta estação?');">
-        <h2>Apagar uma variável</h2>
-        <p class="meta">Remove todas as medições de uma variável da estação <code>{{ schema }}</code>. Se ela continuar marcada
-          para o banco em Tratamento, os dados novos voltam a entrar (sem o histórico). Para tirá-la de vez, desmarque-a lá.</p>
+            onsubmit="return confirm('{{ _('Apagar TODOS os dados da variável escolhida nesta estação?') }}');">
+        <h2>{{ _('Apagar uma variável') }}</h2>
+        <p class="meta">{{ _('Remove todas as medições de uma variável da estação <code>%(schema)s</code>. Se ela continuar marcada
+          para o banco em Tratamento, os dados novos voltam a entrar (sem o histórico). Para tirá-la de vez, desmarque-a lá.', schema=schema) }}</p>
         <div class="form-row">
-          <label>Variável <select name="variable_id" id="dv-select">{% for v in vars %}<option value="{{ v }}">{{ v }}</option>{% endfor %}</select></label>
-          <label>Digite o ID da variável para confirmar <input name="confirm" required autocomplete="off" placeholder="{{ vars[0] if vars }}"></label>
+          <label>{{ _('Variável') }} <select name="variable_id" id="dv-select">{% for v in vars %}<option value="{{ v }}">{{ v }}</option>{% endfor %}</select></label>
+          <label>{{ _('Digite o ID da variável para confirmar') }} <input name="confirm" required autocomplete="off" placeholder="{{ vars[0] if vars }}"></label>
         </div>
-        <div class="form-actions"><button class="btn btn-danger" type="submit">Apagar variável</button></div>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">{{ _('Apagar variável') }}</button></div>
       </form>
       <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_station_drop_table', schema=schema, table=table) }}"
-            onsubmit="return confirm('Apagar a tabela {{ schema }}.{{ table }}: todos os dados, a view e desligar a ingestão deste arquivo?');">
-        <h2>Apagar a tabela inteira</h2>
-        <p class="meta">Remove todas as medições das variáveis deste arquivo, a view <code>{{ schema }}.{{ table }}</code> e o ledger,
+            onsubmit="return confirm('{{ _('Apagar a tabela %(alvo)s: todos os dados, a view e desligar a ingestão deste arquivo?', alvo=schema ~ '.' ~ table) }}');">
+        <h2>{{ _('Apagar a tabela inteira') }}</h2>
+        <p class="meta">{{ _('Remove todas as medições das variáveis deste arquivo, a view <code>%(alvo)s</code> e o ledger,
           e <strong>desliga a ingestão</strong> do arquivo na dashboard (o registro e os gráficos por arquivo continuam; para voltar,
-          marque "Ingerir no banco" em Tratamento e tudo é reingerido do zero).</p>
-        <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off" placeholder="{{ table }}"></label>
-        <div class="form-actions"><button class="btn btn-danger" type="submit">Apagar tabela</button></div>
+          marque "Ingerir no banco" em Tratamento e tudo é reingerido do zero).', alvo=schema ~ '.' ~ table) }}</p>
+        <label>{{ _('Digite <code>%(alvo)s</code> para confirmar', alvo=table) }} <input name="confirm" required autocomplete="off" placeholder="{{ table }}"></label>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">{{ _('Apagar tabela') }}</button></div>
       </form>
     {% elif structure.editable %}
       <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_truncate', schema=schema, table=table) }}"
-            onsubmit="return confirm('Esvaziar a tabela {{ table }} (todas as linhas)?');">
-        <h2>Esvaziar a tabela</h2>
-        <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off"></label>
-        <div class="form-actions"><button class="btn btn-danger" type="submit">Esvaziar</button></div>
+            onsubmit="return confirm('{{ _('Esvaziar a tabela %(alvo)s (todas as linhas)?', alvo=table) }}');">
+        <h2>{{ _('Esvaziar a tabela') }}</h2>
+        <label>{{ _('Digite <code>%(alvo)s</code> para confirmar', alvo=table) }} <input name="confirm" required autocomplete="off"></label>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">{{ _('Esvaziar') }}</button></div>
       </form>
       <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_drop_column', schema=schema, table=table) }}"
-            onsubmit="return confirm('Apagar a coluna escolhida e todos os seus valores?');">
-        <h2>Apagar uma coluna</h2>
+            onsubmit="return confirm('{{ _('Apagar a coluna escolhida e todos os seus valores?') }}');">
+        <h2>{{ _('Apagar uma coluna') }}</h2>
         <div class="form-row">
-          <label>Coluna <select name="column">{% for c in structure.columns %}<option value="{{ c.name }}">{{ c.name }} ({{ c.type }})</option>{% endfor %}</select></label>
-          <label>Digite o nome da coluna para confirmar <input name="confirm" required autocomplete="off"></label>
+          <label>{{ _('Coluna') }} <select name="column">{% for c in structure.columns %}<option value="{{ c.name }}">{{ c.name }} ({{ c.type }})</option>{% endfor %}</select></label>
+          <label>{{ _('Digite o nome da coluna para confirmar') }} <input name="confirm" required autocomplete="off"></label>
         </div>
-        <div class="form-actions"><button class="btn btn-danger" type="submit">Apagar coluna</button></div>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">{{ _('Apagar coluna') }}</button></div>
       </form>
       <form method="post" class="card form danger-card" action="{{ url_for('pages.banco_drop_table', schema=schema, table=table) }}"
-            onsubmit="return confirm('Excluir a tabela {{ table }} e TODOS os seus dados?');">
-        <h2>Excluir a tabela</h2>
-        <label>Digite <code>{{ table }}</code> para confirmar <input name="confirm" required autocomplete="off"></label>
-        <div class="form-actions"><button class="btn btn-danger" type="submit">Excluir tabela</button></div>
+            onsubmit="return confirm('{{ _('Excluir a tabela %(alvo)s e TODOS os seus dados?', alvo=table) }}');">
+        <h2>{{ _('Excluir a tabela') }}</h2>
+        <label>{{ _('Digite <code>%(alvo)s</code> para confirmar', alvo=table) }} <input name="confirm" required autocomplete="off"></label>
+        <div class="form-actions"><button class="btn btn-danger" type="submit">{{ _('Excluir tabela') }}</button></div>
       </form>
     {% endif %}
 
   {% elif tab == 'inserir' and structure.editable %}
     <form method="post" class="card form" action="{{ url_for('pages.banco_insert', schema=schema, table=table) }}">
-      <h2>Inserir linha</h2>
-      <p class="meta">Vazio = NULL (ou o valor padrão). Datas em ISO (<code>2026-09-26 14:30</code> ou <code>2026-09-26T14:30:00Z</code>); sim/não como <code>true</code>/<code>false</code>.</p>
+      <h2>{{ _('Inserir linha') }}</h2>
+      <p class="meta">{{ _('Vazio = NULL (ou o valor padrão). Datas em ISO (<code>2026-09-26 14:30</code> ou <code>2026-09-26T14:30:00Z</code>); sim/não como <code>true</code>/<code>false</code>.') }}</p>
       <div class="grid-3">
       {% for c in structure.columns %}
-        <label><code>{{ c.name }}</code> <small class="meta">{{ c.type }}{{ ' · obrigatória' if not c.nullable and not c.default_value }}</small>
+        <label><code>{{ c.name }}</code> <small class="meta">{{ c.type }}{{ ' · ' ~ _('obrigatória') if not c.nullable and not c.default_value }}</small>
           <input name="col_{{ c.name }}" {{ 'required' if not c.nullable and not c.default_value }} placeholder="{{ c.default_value or '' }}"></label>
       {% endfor %}
       </div>
-      <div class="form-actions"><button class="btn btn-primary" type="submit">Inserir</button></div>
+      <div class="form-actions"><button class="btn btn-primary" type="submit">{{ _('Inserir') }}</button></div>
     </form>
   {% endif %}
 </div>

@@ -1,121 +1,121 @@
 {% extends "base.html" %}
-{% block title %}Conta FTP {{ acc.user }} · CARBONARA{% endblock %}
+{% block title %}{{ _('Conta FTP %(user)s', user=acc.user) }} · CARBONARA{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Conta FTP — <code>{{ acc.user }}</code></h1>
-  <a class="btn" href="{{ url_for('ftp.index') }}">← Voltar ao FTP</a>
+  <h1>{{ _('Conta FTP — <code>%(user)s</code>', user=acc.user) }}</h1>
+  <a class="btn" href="{{ url_for('ftp.index') }}">{{ _('← Voltar ao FTP') }}</a>
 </div>
 
 {% if reveal %}
 <div class="flash flash-ok">
-  <strong>Senha de <code>{{ reveal.user }}</code>:</strong>
+  <strong>{{ _('Senha de <code>%(user)s</code>:', user=reveal.user) }}</strong>
   <code class="reveal-pw" id="reveal-pw">{{ reveal.password }}</code>
-  <button class="btn btn-sm" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('reveal-pw').textContent)">copiar</button>
-  <br><small>Anote agora — ela <strong>não</strong> será mostrada de novo.</small>
+  <button class="btn btn-sm" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('reveal-pw').textContent)">{{ _('copiar') }}</button>
+  <br><small>{{ _('Anote agora — ela <strong>não</strong> será mostrada de novo.') }}</small>
 </div>
 {% endif %}
 
 {% if not info.can_write %}
-<div class="flash flash-error">Contas em modo somente leitura — veja a instrução na
-  <a href="{{ url_for('ftp.index') }}">página do FTP</a>.</div>
+<div class="flash flash-error">{{ _('Contas em modo somente leitura — veja a instrução na
+  <a href="%(url)s">página do FTP</a>.', url=url_for('ftp.index')) }}</div>
 {% endif %}
 
 <section class="card status-card">
   <div class="page-head">
-    <h2>Situação</h2>
-    <span>{% if acc.disabled %}<span class="dot dot-offline"></span> desativada
-      {% else %}<span class="dot dot-online"></span> ativa{% endif %}</span>
+    <h2>{{ _('Situação') }}</h2>
+    <span>{% if acc.disabled %}<span class="dot dot-offline"></span> {{ _('desativada') }}
+      {% else %}<span class="dot dot-online"></span> {{ _('ativa') }}{% endif %}</span>
   </div>
   <dl>
-    <dt>Perfil</dt><dd><span class="pill pill-{{ acc.profile }}">{{ acc.profile_label }}</span>
-      <small class="meta">— {{ profiles[acc.profile].desc if acc.profile in profiles else '' }}</small></dd>
-    <dt>Pasta</dt><dd><code>{{ acc.folder }}</code> <small class="meta">({{ acc.folder_abs }})</small>
-      {% if acc.folder_outside %}<br><small class="warn">Fora da raiz do FTP — conta antiga; defina uma pasta abaixo para trazê-la para a raiz.</small>
-      {% else %} · <a href="{{ url_for('hub.files', area='ftp', subpath=(acc.folder if acc.folder != '/' else '')) }}">navegar nos arquivos</a>{% endif %}</dd>
-    <dt>Conexão</dt>
+    <dt>{{ _('Perfil') }}</dt><dd><span class="pill pill-{{ acc.profile }}">{{ _(acc.profile_label) }}</span>
+      <small class="meta">— {{ _(profiles[acc.profile].desc) if acc.profile in profiles else '' }}</small></dd>
+    <dt>{{ _('Pasta') }}</dt><dd><code>{{ acc.folder }}</code> <small class="meta">({{ acc.folder_abs }})</small>
+      {% if acc.folder_outside %}<br><small class="warn">{{ _('Fora da raiz do FTP — conta antiga; defina uma pasta abaixo para trazê-la para a raiz.') }}</small>
+      {% else %} · <a href="{{ url_for('hub.files', area='ftp', subpath=(acc.folder if acc.folder != '/' else '')) }}">{{ _('navegar nos arquivos') }}</a>{% endif %}</dd>
+    <dt>{{ _('Conexão') }}</dt>
     <dd><code>ftp://{{ acc.user }}@{{ info.public_host }}:{{ info.port }}/</code>
-      {% if info.tls %}· FTPS explícito {{ 'obrigatório' if info.tls_required else 'disponível' }}{% endif %}
-      {% if info.pasv_min %}· passivo {{ info.pasv_min }}–{{ info.pasv_max }}{% endif %}</dd>
-    <dt>uid</dt><dd>{{ acc.uid }}{% if not acc.managed %} · <small class="meta">conta criada fora do ftp-hub (perfil inferido)</small>{% endif %}</dd>
+      {% if info.tls %}· {{ _('FTPS explícito') }} {{ _('obrigatório') if info.tls_required else _('disponível') }}{% endif %}
+      {% if info.pasv_min %}· {{ _('passivo %(a)s–%(b)s', a=info.pasv_min, b=info.pasv_max) }}{% endif %}</dd>
+    <dt>uid</dt><dd>{{ acc.uid }}{% if not acc.managed %} · <small class="meta">{{ _('conta criada fora do ftp-hub (perfil inferido)') }}</small>{% endif %}</dd>
     {% if acc.activity %}
-    <dt>Atividade</dt>
-    <dd>{% if acc.activity.last_login %}último login {{ acc.activity.last_login }}{% if acc.activity.last_ip %} de {{ acc.activity.last_ip }}{% endif %}{% else %}sem login no log recente{% endif %}
-      · ↑{{ acc.activity.uploads }} envios · ↓{{ acc.activity.downloads }} downloads
-      {% if acc.activity.failed_logins %} · <span class="warn">{{ acc.activity.failed_logins }} login(s) falho(s)</span>{% endif %}</dd>
+    <dt>{{ _('Atividade') }}</dt>
+    <dd>{% if acc.activity.last_login %}{{ _('último login %(when)s', when=acc.activity.last_login) }}{% if acc.activity.last_ip %} {{ _('de %(ip)s', ip=acc.activity.last_ip) }}{% endif %}{% else %}{{ _('sem login no log recente') }}{% endif %}
+      · {{ _('↑%(n)s envios', n=acc.activity.uploads) }} · {{ _('↓%(n)s downloads', n=acc.activity.downloads) }}
+      {% if acc.activity.failed_logins %} · <span class="warn">{{ _('%(n)s login(s) falho(s)', n=acc.activity.failed_logins) }}</span>{% endif %}</dd>
     {% endif %}
   </dl>
 </section>
 
 <div class="grid-2">
 <section class="card">
-  <h2>Senha</h2>
+  <h2>{{ _('Senha') }}</h2>
   <form method="post" class="form" action="{{ url_for('ftp.account_password', user=acc.user) }}" autocomplete="off">
-    <label>Nova senha
+    <label>{{ _('Nova senha') }}
       <input name="password" type="text" autocomplete="new-password"
-             placeholder="vazio = gerar uma senha forte (mostrada uma vez)"
+             placeholder="{{ _('vazio = gerar uma senha forte (mostrada uma vez)') }}"
              {% if not info.can_write %}disabled{% endif %}>
-      <small>Mínimo 8 caracteres, sem <code>:</code>.</small>
+      <small>{{ _('Mínimo 8 caracteres, sem <code>:</code>.') }}</small>
     </label>
-    <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>Trocar senha</button>
+    <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>{{ _('Trocar senha') }}</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>Perfil</h2>
+  <h2>{{ _('Perfil') }}</h2>
   <form method="post" class="form" action="{{ url_for('ftp.account_profile', user=acc.user) }}">
-    <label>O que a conta pode fazer na sua pasta
+    <label>{{ _('O que a conta pode fazer na sua pasta') }}
       <select name="profile" {% if not info.can_write or acc.folder_outside %}disabled{% endif %}>
         {% for key, p in profiles.items() %}
-          <option value="{{ key }}" {% if key == acc.profile %}selected{% endif %}>{{ p.label }} — {{ p.desc }}</option>
+          <option value="{{ key }}" {% if key == acc.profile %}selected{% endif %}>{{ _(p.label) }} — {{ _(p.desc) }}</option>
         {% endfor %}
       </select>
-      <small>Vale a partir do próximo login (o vsftpd relê o perfil a cada sessão).</small>
+      <small>{{ _('Vale a partir do próximo login (o vsftpd relê o perfil a cada sessão).') }}</small>
     </label>
-    <button class="btn btn-primary" type="submit" {% if not info.can_write or acc.folder_outside %}disabled{% endif %}>Aplicar perfil</button>
+    <button class="btn btn-primary" type="submit" {% if not info.can_write or acc.folder_outside %}disabled{% endif %}>{{ _('Aplicar perfil') }}</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>Pasta</h2>
+  <h2>{{ _('Pasta') }}</h2>
   <form method="post" class="form" action="{{ url_for('ftp.account_folder', user=acc.user) }}">
-    <label>Subpasta do FTP à qual a conta fica presa
+    <label>{{ _('Subpasta do FTP à qual a conta fica presa') }}
       <input name="folder" value="{{ '' if acc.folder == '/' else acc.folder }}"
-             placeholder="vazio = raiz inteira · ex.: dados/km67" {% if not info.can_write %}disabled{% endif %}>
-      <small>Criada se não existir. Uma conta de <em>leitura</em> presa a <code>dados/km67</code>
-        enxerga só o que for publicado ali.</small>
+             placeholder="{{ _('vazio = raiz inteira · ex.: dados/km67') }}" {% if not info.can_write %}disabled{% endif %}>
+      <small>{{ _('Criada se não existir. Uma conta de <em>leitura</em> presa a <code>dados/km67</code>
+        enxerga só o que for publicado ali.') }}</small>
     </label>
-    <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>Mover conta para a pasta</button>
+    <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>{{ _('Mover conta para a pasta') }}</button>
   </form>
 </section>
 
 <section class="card">
-  <h2>Estado</h2>
-  <p class="meta">Desativar recusa o login (a conta entra em <code>/etc/ftpusers</code>) sem
-    apagar senha nem arquivos — para suspender um acesso temporariamente.</p>
+  <h2>{{ _('Estado') }}</h2>
+  <p class="meta">{{ _('Desativar recusa o login (a conta entra em <code>/etc/ftpusers</code>) sem
+    apagar senha nem arquivos — para suspender um acesso temporariamente.') }}</p>
   <form method="post" action="{{ url_for('ftp.account_state', user=acc.user) }}">
     {% if acc.disabled %}
       <input type="hidden" name="action" value="ativar">
-      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>▶ Reativar conta</button>
+      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>{{ _('▶ Reativar conta') }}</button>
     {% else %}
       <input type="hidden" name="action" value="desativar">
-      <button class="btn" type="submit" {% if not info.can_write %}disabled{% endif %}>⏸ Desativar conta</button>
+      <button class="btn" type="submit" {% if not info.can_write %}disabled{% endif %}>{{ _('⏸ Desativar conta') }}</button>
     {% endif %}
   </form>
 </section>
 </div>
 
 <section class="card danger-card">
-  <h2>Remover a conta</h2>
-  <p class="meta">Apaga o <strong>usuário</strong> e o seu perfil. <strong>Nenhum arquivo é
+  <h2>{{ _('Remover a conta') }}</h2>
+  <p class="meta">{{ _('Apaga o <strong>usuário</strong> e o seu perfil. <strong>Nenhum arquivo é
     apagado</strong> — o que está na pasta continua no FTP, acessível pelas outras contas.
-    Para confirmar, digite o nome da conta.</p>
+    Para confirmar, digite o nome da conta.') }}</p>
   <form method="post" class="form form-inline" action="{{ url_for('ftp.account_remove', user=acc.user) }}"
-        onsubmit="return confirm('Remover a conta {{ acc.user }}? Os arquivos permanecem.');">
-    <label>Nome da conta
+        onsubmit="return confirm({{ _('Remover a conta %(user)s? Os arquivos permanecem.', user=acc.user).unescape() | tojson | forceescape }});">
+    <label>{{ _('Nome da conta') }}
       <input name="confirm_name" autocomplete="off" placeholder="{{ acc.user }}" id="rm-name"
              {% if not info.can_write %}disabled{% endif %}>
     </label>
-    <button class="btn btn-danger" type="submit" id="rm-btn" disabled>Remover conta</button>
+    <button class="btn btn-danger" type="submit" id="rm-btn" disabled>{{ _('Remover conta') }}</button>
   </form>
 </section>
 

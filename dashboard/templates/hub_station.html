@@ -1,63 +1,62 @@
 {% extends "base.html" %}
-{% block title %}{{ entry.id }} · Coleta · CARBONARA{% endblock %}
+{% block title %}{{ entry.id }} · {{ _('Coleta') }} · CARBONARA{% endblock %}
 {% block content %}
 {% set pause = pause if pause is defined and pause else {'all': None, 'stations': {}, 'paused_ids': [], 'any': False} %}
 <div class="page-head">
-  <h1>Estação <code>{{ entry.id }}</code> — coleta</h1>
-  <a class="btn" href="{{ url_for('hub.index') }}">← Voltar ao gerenciamento</a>
+  <h1>{{ _('Estação <code>%(id)s</code> — coleta', id=entry.id) }}</h1>
+  <a class="btn" href="{{ url_for('hub.index') }}">{{ _('← Voltar ao gerenciamento') }}</a>
 </div>
 
 <section class="card">
-  <div class="page-head"><h2>Situação no hub</h2></div>
+  <div class="page-head"><h2>{{ _('Situação no hub') }}</h2></div>
   <table class="table">
     <tbody>
-      <tr><th>Autenticação por chave SSH</th>
-          <td>{% if entry.key_mode %}<span style="color:var(--green)">✓ autorizada</span>
-              {% else %}<span class="meta">não</span>{% endif %}</td></tr>
-      <tr><th>Autenticação por usuário+senha</th>
-          <td>{% if entry.pw_mode %}<span style="color:var(--green)">✓ autorizada</span> (rsync daemon, porta 873)
-              {% else %}<span class="meta">não</span>{% endif %}</td></tr>
-      <tr><th>Recepção de dados</th>
+      <tr><th>{{ _('Autenticação por chave SSH') }}</th>
+          <td>{% if entry.key_mode %}<span style="color:var(--green)">{{ _('✓ autorizada') }}</span>
+              {% else %}<span class="meta">{{ _('não') }}</span>{% endif %}</td></tr>
+      <tr><th>{{ _('Autenticação por usuário+senha') }}</th>
+          <td>{% if entry.pw_mode %}<span style="color:var(--green)">{{ _('✓ autorizada') }}</span> {{ _('(rsync daemon, porta 873)') }}
+              {% else %}<span class="meta">{{ _('não') }}</span>{% endif %}</td></tr>
+      <tr><th>{{ _('Recepção de dados') }}</th>
           <td>{% if entry.paused %}<span class="dot dot-paused"></span>
-                <strong>PAUSADA</strong>
-                {% if not entry.paused_own %}(pausa global do servidor){% endif %}
-              {% else %}<span class="dot dot-online"></span> ativa{% endif %}</td></tr>
-      <tr><th>Fontes detectadas</th><td><small>{{ entry.sources | join(' · ') }}</small></td></tr>
+                <strong>{{ _('PAUSADA') }}</strong>
+                {% if not entry.paused_own %}{{ _('(pausa global do servidor)') }}{% endif %}
+              {% else %}<span class="dot dot-online"></span> {{ _('ativa') }}{% endif %}</td></tr>
+      <tr><th>{{ _('Fontes detectadas') }}</th><td><small>{{ entry.sources | join(' · ') }}</small></td></tr>
       {% if st %}
-      <tr><th>Status ao vivo</th>
-          <td>{{ st.status }}{% if st.last_signal %} · último sinal: {{ st.last_signal }}{% endif %}</td></tr>
+      <tr><th>{{ _('Status ao vivo') }}</th>
+          <td>{{ _(st.status) }}{% if st.last_signal %} · {{ _('último sinal:') }} {{ st.last_signal }}{% endif %}</td></tr>
       {% endif %}
-      <tr><th>Na dashboard?</th>
+      <tr><th>{{ _('Na dashboard?') }}</th>
           <td>{% if entry.in_dashboard %}
-                <a href="{{ url_for('pages.station_detail', station_id=entry.id) }}">✓ sim — abrir monitoramento</a>
-              {% else %}<span class="meta">ainda não — importe em
-                <a href="{{ url_for('pages.settings') }}">Configurações</a></span>{% endif %}</td></tr>
+                <a href="{{ url_for('pages.station_detail', station_id=entry.id) }}">{{ _('✓ sim — abrir monitoramento') }}</a>
+              {% else %}<span class="meta">{{ _('ainda não — importe em <a href="%(url)s">Configurações</a>', url=url_for('pages.settings')) }}</span>{% endif %}</td></tr>
     </tbody>
   </table>
   <p>
     {% if entry.incoming %}
-      <a class="btn" href="{{ url_for('hub.files', area='incoming', subpath=entry.id) }}">Arquivos recebidos</a>
+      <a class="btn" href="{{ url_for('hub.files', area='incoming', subpath=entry.id) }}">{{ _('Arquivos recebidos') }}</a>
     {% endif %}
-    <a class="btn" href="{{ url_for('hub.files', area='archive', subpath=entry.id) }}">Arquivados</a>
-    <a class="btn" href="{{ url_for('hub.files', area='quarantine', subpath=entry.id) }}">Quarentena</a>
+    <a class="btn" href="{{ url_for('hub.files', area='archive', subpath=entry.id) }}">{{ _('Arquivados') }}</a>
+    <a class="btn" href="{{ url_for('hub.files', area='quarantine', subpath=entry.id) }}">{{ _('Quarentena') }}</a>
   </p>
 </section>
 
 <section class="card">
   <div class="page-head">
-    <h2>Credenciais (stations/{{ entry.id }}/)</h2>
+    <h2>{{ _('Credenciais') }} (stations/{{ entry.id }}/)</h2>
     <a class="btn btn-primary" href="{{ url_for('hub.station_kit', station_id=entry.id) }}">
-      ⬇ Baixar kit da estação (.zip)</a>
+      {{ _('⬇ Baixar kit da estação (.zip)') }}</a>
   </div>
-  <p class="meta">O kit reúne num pacote só tudo o que o operador leva para a máquina da
+  <p class="meta">{{ _('O kit reúne num pacote só tudo o que o operador leva para a máquina da
     estação: a chave, o <code>INSTRUCOES.txt</code> (passo a passo de ativação) e o
-    cliente de coleta (Linux e Windows), com um LEIA-ME.</p>
+    cliente de coleta (Linux e Windows), com um LEIA-ME.') }}</p>
   {% if not creds.exists %}
-    <p class="empty">Sem credenciais guardadas no hub para esta estação
-      (a chave foi gerada na própria estação, ou o modo é usuário+senha antigo).</p>
+    <p class="empty">{{ _('Sem credenciais guardadas no hub para esta estação
+      (a chave foi gerada na própria estação, ou o modo é usuário+senha antigo).') }}</p>
   {% else %}
     <table class="table">
-      <thead><tr><th>Arquivo</th><th>Tamanho</th><th>Modificado</th><th></th></tr></thead>
+      <thead><tr><th>{{ _('Arquivo') }}</th><th>{{ _('Tamanho') }}</th><th>{{ _('Modificado') }}</th><th></th></tr></thead>
       <tbody>
       {% for f in creds.files %}
         <tr>
@@ -65,27 +64,27 @@
           <td>{{ f.size | hsize }}</td>
           <td><small>{{ f.mtime }}</small></td>
           <td class="ta-right">
-            <a class="btn btn-sm" href="{{ url_for('hub.download', area='stations', subpath=entry.id ~ '/' ~ f.name) }}">baixar</a>
+            <a class="btn btn-sm" href="{{ url_for('hub.download', area='stations', subpath=entry.id ~ '/' ~ f.name) }}">{{ _('baixar') }}</a>
           </td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-    <p class="meta">A chave <em>privada</em> (<code>{{ entry.id }}_key</code>) é a que o operador
-      leva para a máquina da estação; a <code>.pub</code> permanece aqui (já autorizada).</p>
+    <p class="meta">{{ _('A chave <em>privada</em> (<code>%(id)s_key</code>) é a que o operador
+      leva para a máquina da estação; a <code>.pub</code> permanece aqui (já autorizada).', id=entry.id) }}</p>
   {% endif %}
 
   {% if creds.pubkey %}
-    <h3>Chave pública</h3>
+    <h3>{{ _('Chave pública') }}</h3>
     <pre class="mono">{{ creds.pubkey }}</pre>
   {% endif %}
   {% if ak_line %}
-    <h3>Linha no authorized_keys (comando forçado)</h3>
+    <h3>{{ _('Linha no authorized_keys (comando forçado)') }}</h3>
     <pre class="mono">{{ ak_line }}</pre>
   {% endif %}
   {% if creds.instrucoes %}
     <details>
-      <summary><strong>INSTRUCOES.txt</strong> (ativação da estação — pode conter a senha)</summary>
+      <summary><strong>INSTRUCOES.txt</strong> {{ _('(ativação da estação — pode conter a senha)') }}</summary>
       <pre class="mono">{{ creds.instrucoes }}</pre>
     </details>
   {% endif %}
@@ -93,90 +92,90 @@
 
 <section class="card pause-card {{ 'pause-card-on' if entry.paused }}">
   <div class="page-head">
-    <h2>Recepção de dados</h2>
+    <h2>{{ _('Recepção de dados') }}</h2>
     <span class="pause-state">
-      {% if entry.paused %}<span class="dot dot-paused"></span> PAUSADA
-      {% else %}<span class="dot dot-online"></span> Ativa{% endif %}
+      {% if entry.paused %}<span class="dot dot-paused"></span> {{ _('PAUSADA') }}
+      {% else %}<span class="dot dot-online"></span> {{ _('Ativa') }}{% endif %}
     </span>
   </div>
   {% if entry.paused and not entry.paused_own %}
-    <p>Esta estação está parada pela <strong>pausa global</strong> do servidor
-      {%- if entry.pause.since_display %}, desde {{ entry.pause.since_display }}{% endif %}
-      {%- if entry.pause.reason %} (motivo: <em>{{ entry.pause.reason }}</em>){% endif %}.
-      Retome-a no card <em>Recepção de dados</em> da
-      <a href="{{ url_for('hub.index') }}">tela de Coleta</a>.</p>
+    <p>{{ _('Esta estação está parada pela <strong>pausa global</strong> do servidor') }}
+      {%- if entry.pause.since_display %}, {{ _('desde %(quando)s', quando=entry.pause.since_display) }}{% endif %}
+      {%- if entry.pause.reason %} ({{ _('motivo:') }} <em>{{ entry.pause.reason }}</em>){% endif %}.
+      {{ _('Retome-a no card <em>Recepção de dados</em> da
+      <a href="%(url)s">tela de Coleta</a>.', url=url_for('hub.index')) }}</p>
   {% elif entry.paused %}
-    <p>Recepção pausada só desta estação
-      {%- if entry.pause.since_display %}, desde {{ entry.pause.since_display }}{% endif %}
-      {%- if entry.pause.by %} (por {{ entry.pause.by }}){% endif %}
-      {%- if entry.pause.reason %} · motivo: <em>{{ entry.pause.reason }}</em>{% endif %}.
-      Ela continua autorizada: os arquivos ficam guardados na estação e sobem no
-      primeiro ciclo depois de retomada.</p>
+    <p>{{ _('Recepção pausada só desta estação') }}
+      {%- if entry.pause.since_display %}, {{ _('desde %(quando)s', quando=entry.pause.since_display) }}{% endif %}
+      {%- if entry.pause.by %} {{ _('(por %(quem)s)', quem=entry.pause.by) }}{% endif %}
+      {%- if entry.pause.reason %} · {{ _('motivo:') }} <em>{{ entry.pause.reason }}</em>{% endif %}.
+      {{ _('Ela continua autorizada: os arquivos ficam guardados na estação e sobem no
+      primeiro ciclo depois de retomada.') }}</p>
     <form method="post" action="{{ url_for('hub.resume') }}">
       <input type="hidden" name="target" value="{{ entry.id }}">
       <input type="hidden" name="back" value="hub_station">
       <button class="btn btn-primary" type="submit"
-        {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
-        ▶ Retomar a recepção de {{ entry.id }}</button>
+        {% if not info.can_write %}disabled title="{{ _('gerenciamento em modo somente leitura') }}"{% endif %}>
+        {{ _('▶ Retomar a recepção de %(id)s', id=entry.id) }}</button>
     </form>
   {% else %}
-    <p class="meta">Pausar suspende só a <strong>chegada</strong> de novos arquivos desta
+    <p class="meta">{{ _('Pausar suspende só a <strong>chegada</strong> de novos arquivos desta
       estação — sem revogar a chave/senha e sem apagar nada. Ela tenta enviar, recebe uma
-      recusa e reenvia tudo quando a recepção for retomada.</p>
+      recusa e reenvia tudo quando a recepção for retomada.') }}</p>
     <form method="post" class="form form-inline" action="{{ url_for('hub.pause') }}"
-          onsubmit="return confirm('Pausar a recepção de {{ entry.id }}? Ela continua autorizada e reenvia os arquivos quando você retomar.');">
+          onsubmit='return confirm({{ _("Pausar a recepção de %(id)s? Ela continua autorizada e reenvia os arquivos quando você retomar.", id=entry.id) | tojson }});'>
       <input type="hidden" name="target" value="{{ entry.id }}">
       <input type="hidden" name="back" value="hub_station">
-      <label>Motivo (opcional)
-        <input name="reason" autocomplete="off" placeholder="ex.: troca do disco da estação"
+      <label>{{ _('Motivo (opcional)') }}
+        <input name="reason" autocomplete="off" placeholder="{{ _('ex.: troca do disco da estação') }}"
                {% if not info.can_write %}disabled{% endif %}>
       </label>
       <button class="btn btn-danger" type="submit"
-        {% if not info.can_write %}disabled title="gerenciamento em modo somente leitura"{% endif %}>
-        ⏸ Pausar a recepção de {{ entry.id }}</button>
+        {% if not info.can_write %}disabled title="{{ _('gerenciamento em modo somente leitura') }}"{% endif %}>
+        {{ _('⏸ Pausar a recepção de %(id)s', id=entry.id) }}</button>
     </form>
   {% endif %}
 </section>
 
 <section class="card">
-  <div class="page-head"><h2>Revogar acesso</h2></div>
-  <p class="meta">Revoga chave <em>e</em> senha desta estação no hub. Os dados em
-    <code>incoming/{{ entry.id }}/</code> e as credenciais em
-    <code>stations/{{ entry.id }}/</code> são preservados (comportamento do rsync-hub).</p>
+  <div class="page-head"><h2>{{ _('Revogar acesso') }}</h2></div>
+  <p class="meta">{{ _('Revoga chave <em>e</em> senha desta estação no hub. Os dados em
+    <code>incoming/%(id)s/</code> e as credenciais em
+    <code>stations/%(id)s/</code> são preservados (comportamento do rsync-hub).', id=entry.id) }}</p>
   <form method="post" action="{{ url_for('hub.station_remove', station_id=entry.id) }}"
-        onsubmit="return confirm('Revogar o acesso da estação {{ entry.id }}? Ela deixará de conseguir enviar dados (os dados no servidor são preservados).');">
+        onsubmit='return confirm({{ _("Revogar o acesso da estação %(id)s? Ela deixará de conseguir enviar dados (os dados no servidor são preservados).", id=entry.id) | tojson }});'>
     <button class="btn btn-danger" type="submit" {% if not info.can_write %}disabled
-      title="indisponível: gerenciamento em modo somente leitura"{% endif %}>
-      Revogar acesso de {{ entry.id }}
+      title="{{ _('indisponível: gerenciamento em modo somente leitura') }}"{% endif %}>
+      {{ _('Revogar acesso de %(id)s', id=entry.id) }}
     </button>
   </form>
 </section>
 
 <section class="card danger-card">
-  <div class="page-head"><h2>⚠ Excluir estação definitivamente</h2></div>
+  <div class="page-head"><h2>{{ _('⚠ Excluir estação definitivamente') }}</h2></div>
   <div class="flash flash-error">
-    <strong>Ação IRREVERSÍVEL — não há lixeira.</strong> Além de revogar o acesso,
+    {{ _('<strong>Ação IRREVERSÍVEL — não há lixeira.</strong> Além de revogar o acesso,
     isto <strong>APAGA do servidor</strong> tudo desta estação:
-    <code>incoming/{{ entry.id }}/</code> (dados recebidos),
-    <code>archive/{{ entry.id }}/</code> (dados já processados/arquivados),
-    <code>quarantine/{{ entry.id }}/</code> e
-    <code>stations/{{ entry.id }}/</code> (chaves e instruções — a estação não
+    <code>incoming/%(id)s/</code> (dados recebidos),
+    <code>archive/%(id)s/</code> (dados já processados/arquivados),
+    <code>quarantine/%(id)s/</code> e
+    <code>stations/%(id)s/</code> (chaves e instruções — a estação não
     conseguirá se reconectar nem com a chave antiga). Se ela estiver cadastrada no
-    monitoramento do dashboard, o cadastro também é removido.
-    <br>Para manter os dados e só cortar o envio, use <em>Revogar acesso</em> acima.
-    Considere <a href="{{ url_for('hub.files', area='archive', subpath=entry.id) }}">baixar
-    os arquivos</a> antes.
+    monitoramento do dashboard, o cadastro também é removido.', id=entry.id) }}
+    <br>{{ _('Para manter os dados e só cortar o envio, use <em>Revogar acesso</em> acima.
+    Considere <a href="%(url)s">baixar os arquivos</a> antes.',
+    url=url_for('hub.files', area='archive', subpath=entry.id)) }}
   </div>
   <form method="post" action="{{ url_for('hub.station_purge', station_id=entry.id) }}"
-        onsubmit="return confirm('ÚLTIMA CONFIRMAÇÃO: excluir DEFINITIVAMENTE a estação {{ entry.id }} e apagar todos os seus dados do servidor? Não há como desfazer.');">
-    <label>Para liberar o botão, digite o id da estação (<code>{{ entry.id }}</code>):
+        onsubmit='return confirm({{ _("ÚLTIMA CONFIRMAÇÃO: excluir DEFINITIVAMENTE a estação %(id)s e apagar todos os seus dados do servidor? Não há como desfazer.", id=entry.id) | tojson }});'>
+    <label>{{ _('Para liberar o botão, digite o id da estação (<code>%(id)s</code>):', id=entry.id) }}
       <input name="confirm_name" id="purge-confirm-name" autocomplete="off"
              placeholder="{{ entry.id }}" {% if not info.can_write %}disabled{% endif %}>
     </label>
     <div class="form-actions">
       <button class="btn btn-danger" type="submit" id="purge-btn" disabled
-        {% if not info.can_write %}title="indisponível: gerenciamento em modo somente leitura"{% endif %}>
-        Excluir {{ entry.id }} e apagar os dados do servidor
+        {% if not info.can_write %}title="{{ _('indisponível: gerenciamento em modo somente leitura') }}"{% endif %}>
+        {{ _('Excluir %(id)s e apagar os dados do servidor', id=entry.id) }}
       </button>
     </div>
   </form>
@@ -192,8 +191,8 @@
       sync();
     })();
   </script>
-  <p class="meta">A digitação é reconferida no servidor — sem o nome exato, nada é
+  <p class="meta">{{ _('A digitação é reconferida no servidor — sem o nome exato, nada é
     apagado. Se o hub tiver dados no banco (pilha de ingestão), as linhas já
-    inseridas no TimescaleDB não são afetadas.</p>
+    inseridas no TimescaleDB não são afetadas.') }}</p>
 </section>
 {% endblock %}

@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from carbonara_parse.records import VARIABLE_ID_RE, variable_slug
+from .i18n import gettext as _
 from .tailer import COLUMN_TYPES
 
 # Reamostragem antes de gravar no banco: 'raw' grava cada registro; '1min'/'30min'
@@ -440,19 +441,19 @@ def validate_settings(form: dict, cfg: dict) -> tuple[dict, list[str]]:
     errors: list[str] = []
     root, adjusted = normalize_hub_root(form.get("data_root") or "")
     if not root:
-        errors.append("Informe a pasta raiz do hub (ex.: /srv/carbonara).")
+        errors.append(_("Informe a pasta raiz do hub (ex.: /srv/carbonara)."))
 
     connections_log = (form.get("connections_log") or "").strip() or None
     timezone = (form.get("timezone") or "").strip() or None
     if timezone:
         if ZoneInfo is None:
-            errors.append("Fuso horário não suportado neste Python (zoneinfo ausente).")
+            errors.append(_("Fuso horário não suportado neste Python (zoneinfo ausente)."))
             timezone = None
         else:
             try:
                 ZoneInfo(timezone)
             except Exception:  # noqa: BLE001 — chave inválida/ausente no banco de fusos
-                errors.append(f"Fuso horário inválido: '{timezone}' (ex.: America/Santarem).")
+                errors.append(_("Fuso horário inválido: '%(tz)s' (ex.: America/Santarem).", tz=timezone))
                 timezone = None
 
     stale = int(cfg.get("stale_fallback_seconds") or 3600)
@@ -463,14 +464,14 @@ def validate_settings(form: dict, cfg: dict) -> tuple[dict, list[str]]:
             if not (60 <= stale <= 86400):
                 raise ValueError
         except ValueError:
-            errors.append("Fallback de offline: use segundos entre 60 e 86400.")
+            errors.append(_("Fallback de offline: use segundos entre 60 e 86400."))
 
     # API de dados: url interna (a que a dashboard chama), chave (vazio = mantém a
     # atual; "-" = remove) e url pública opcional (só exibição).
     api_old = cfg.get("api") or {}
     api_url = (form.get("api_url") or "").strip().rstrip("/") or None
     if api_url and not (api_url.startswith("http://") or api_url.startswith("https://")):
-        errors.append("URL da API inválida: comece com http:// ou https:// (ex.: http://127.0.0.1:8000).")
+        errors.append(_("URL da API inválida: comece com http:// ou https:// (ex.: http://127.0.0.1:8000)."))
         api_url = api_old.get("url")
     api_key_raw = (form.get("api_key") or "").strip()
     api_key = api_old.get("key") if api_key_raw == "" else (None if api_key_raw == "-" else api_key_raw)
@@ -487,9 +488,9 @@ def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list
     sid = (form.get("id") or "").strip().lower()
     name = (form.get("name") or "").strip()
     if not ID_RE.match(sid):
-        errors.append("Identificador inválido: use apenas letras minúsculas, números, '-' e '_'.")
+        errors.append(_("Identificador inválido: use apenas letras minúsculas, números, '-' e '_'."))
     if is_new and get_station(cfg, sid):
-        errors.append(f"Já existe uma estação com o id '{sid}'.")
+        errors.append(_("Já existe uma estação com o id '%(id)s'.", id=sid))
     if not name:
         name = sid
 
@@ -500,18 +501,19 @@ def validate_station(form: dict, *, is_new: bool, cfg: dict) -> tuple[dict, list
         try:
             v = float(raw)
         except ValueError:
-            errors.append(f"{label}: valor inválido ('{raw}').")
+            errors.append(_("%(campo)s: valor inválido ('%(valor)s').", campo=label, valor=raw))
             return None
         if not (lo <= v <= hi):
-            errors.append(f"{label}: fora do intervalo permitido ({lo} a {hi}).")
+            errors.append(_("%(campo)s: fora do intervalo permitido (%(lo)s a %(hi)s).",
+                            campo=label, lo=lo, hi=hi))
             return None
         return v
 
     errors_before = len(errors)
-    latitude = _coord("latitude", "Latitude", -90.0, 90.0)
-    longitude = _coord("longitude", "Longitude", -180.0, 180.0)
+    latitude = _coord("latitude", _("Latitude"), -90.0, 90.0)
+    longitude = _coord("longitude", _("Longitude"), -180.0, 180.0)
     if len(errors) == errors_before and (latitude is None) != (longitude is None):
-        errors.append("Coordenadas: informe latitude E longitude (ou deixe ambas vazias).")
+        errors.append(_("Coordenadas: informe latitude E longitude (ou deixe ambas vazias)."))
         latitude = longitude = None
 
     # Watchdog e janela de offline NÃO vêm do formulário: os dois são do rsync-hub/
@@ -549,7 +551,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
     errors: list[str] = []
     path = (form.get("path") or "").strip()
     if not path:
-        errors.append("Informe o caminho do arquivo monitorado.")
+        errors.append(_("Informe o caminho do arquivo monitorado."))
     # Apelido opcional (nome de exibição) — desambigua arquivos de mesmo nome em
     # subpastas diferentes. Sempre gravamos a chave (None quando vazio) para que
     # limpar o campo na edição realmente remova o apelido (o merge {**f, **entry}).
@@ -568,13 +570,13 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
             if truncate_chars < 1:
                 raise ValueError
         except ValueError:
-            errors.append(f"Truncar do fim do nome: valor inválido ('{trunc_raw}') — "
-                          "use um número de caracteres ≥ 1, ou deixe vazio.")
+            errors.append(_("Truncar do fim do nome: valor inválido ('%(valor)s') — "
+                            "use um número de caracteres ≥ 1, ou deixe vazio.", valor=trunc_raw))
             truncate_chars = None
     if truncate_chars and not dynamic_path:
-        errors.append("O truncamento do fim do nome só vale com \"O nome do arquivo "
-                      "muda com a data/hora\" marcado — é ali que o padrão é resolvido "
-                      "a cada leitura.")
+        errors.append(_("O truncamento do fim do nome só vale com \"O nome do arquivo "
+                        "muda com a data/hora\" marcado — é ali que o padrão é resolvido "
+                        "a cada leitura."))
     # Deslocamento de horas: ±N somado ao relógio do servidor antes de expandir o
     # padrão. Vazio ou 0 = sem deslocamento (None gravado — o merge {**f, **entry}
     # remove um valor antigo ao limpar o campo).
@@ -586,34 +588,35 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
             if not (-168 <= hour_offset <= 168):
                 raise ValueError
         except ValueError:
-            errors.append(f"Deslocar horas: valor inválido ('{off_raw}') — use um "
-                          "inteiro entre -168 e +168 (ex.: +2 ou -3), ou deixe vazio.")
+            errors.append(_("Deslocar horas: valor inválido ('%(valor)s') — use um "
+                            "inteiro entre -168 e +168 (ex.: +2 ou -3), ou deixe vazio.", valor=off_raw))
             hour_offset = None
         if hour_offset == 0:
             hour_offset = None
     if hour_offset and not dynamic_path:
-        errors.append("O deslocamento de horas só vale com \"O nome do arquivo muda "
-                      "com a data/hora\" marcado — ele desloca o relógio usado para "
-                      "expandir o padrão.")
+        errors.append(_("O deslocamento de horas só vale com \"O nome do arquivo muda "
+                        "com a data/hora\" marcado — ele desloca o relógio usado para "
+                        "expandir o padrão."))
     if hour_offset and dynamic_path and path and not has_time_tokens(path):
-        errors.append("Deslocar horas exige campos de tempo no caminho (%Y, %m, %d, "
-                      "%H…) — num padrão só com curinga (*) não há relógio a deslocar.")
+        errors.append(_("Deslocar horas exige campos de tempo no caminho (%Y, %m, %d, "
+                        "%H…) — num padrão só com curinga (*) não há relógio a deslocar."))
     if truncate_chars and path:
         nome = path.rpartition("/")[2]
         if truncate_chars >= len(nome):
-            errors.append(f"Truncar {truncate_chars} caractere(s) consome o nome inteiro "
-                          f"('{nome}', {len(nome)} caracteres) — sobraria só '*', que casa "
-                          "qualquer arquivo da pasta. Diminua o valor (ou use um padrão "
-                          "com * escrito, se é isso mesmo que você quer).")
+            errors.append(_("Truncar %(n)s caractere(s) consome o nome inteiro "
+                            "('%(nome)s', %(tam)s caracteres) — sobraria só '*', que casa "
+                            "qualquer arquivo da pasta. Diminua o valor (ou use um padrão "
+                            "com * escrito, se é isso mesmo que você quer).",
+                            n=truncate_chars, nome=nome, tam=len(nome)))
     if dynamic_path and path and not (has_time_tokens(path) or has_glob(path)) \
             and not truncate_chars:
-        errors.append("Caminho com data/hora marcado, mas o caminho não tem campo de "
-                      "tempo (%Y, %m, %d, %H…) nem curinga (*). "
-                      "Ex.: incoming/est/dados_%Y%m%d.dat ou incoming/est/%Y-%m-%d__*.sfo")
+        errors.append(_("Caminho com data/hora marcado, mas o caminho não tem campo de "
+                        "tempo (%Y, %m, %d, %H…) nem curinga (*). "
+                        "Ex.: incoming/est/dados_%Y%m%d.dat ou incoming/est/%Y-%m-%d__*.sfo"))
     if not dynamic_path and path and (has_time_tokens(path) or any(c in path for c in "*?")):
-        errors.append("O caminho tem campos de tempo (%Y, %m, %d, %H…) ou curinga (*) — "
-                      "marque \"O nome do arquivo muda com a data/hora\" para que sejam "
-                      "resolvidos, ou remova-os.")
+        errors.append(_("O caminho tem campos de tempo (%Y, %m, %d, %H…) ou curinga (*) — "
+                        "marque \"O nome do arquivo muda com a data/hora\" para que sejam "
+                        "resolvidos, ou remova-os."))
 
     def _int(field: str, default: int | None, lo: int, hi: int, label: str) -> int | None:
         raw = (form.get(field) or "").strip()
@@ -625,17 +628,17 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
                 raise ValueError
             return v
         except ValueError:
-            errors.append(f"{label}: valor inválido ('{raw}').")
+            errors.append(_("%(campo)s: valor inválido ('%(valor)s').", campo=label, valor=raw))
             return default
 
-    tail_lines = _int("tail_lines", 100, 1, 10000, "Linhas do final")
-    window_hours = _int("window_hours", None, 1, 8760, "Período a plotar (horas)")
-    skip_header = _int("skip_header_lines", 0, 0, 100, "Linhas de cabeçalho a pular")
-    header_line = _int("header_line", None, 1, 100, "Linha com nomes das colunas")
+    tail_lines = _int("tail_lines", 100, 1, 10000, _("Linhas do final"))
+    window_hours = _int("window_hours", None, 1, 8760, _("Período a plotar (horas)"))
+    skip_header = _int("skip_header_lines", 0, 0, 100, _("Linhas de cabeçalho a pular"))
+    header_line = _int("header_line", None, 1, 100, _("Linha com nomes das colunas"))
 
     separator = _parse_separator(form.get("separator") or ",")
     if len(separator) != 1:
-        errors.append(f"Separador de colunas deve ter exatamente 1 caractere (recebi '{separator}').")
+        errors.append(_("Separador de colunas deve ter exatamente 1 caractere (recebi '%(sep)s').", sep=separator))
         separator = ","
     # "Ignorar aspas" (no_quotes): grava quotechar vazio = csv.QUOTE_NONE (divide os
     # campos entre aspas pelas vírgulas internas — para dataloggers que empacotam vários
@@ -646,7 +649,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
         quotechar = (form.get("quotechar") or '"').strip() or '"'
     decimal = (form.get("decimal") or ".").strip() or "."
     if decimal == separator:
-        errors.append("Separador decimal não pode ser igual ao separador de colunas.")
+        errors.append(_("Separador decimal não pode ser igual ao separador de colunas."))
 
     # Regex opcional de limpeza dos valores: os trechos casados são removidos de cada
     # célula (não do timestamp) antes de virar número — ex.: '[A-Za-z]' tira o 'm' de
@@ -656,7 +659,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
         try:
             re.compile(strip_regex)
         except re.error as exc:
-            errors.append(f"Expressão para remover dos valores é inválida: {exc}")
+            errors.append(_("Expressão para remover dos valores é inválida: %(erro)s", erro=exc))
             strip_regex = ""
 
     ts_col_raw = (form.get("ts_column") or "0").strip()
@@ -677,7 +680,7 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
         try:
             return float(raw)
         except ValueError:
-            errors.append(f"{what}: valor inválido ('{raw}').")
+            errors.append(_("%(campo)s: valor inválido ('%(valor)s').", campo=what, valor=raw))
             return None
 
     # --- Tipo de dado (estação → TIPO → arquivo) e banco de dados ---------------
@@ -686,16 +689,17 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
     if table_name and station is not None:
         for other in station.get("files") or []:
             if other.get("id") != file_id and table_name_of(other) == table_name:
-                errors.append(f"Nome de tabela '{table_name}' já usado pelo arquivo '{other.get('id')}' desta estação.")
+                errors.append(_("Nome de tabela '%(tabela)s' já usado pelo arquivo '%(arq)s' desta estação.",
+                                tabela=table_name, arq=other.get('id')))
     ingest = bool(form.get("ingest"))
     tzname = (form.get("timezone") or "").strip() or None
     if tzname and not valid_timezone(tzname):
-        errors.append(f"Fuso horário inválido: '{tzname}' (ex.: UTC, America/Santarem).")
+        errors.append(_("Fuso horário inválido: '%(tz)s' (ex.: UTC, America/Santarem).", tz=tzname))
         tzname = None
     resample = (form.get("resample") or "raw").strip().lower() or "raw"
     if resample not in RESAMPLE_OPTIONS:
-        errors.append(f"Reamostragem inválida ('{resample}') — use uma de: "
-                      + ", ".join(RESAMPLE_OPTIONS) + ".")
+        errors.append(_("Reamostragem inválida ('%(valor)s') — use uma de: %(opcoes)s.",
+                        valor=resample, opcoes=", ".join(RESAMPLE_OPTIONS)))
         resample = "raw"
 
     variables = []
@@ -714,22 +718,22 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
         column: int | str = int(col) if INT_RE.match(col) else col
         # Índices únicos e distintos da coluna do timestamp (uma variável por coluna).
         if str(column) == str(ts_column):
-            errors.append(f"A coluna {column} é a do timestamp — remova-a das variáveis.")
+            errors.append(_("A coluna %(col)s é a do timestamp — remova-a das variáveis.", col=column))
             continue
         if any(str(column) == str(v["column"]) for v in variables):
-            errors.append(f"Índice de coluna repetido: {column} — cada variável deve ter um índice único.")
+            errors.append(_("Índice de coluna repetido: %(col)s — cada variável deve ter um índice único.", col=column))
             continue
         vtype = (types[i] if i < len(types) else "").strip() or "numero"
         if vtype not in COLUMN_TYPES:
-            errors.append(f"Tipo de coluna inválido ('{vtype}') — use um de: "
-                          + ", ".join(COLUMN_TYPES) + ".")
+            errors.append(_("Tipo de coluna inválido ('%(valor)s') — use um de: %(opcoes)s.",
+                            valor=vtype, opcoes=", ".join(COLUMN_TYPES)))
             vtype = "numero"
         label = (labels[i] if i < len(labels) else "").strip() or str(column)
         unit = (units[i] if i < len(units) else "").strip() or None
-        vmin = _float_or_none(mins[i] if i < len(mins) else "", f"Limite mínimo de '{label}'")
-        vmax = _float_or_none(maxs[i] if i < len(maxs) else "", f"Limite máximo de '{label}'")
+        vmin = _float_or_none(mins[i] if i < len(mins) else "", _("Limite mínimo de '%(var)s'", var=label))
+        vmax = _float_or_none(maxs[i] if i < len(maxs) else "", _("Limite máximo de '%(var)s'", var=label))
         if vmin is not None and vmax is not None and vmin > vmax:
-            errors.append(f"'{label}': limite mínimo ({vmin}) maior que o máximo ({vmax}).")
+            errors.append(_("'%(var)s': limite mínimo (%(min)s) maior que o máximo (%(max)s).", var=label, min=vmin, max=vmax))
         # ID no banco: o informado (normalizado) ou o slug do rótulo. É a chave da série
         # em measurements — precisa ser único dentro do arquivo.
         vid_raw = (vids[i] if i < len(vids) else "").strip()
@@ -737,16 +741,16 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
         if not vid:
             vid = variable_slug(f"col_{column}")
         if vid_raw and not VARIABLE_ID_RE.match(vid):
-            errors.append(f"ID no banco inválido para '{label}' ('{vid_raw}'): use letras "
-                          "minúsculas, números e '_' (começando por letra, até 64).")
+            errors.append(_("ID no banco inválido para '%(var)s' ('%(valor)s'): use letras "
+                            "minúsculas, números e '_' (começando por letra, até 64).", var=label, valor=vid_raw))
         if vid in seen_ids:
-            errors.append(f"ID no banco repetido: '{vid}' ('{label}') — cada variável do "
-                          "arquivo precisa de um ID único.")
+            errors.append(_("ID no banco repetido: '%(id)s' ('%(var)s') — cada variável do "
+                            "arquivo precisa de um ID único.", id=vid, var=label))
         seen_ids.add(vid)
         variables.append({"column": column, "label": label, "unit": unit,
                           "min": vmin, "max": vmax, "type": vtype, "variable_id": vid})
     if require_variables and not variables:
-        errors.append("Defina pelo menos uma variável (coluna + rótulo).")
+        errors.append(_("Defina pelo menos uma variável (coluna + rótulo)."))
     if ingest and station is not None:
         # Colisão com outro arquivo INGERIDO da mesma estação (mesma chave no banco).
         for other in station.get("files") or []:
@@ -756,10 +760,11 @@ def validate_file_entry(form: dict, *, require_variables: bool = True,
                       for v in other.get("variables") or []}
             colisao = sorted(seen_ids & outros)
             if colisao:
-                errors.append(
-                    f"ID(s) no banco já usados pelo arquivo '{other.get('id')}' desta "
-                    f"estação: {', '.join(colisao)} — dois arquivos ingeridos não podem "
-                    "gravar a mesma variável (mude o ID aqui ou desmarque a ingestão).")
+                errors.append(_(
+                    "ID(s) no banco já usados pelo arquivo '%(arq)s' desta "
+                    "estação: %(ids)s — dois arquivos ingeridos não podem "
+                    "gravar a mesma variável (mude o ID aqui ou desmarque a ingestão).",
+                    arq=other.get('id'), ids=", ".join(colisao)))
 
     entry = {
         "path": path,
@@ -802,7 +807,8 @@ def _num_or_none(raw, what: str, errors: list[str], integer: bool = False):
                 raise ValueError
         return v
     except ValueError:
-        errors.append(f"{what}: valor inválido ('{raw}')" + (" — use um inteiro ≥ 2." if integer else "."))
+        errors.append(_("%(campo)s: valor inválido ('%(valor)s') — use um inteiro ≥ 2.", campo=what, valor=raw)
+                      if integer else _("%(campo)s: valor inválido ('%(valor)s').", campo=what, valor=raw))
         return None
 
 
@@ -820,16 +826,16 @@ def apply_treatment_form(form: dict, station: dict, fcfg: dict) -> tuple[dict, l
         tn = normalize_table_name(form.get("table_name"))
         for other in station.get("files") or []:
             if tn and other.get("id") != fcfg.get("id") and table_name_of(other) == tn:
-                errors.append(f"Nome de tabela '{tn}' já usado pelo arquivo '{other.get('id')}'.")
+                errors.append(_("Nome de tabela '%(tabela)s' já usado pelo arquivo '%(arq)s'.", tabela=tn, arq=other.get('id')))
         out["table_name"] = tn
     tzname = (form.get("timezone") or "").strip() or None
     if tzname and not valid_timezone(tzname):
-        errors.append(f"Fuso horário inválido: '{tzname}' (ex.: UTC, America/Santarem).")
+        errors.append(_("Fuso horário inválido: '%(tz)s' (ex.: UTC, America/Santarem).", tz=tzname))
         tzname = fcfg.get("timezone")
     out["timezone"] = tzname
     resample = (form.get("resample") or "raw").strip().lower() or "raw"
     if resample not in RESAMPLE_OPTIONS:
-        errors.append(f"Reamostragem inválida ('{resample}').")
+        errors.append(_("Reamostragem inválida ('%(valor)s').", valor=resample))
         resample = fcfg.get("resample") or "raw"
     out["resample"] = resample
 
@@ -842,19 +848,19 @@ def apply_treatment_form(form: dict, station: dict, fcfg: dict) -> tuple[dict, l
         if not vid:
             vid = variable_slug(f"col_{var.get('column')}")
         if vid in seen:
-            errors.append(f"ID no banco repetido: '{vid}' ('{label}').")
+            errors.append(_("ID no banco repetido: '%(id)s' ('%(var)s').", id=vid, var=label))
         seen.add(vid)
         var["variable_id"] = vid
-        vmin = _num_or_none(form.get(f"v{i}_min"), f"Mín de '{label}'", errors)
-        vmax = _num_or_none(form.get(f"v{i}_max"), f"Máx de '{label}'", errors)
+        vmin = _num_or_none(form.get(f"v{i}_min"), _("Mín de '%(var)s'", var=label), errors)
+        vmax = _num_or_none(form.get(f"v{i}_max"), _("Máx de '%(var)s'", var=label), errors)
         if vmin is not None and vmax is not None and vmin > vmax:
-            errors.append(f"'{label}': mínimo ({vmin}) maior que o máximo ({vmax}).")
+            errors.append(_("'%(var)s': mínimo (%(min)s) maior que o máximo (%(max)s).", var=label, min=vmin, max=vmax))
         var["min"], var["max"] = vmin, vmax
-        spike = _num_or_none(form.get(f"v{i}_spike"), f"Salto máximo de '{label}'", errors)
+        spike = _num_or_none(form.get(f"v{i}_spike"), _("Salto máximo de '%(var)s'", var=label), errors)
         if spike is not None and spike <= 0:
-            errors.append(f"Salto máximo de '{label}' deve ser > 0.")
+            errors.append(_("Salto máximo de '%(var)s' deve ser > 0.", var=label))
             spike = None
-        stuck = _num_or_none(form.get(f"v{i}_stuck"), f"Leituras iguais de '{label}'", errors, integer=True)
+        stuck = _num_or_none(form.get(f"v{i}_stuck"), _("Leituras iguais de '%(var)s'", var=label), errors, integer=True)
         # chaves sempre presentes (None = regra desligada) — o merge com o YAML preserva
         var["qc_spike"] = spike
         var["qc_stuck"] = stuck
@@ -868,9 +874,10 @@ def apply_treatment_form(form: dict, station: dict, fcfg: dict) -> tuple[dict, l
                       for v in other.get("variables") or [] if v.get("ingest") is not False}
             colisao = sorted(ativos & outros)
             if colisao:
-                errors.append(
-                    f"ID(s) já usados pelo arquivo '{other.get('id')}' desta estação: "
-                    f"{', '.join(colisao)} — mude o ID ou tire a variável do banco num deles.")
+                errors.append(_(
+                    "ID(s) já usados pelo arquivo '%(arq)s' desta estação: "
+                    "%(ids)s — mude o ID ou tire a variável do banco num deles.",
+                    arq=other.get('id'), ids=", ".join(colisao)))
     return out, errors
 
 

@@ -5,8 +5,8 @@
   <h1>{{ station.name or station.id }} <small>({{ station.id }})</small></h1>
   <div>
     {% if is_admin %}
-      <a class="btn" href="{{ url_for('pages.station_edit', station_id=station.id) }}">Editar estação</a>
-      <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station.id) }}">+ Adicionar arquivo</a>
+      <a class="btn" href="{{ url_for('pages.station_edit', station_id=station.id) }}">{{ _('Editar estação') }}</a>
+      <a class="btn btn-primary" href="{{ url_for('pages.file_new', station_id=station.id) }}">{{ _('+ Adicionar arquivo') }}</a>
     {% endif %}
   </div>
 </div>
@@ -14,49 +14,49 @@
 <section class="card status-card">
   <span class="dot dot-{{ st.status }}"></span>
   <strong>
-    {% if st.status == 'paused' %}Recepção pausada
-    {% elif st.status == 'receiving' %}Recebendo dados agora
-    {% elif st.status == 'online' %}Online
-    {% elif st.status == 'offline' %}Offline
-    {% else %}Sem sinal (heartbeat/logs não encontrados){% endif %}
+    {% if st.status == 'paused' %}{{ _('Recepção pausada') }}
+    {% elif st.status == 'receiving' %}{{ _('Recebendo dados agora') }}
+    {% elif st.status == 'online' %}{{ _('Online') }}
+    {% elif st.status == 'offline' %}{{ _('Offline') }}
+    {% else %}{{ _('Sem sinal (heartbeat/logs não encontrados)') }}{% endif %}
   </strong>
   {% if is_admin %}
     {# Pausar/retomar a recepção DESTA estação — executa o rsync-hub no servidor. #}
     <form method="post" class="status-pause"
           action="{{ url_for('hub.resume' if st.paused else 'hub.pause') }}"
-          {% if not st.paused %}onsubmit="return confirm('Pausar a recepção de dados de {{ station.id }}? Ela continua autorizada; os arquivos ficam na estação e sobem quando você retomar.');"{% endif %}>
+          {% if not st.paused %}onsubmit='return confirm({{ _("Pausar a recepção de dados de %(id)s? Ela continua autorizada; os arquivos ficam na estação e sobem quando você retomar.", id=station.id) | string | tojson }});'{% endif %}>
       <input type="hidden" name="target" value="{{ station.id }}">
       <input type="hidden" name="back" value="detail">
       {% if st.paused %}
         <button class="btn btn-primary" type="submit"
           {% if st.pause_scope == 'todas' %}disabled
-             title="a pausa é GLOBAL (todas as estações) — retome na aba Coleta"{% endif %}>
-          ▶ Retomar recepção</button>
+             title="{{ _('a pausa é GLOBAL (todas as estações) — retome na aba Coleta') }}"{% endif %}>
+          {{ _('▶ Retomar recepção') }}</button>
       {% else %}
-        <input name="reason" placeholder="motivo (opcional)" autocomplete="off">
-        <button class="btn" type="submit">⏸ Pausar recepção</button>
+        <input name="reason" placeholder="{{ _('motivo (opcional)') }}" autocomplete="off">
+        <button class="btn" type="submit">{{ _('⏸ Pausar recepção') }}</button>
       {% endif %}
     </form>
   {% endif %}
   {% if st.paused %}
-    <p class="pause-note">Nenhum dado novo é aceito desta estação
-      {% if st.pause_scope == 'todas' %}(pausa global do servidor){% endif %}
-      {%- if st.pause_since %} · desde {{ st.pause_since }}{% endif %}
-      {%- if st.pause_reason %} · motivo: <em>{{ st.pause_reason }}</em>{% endif %}.
-      Os arquivos ficam guardados na estação e sobem quando a recepção for retomada.</p>
+    <p class="pause-note">{{ _('Nenhum dado novo é aceito desta estação') }}
+      {% if st.pause_scope == 'todas' %}{{ _('(pausa global do servidor)') }}{% endif %}
+      {%- if st.pause_since %} · {{ _('desde %(quando)s', quando=st.pause_since) }}{% endif %}
+      {%- if st.pause_reason %} · {{ _('motivo:') }} <em>{{ st.pause_reason }}</em>{% endif %}.
+      {{ _('Os arquivos ficam guardados na estação e sobem quando a recepção for retomada.') }}</p>
   {% endif %}
   <dl>
-    <dt>Último sinal</dt><dd>{{ st.last_signal or '—' }}</dd>
-    <dt>Intervalo declarado</dt><dd>{{ st.interval_min ~ ' min' if st.interval_min else '— (sem heartbeat)' }}</dd>
-    <dt>Janela de offline</dt><dd>{{ st.limit_seconds // 60 }} min</dd>
-    <dt>Watchdog (heartbeat)</dt>
-    <dd><code>{{ st.heartbeat_file }}</code> {% if not st.heartbeat_found %}<span class="warn">— não encontrado</span>{% endif %}</dd>
+    <dt>{{ _('Último sinal') }}</dt><dd>{{ st.last_signal or '—' }}</dd>
+    <dt>{{ _('Intervalo declarado') }}</dt><dd>{{ st.interval_min ~ ' min' if st.interval_min else _('— (sem heartbeat)') }}</dd>
+    <dt>{{ _('Janela de offline') }}</dt><dd>{{ st.limit_seconds // 60 }} min</dd>
+    <dt>{{ _('Watchdog (heartbeat)') }}</dt>
+    <dd><code>{{ st.heartbeat_file }}</code> {% if not st.heartbeat_found %}<span class="warn">{{ _('— não encontrado') }}</span>{% endif %}</dd>
   </dl>
 </section>
 
 {% if not station.files %}
-  <p class="empty">Nenhum arquivo em monitoramento.
-     <a href="{{ url_for('pages.file_new', station_id=station.id) }}">Adicione o primeiro</a>.</p>
+  <p class="empty">{{ _('Nenhum arquivo em monitoramento.') }}
+     <a href="{{ url_for('pages.file_new', station_id=station.id) }}">{{ _('Adicione o primeiro') }}</a>.</p>
 {% endif %}
 
 {% for f in station.files %}
@@ -71,8 +71,8 @@
        um apelido escrito por você continua aparecendo. #}
     {% set nome_vivo = live_names.get(f.id) if live_names else None %}
     {% set alias_congelado = f.alias and f.id in f.alias %}
-    <h2><span class="type-chip" title="tipo de dado">{{ f.data_type or 'dados' }}</span>
-        <span class="file-chip" title="id do cadastro: {{ f.id }}">{{ nome_vivo or f.id }}</span>
+    <h2><span class="type-chip" title="{{ _('tipo de dado') }}">{{ f.data_type or 'dados' }}</span>
+        <span class="file-chip" title="{{ _('id do cadastro: %(id)s', id=f.id) }}">{{ nome_vivo or f.id }}</span>
         {% if f.alias and not (nome_vivo and alias_congelado) %}
           <span class="file-alias">{{ f.alias }}</span>
         {% endif %}
@@ -80,31 +80,31 @@
         <small class="live-file meta"></small></h2>
     <div>
       {% if is_admin %}
-        <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">Editar</a>
+        <a class="btn" href="{{ url_for('pages.file_edit', station_id=station.id, file_id=f.id) }}">{{ _('Editar') }}</a>
         <form method="post" style="display:inline"
               action="{{ url_for('pages.file_delete', station_id=station.id, file_id=f.id) }}"
-              onsubmit="return confirm('Remover este arquivo do monitoramento?');">
-          <button class="btn btn-danger" type="submit">Remover</button>
+              onsubmit='return confirm({{ _("Remover este arquivo do monitoramento?") | tojson }});'>
+          <button class="btn btn-danger" type="submit">{{ _('Remover') }}</button>
         </form>
       {% endif %}
     </div>
   </div>
   <details class="file-charts" open>
     <summary class="file-charts-toggle">
-      Gráficos
+      {{ _('Gráficos') }}
       <span class="meta">
-        últimas <strong>{{ f.tail_lines }}</strong> linhas ·
-        separador <code>{{ '\\t' if f.separator == '\t' else ('\\s' if f.separator == ' ' else f.separator) }}</code> ·
-        {{ f.variables | length }} variável(is)
+        {{ _('últimas <strong>%(n)s</strong> linhas', n=f.tail_lines) }} ·
+        {{ _('separador') }} <code>{{ '\\t' if f.separator == '\t' else ('\\s' if f.separator == ' ' else f.separator) }}</code> ·
+        {{ _('%(n)s variável(is)', n=f.variables | length) }}
         {% if f.get('ingest') %}
           {% set ig = ingest_state.get(f.id) if ingest_state else None %}
-          · <span class="ingest-chip" title="Este arquivo é ingerido no banco de dados{{ ' (fuso ' ~ f.timezone ~ ')' if f.timezone }}{{ ' · média por ' ~ f.resample if f.resample and f.resample != 'raw' }}">
-            🗄 no banco{% if ig %}: {{ '{:,}'.format(ig['n_values']).replace(',', '.') }} valor(es)
-              {%- if ig.last_time %} · último {{ ig.last_time[:16] | replace('T', ' ') }} UTC{% endif %}
-              {%- if ig.pending %} · {{ (ig.pending / 1024) | round(0) | int }} kB pendentes{% endif %}
-              {%- if ig.errors %} · <span class="warn">erro: {{ ig.errors[0] }}</span>{% endif %}
+          · <span class="ingest-chip" title="{{ _('Este arquivo é ingerido no banco de dados') }}{{ ' (' ~ _('fuso %(tz)s', tz=f.timezone) ~ ')' if f.timezone }}{{ ' · ' ~ _('média por %(r)s', r=f.resample) if f.resample and f.resample != 'raw' }}">
+            🗄 {{ _('no banco') }}{% if ig %}: {{ _('%(n)s valor(es)', n='{:,}'.format(ig['n_values']).replace(',', '.')) }}
+              {%- if ig.last_time %} · {{ _('último %(t)s UTC', t=ig.last_time[:16] | replace('T', ' ')) }}{% endif %}
+              {%- if ig.pending %} · {{ _('%(n)s kB pendentes', n=(ig.pending / 1024) | round(0) | int) }}{% endif %}
+              {%- if ig.errors %} · <span class="warn">{{ _('erro:') }} {{ ig.errors[0] }}</span>{% endif %}
             {%- elif ingest_state and ingest_state.get('_error') %} <span class="warn">(API: {{ ingest_state['_error'] }})</span>
-            {%- else %} (ainda sem leitura){% endif %}</span>
+            {%- else %} {{ _('(ainda sem leitura)') }}{% endif %}</span>
         {% endif %}
         <span class="series-info"></span>
       </span>

@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config_store
+from .i18n import gettext as tr
 
 # Mesma validação do rsync-hub (valid_id) — o id vira argumento de comando e caminho.
 HUB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]{1,30}$")
@@ -151,22 +152,22 @@ def _probe_sudo(bin_path: str | None, args: list[str]) -> tuple[bool, str]:
     regra para ESTE usuário/comando) etc. Sem isso a tela só sabia dizer "sem
     permissão", que não distingue regra ausente de regra no usuário errado."""
     if not bin_path:
-        return False, "rsync-hub não encontrado neste host."
+        return False, tr("rsync-hub não encontrado neste host.")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         return True, ""
     if not shutil.which("sudo"):
-        return False, "o comando 'sudo' não existe (ou não está no PATH deste processo)."
+        return False, tr("o comando 'sudo' não existe (ou não está no PATH deste processo).")
     try:
         r = subprocess.run(["sudo", "-n", "-l", bin_path, *args],
                            capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
-        return False, "o 'sudo' não respondeu em 10s (pediu senha e ficou esperando?)."
+        return False, tr("o 'sudo' não respondeu em 10s (pediu senha e ficou esperando?).")
     except OSError as exc:
-        return False, f"falha ao executar o sudo: {exc}"
+        return False, tr("falha ao executar o sudo: %(erro)s", erro=exc)
     if r.returncode == 0:
         return True, ""
     msg = ((r.stderr or "") + " " + (r.stdout or "")).strip()
-    return False, msg or f"sudo recusou (rc={r.returncode}) sem mensagem."
+    return False, msg or tr("sudo recusou (rc=%(rc)s) sem mensagem.", rc=r.returncode)
 
 
 def _can_run(bin_path: str | None, args: list[str]) -> bool:
@@ -183,9 +184,9 @@ def _run_hub(cfg: dict, args: list[str], timeout: int = 90) -> tuple[bool, str]:
     para o admin, exatamente como no terminal."""
     bin_path = rsync_hub_bin(cfg)
     if not bin_path:
-        return False, ("rsync-hub não encontrado neste host (procurei o override "
-                       "'rsync_hub_bin' do config, /usr/local/bin/rsync-hub e o PATH). "
-                       "Prepare o host com: sudo ./collection/rsync-hub install")
+        return False, tr("rsync-hub não encontrado neste host (procurei o override "
+                         "'rsync_hub_bin' do config, /usr/local/bin/rsync-hub e o PATH). "
+                         "Prepare o host com: sudo ./collection/rsync-hub install")
     cmd = [bin_path, *args]
     if not (hasattr(os, "geteuid") and os.geteuid() == 0):
         cmd = ["sudo", "-n", *cmd]
@@ -193,16 +194,17 @@ def _run_hub(cfg: dict, args: list[str], timeout: int = 90) -> tuple[bool, str]:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL)
     except FileNotFoundError:
-        return False, "sudo não encontrado — rode a dashboard como root ou instale o sudo."
+        return False, tr("sudo não encontrado — rode a dashboard como root ou instale o sudo.")
     except subprocess.TimeoutExpired:
-        return False, f"tempo esgotado executando: {' '.join(cmd)}"
+        return False, tr("tempo esgotado executando: %(cmd)s", cmd=" ".join(cmd))
     out = ((r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")).strip()
     if r.returncode != 0:
         if "password is required" in (r.stderr or "") or "senha" in (r.stderr or "").lower():
-            out = ("sudo pediu senha (a dashboard só executa modo não interativo).\n"
-                   "Rode no servidor: sudo dashboard/setup-hub-access.sh <usuario-da-dashboard>\n"
-                   f"(ou libere no visudo a linha: {sudoers_hint(bin_path)})")
-        return False, out or f"falha (rc={r.returncode}) executando: {' '.join(cmd)}"
+            out = tr("sudo pediu senha (a dashboard só executa modo não interativo).\n"
+                     "Rode no servidor: sudo dashboard/setup-hub-access.sh <usuario-da-dashboard>\n"
+                     "(ou libere no visudo a linha: %(hint)s)", hint=sudoers_hint(bin_path))
+        return False, out or tr("falha (rc=%(rc)s) executando: %(cmd)s",
+                                rc=r.returncode, cmd=" ".join(cmd))
     return True, out
 
 
@@ -294,10 +296,10 @@ def _pause_target(target: str) -> tuple[str | None, str]:
     casa com o comando sem argumento nenhum."""
     t = (target or "").strip().lower()
     if t in ("", "todas", "all", "--todas", "--all"):
-        return "--todas", "todas as estações"
+        return "--todas", tr("todas as estações")
     if not valid_hub_id(t):
         return None, ""
-    return t, f"a estação '{t}'"
+    return t, tr("a estação '%(id)s'", id=t)
 
 
 def set_pause(cfg: dict, target: str, reason: str | None = None) -> tuple[bool, str]:
@@ -305,7 +307,7 @@ def set_pause(cfg: dict, target: str, reason: str | None = None) -> tuple[bool, 
     credenciais nem apagar dados; as estações reenviam quando a recepção voltar."""
     arg, _label = _pause_target(target)
     if arg is None:
-        return False, "id de estação inválido para pausar."
+        return False, tr("id de estação inválido para pausar.")
     # Motivo vira uma linha do marcador (motivo=...): quebras de linha o corromperiam.
     why = " ".join((reason or "").split())[:200]
     return _run_hub(cfg, ["pause", arg] + ([why] if why else []))
@@ -315,7 +317,7 @@ def clear_pause(cfg: dict, target: str) -> tuple[bool, str]:
     """``rsync-hub resume <id|--todas>`` — retoma a recepção."""
     arg, _label = _pause_target(target)
     if arg is None:
-        return False, "id de estação inválido para retomar."
+        return False, tr("id de estação inválido para retomar.")
     return _run_hub(cfg, ["resume", arg])
 
 
@@ -351,12 +353,12 @@ def add_station_key(cfg: dict, sid: str, pubkey_line: str | None) -> tuple[bool,
     """``rsync-hub add <id>`` — sem chave o hub GERA o par em stations/<id>/ (com
     INSTRUCOES.txt); com uma linha colada, grava-a num arquivo temporário e autoriza."""
     if not valid_hub_id(sid):
-        return False, "id inválido (minúsculas, dígitos e '_', começando por letra/dígito)."
+        return False, tr("id inválido (minúsculas, dígitos e '_', começando por letra/dígito).")
     if not pubkey_line:
         return _run_hub(cfg, ["add", sid])
     line = pubkey_line.strip()
     if not re.match(r"^(ssh-|ecdsa-|sk-)\S+\s+\S+", line):
-        return False, "isso não parece uma chave pública SSH ('ssh-ed25519 AAAA…')."
+        return False, tr("isso não parece uma chave pública SSH ('ssh-ed25519 AAAA…').")
     # Temporário legível por root (quem executa o add); apagado em seguida.
     fd, tmp = tempfile.mkstemp(prefix="carbonara-pub-", suffix=".pub", text=True)
     try:
@@ -375,10 +377,10 @@ def add_station_password(cfg: dict, sid: str, password: str | None) -> tuple[boo
     """``rsync-hub add <id> --senha [senha]`` — senha vazia = o hub gera uma; a senha
     final fica no INSTRUCOES.txt da estação (visível na página de credenciais)."""
     if not valid_hub_id(sid):
-        return False, "id inválido (minúsculas, dígitos e '_', começando por letra/dígito)."
+        return False, tr("id inválido (minúsculas, dígitos e '_', começando por letra/dígito).")
     pw = (password or "").strip()
     if pw and (":" in pw or " " in pw):
-        return False, "a senha não pode conter ':' nem espaço."
+        return False, tr("a senha não pode conter ':' nem espaço.")
     args = ["add", sid, "--senha"] + ([pw] if pw else [])
     return _run_hub(cfg, args)
 
@@ -392,12 +394,12 @@ def move_root(cfg: dict, new_root: str) -> tuple[bool, str]:
     para volumes muito grandes, o terminal é o lugar certo (a UI avisa)."""
     new = (new_root or "").strip()
     if not new.startswith("/") or "\n" in new or "\r" in new:
-        return False, "informe um caminho ABSOLUTO (começando com /) para a nova raiz."
+        return False, tr("informe um caminho ABSOLUTO (começando com /) para a nova raiz.")
     if new.rstrip("/") in ("", "/"):
-        return False, "não dá para usar '/' como raiz."
+        return False, tr("não dá para usar '/' como raiz.")
     # Espelha a validação do rsync-hub (que também recusa — cinto e suspensório).
     if any(c in new for c in " \t'\":\\"):
-        return False, "o novo caminho não pode conter espaços, aspas, ':' ou '\\'."
+        return False, tr("o novo caminho não pode conter espaços, aspas, ':' ou '\\'.")
     return _run_hub(cfg, ["move-root", new, "--confirmo"], timeout=7200)
 
 
@@ -438,7 +440,7 @@ def remove_station(cfg: dict, sid: str) -> tuple[bool, str]:
     """``rsync-hub remove <id>`` — revoga chave E senha; dados e credenciais em disco
     são preservados (comportamento do próprio hub)."""
     if not valid_hub_id(sid):
-        return False, "id inválido."
+        return False, tr("id inválido.")
     return _run_hub(cfg, ["remove", sid])
 
 
@@ -450,7 +452,7 @@ def purge_station(cfg: dict, sid: str) -> tuple[bool, str]:
     aqui — este código só roda depois dela. Irreversível; timeout maior porque
     apagar um archive/ grande pode demorar."""
     if not valid_hub_id(sid):
-        return False, "id inválido."
+        return False, tr("id inválido.")
     return _run_hub(cfg, ["purge", sid, "--confirmo"], timeout=600)
 
 
@@ -516,9 +518,9 @@ def station_kit_zip(cfg: dict, sid: str) -> tuple[bytes | None, str]:
         cred_files = sorted(p for p in creds_dir.iterdir() if p.is_file())
     client_files = [CLIENT_DIR / n for n in CLIENT_FILES if (CLIENT_DIR / n).is_file()]
     if not cred_files and not client_files:
-        return None, ("nada para empacotar: a estação não tem credenciais em "
-                      f"{creds_dir} e os clientes de collection/station/ não foram "
-                      "encontrados junto ao dashboard.")
+        return None, tr("nada para empacotar: a estação não tem credenciais em "
+                        "%(dir)s e os clientes de collection/station/ não foram "
+                        "encontrados junto ao dashboard.", dir=creds_dir)
 
     def mode_for(name: str) -> int:
         if name.endswith("_key"):

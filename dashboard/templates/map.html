@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Mapa · CARBONARA{% endblock %}
+{% block title %}{{ _('Mapa') }} · CARBONARA{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='leaflet/leaflet.css') }}">
 <script src="{{ url_for('static', filename='leaflet/leaflet.js') }}"></script>
@@ -17,9 +17,9 @@
       <div class="page-head map-modal-head">
         <h2 id="map-panel-title"></h2>
         <div>
-          <button class="btn" type="button" id="map-panel-save">Salvar imagem</button>
-          <a class="btn" id="map-panel-link" href="#">Ver página da estação</a>
-          <button class="btn" type="button" id="map-panel-close" aria-label="Fechar">✕ Fechar</button>
+          <button class="btn" type="button" id="map-panel-save">{{ _('Salvar imagem') }}</button>
+          <a class="btn" id="map-panel-link" href="#">{{ _('Ver página da estação') }}</a>
+          <button class="btn" type="button" id="map-panel-close" aria-label="{{ _('Fechar') }}">{{ _('✕ Fechar') }}</button>
         </div>
       </div>
       <p class="meta" id="map-panel-status"></p>

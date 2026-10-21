@@ -22,6 +22,7 @@ from flask import (
 )
 
 from . import hub, status
+from .i18n import gettext as _
 from .views import admin_required
 
 hub_pages = Blueprint("hub", __name__)
@@ -72,7 +73,7 @@ def pause():
     cfg = _load()
     target = (request.form.get("target") or "").strip().lower()
     ok, out = hub.set_pause(cfg, target, request.form.get("reason"))
-    flash(out or ("Recepção pausada." if ok else "Falha ao pausar a recepção."),
+    flash(out or (_("Recepção pausada.") if ok else _("Falha ao pausar a recepção.")),
           "ok" if ok else "error")
     return _pause_redirect(request.form.get("back") or "", target)
 
@@ -85,7 +86,7 @@ def resume():
     cfg = _load()
     target = (request.form.get("target") or "").strip().lower()
     ok, out = hub.clear_pause(cfg, target)
-    flash(out or ("Recepção retomada." if ok else "Falha ao retomar a recepção."),
+    flash(out or (_("Recepção retomada.") if ok else _("Falha ao retomar a recepção.")),
           "ok" if ok else "error")
     return _pause_redirect(request.form.get("back") or "", target)
 
@@ -105,8 +106,8 @@ def align_root():
     cfg = _load()
     conf_base = (hub.read_hub_conf().get("BASE") or "").strip()
     if not conf_base.startswith("/"):
-        flash("Não consegui ler a BASE em /etc/rsync-hub.conf — ajuste a raiz à mão "
-              "no campo acima.", "error")
+        flash(_("Não consegui ler a BASE em /etc/rsync-hub.conf — ajuste a raiz à mão "
+                "no campo acima."), "error")
         return redirect(url_for("pages.settings"))
     old_bases = []
     for cand in (str(config_store.data_root(cfg)),
@@ -114,13 +115,14 @@ def align_root():
         if cand and cand not in old_bases:
             old_bases.append(cand)
     if conf_base in old_bases:
-        flash(f"A raiz da dashboard já é {conf_base} — nada a alinhar.", "ok")
+        flash(_("A raiz da dashboard já é %(base)s — nada a alinhar.", base=conf_base), "ok")
         return redirect(url_for("pages.settings"))
     cfg["data_root"] = conf_base
     rewritten = sum(hub.rewrite_absolute_paths(cfg, ob, conf_base) for ob in old_bases)
     current_app.store.save(cfg)
-    flash(f"Raiz da dashboard alinhada com o rsync-hub: {conf_base}."
-          + (f" {rewritten} caminho(s) absoluto(s) de cadastros foram reapontados." if rewritten else ""),
+    flash(_("Raiz da dashboard alinhada com o rsync-hub: %(base)s.", base=conf_base)
+          + (" " + _("%(n)s caminho(s) absoluto(s) de cadastros foram reapontados.", n=rewritten)
+             if rewritten else ""),
           "ok")
     return redirect(url_for("pages.settings"))
 
@@ -135,11 +137,11 @@ def station_add():
         ok, out = hub.add_station_password(cfg, sid, request.form.get("password"))
     else:
         ok, out = hub.add_station_key(cfg, sid, (request.form.get("pubkey") or "").strip() or None)
-    flash(out or ("Estação autorizada." if ok else "Falha ao autorizar."),
+    flash(out or (_("Estação autorizada.") if ok else _("Falha ao autorizar.")),
           "ok" if ok else "error")
     if ok:
-        flash("Kit de ativação pronto: use o botão \"Baixar kit da estação (.zip)\" "
-              "abaixo — chave, INSTRUCOES.txt e o cliente num pacote só.", "ok")
+        flash(_("Kit de ativação pronto: use o botão \"Baixar kit da estação (.zip)\" "
+                "abaixo — chave, INSTRUCOES.txt e o cliente num pacote só."), "ok")
         return redirect(url_for("hub.station", station_id=sid))
     return redirect(url_for("hub.index"))
 
@@ -193,7 +195,7 @@ def station_kit(station_id):
 def station_remove(station_id):
     cfg = _load()
     ok, out = hub.remove_station(cfg, station_id)
-    flash(out or ("Acesso revogado." if ok else "Falha ao revogar."),
+    flash(out or (_("Acesso revogado.") if ok else _("Falha ao revogar.")),
           "ok" if ok else "error")
     return redirect(url_for("hub.index") if ok
                     else url_for("hub.station", station_id=station_id))
@@ -209,8 +211,8 @@ def station_purge(station_id):
     cfg = _load()
     typed = (request.form.get("confirm_name") or "").strip()
     if typed != station_id:
-        flash("Exclusão NÃO executada: o nome digitado "
-              f"('{typed or '—'}') não confere com '{station_id}'. Nada foi apagado.",
+        flash(_("Exclusão NÃO executada: o nome digitado ('%(typed)s') não confere "
+                "com '%(id)s'. Nada foi apagado.", typed=typed or "—", id=station_id),
               "error")
         return redirect(url_for("hub.station", station_id=station_id))
     ok, out = hub.purge_station(cfg, station_id)
@@ -219,9 +221,9 @@ def station_purge(station_id):
         if any(s.get("id") == station_id for s in cfg2.get("stations", [])):
             cfg2["stations"] = [s for s in cfg2["stations"] if s.get("id") != station_id]
             current_app.store.save(cfg2)
-            flash(f"'{station_id}' também foi removida do cadastro de monitoramento "
-                  "do dashboard.", "ok")
-    flash(out or ("Estação excluída." if ok else "Falha na exclusão."),
+            flash(_("'%(id)s' também foi removida do cadastro de monitoramento "
+                    "do dashboard.", id=station_id), "ok")
+    flash(out or (_("Estação excluída.") if ok else _("Falha na exclusão.")),
           "ok" if ok else "error")
     return redirect(url_for("hub.index") if ok
                     else url_for("hub.station", station_id=station_id))
@@ -239,8 +241,8 @@ def move_root():
     cfg = _load()
     new_root = (request.form.get("new_root") or "").strip()
     if not request.form.get("ack"):
-        flash("Migração não executada: confirme que entendeu as pendências manuais "
-              "(caixa de confirmação).", "error")
+        flash(_("Migração não executada: confirme que entendeu as pendências manuais "
+                "(caixa de confirmação)."), "error")
         return redirect(url_for("pages.settings"))
     # '/x/incoming' por engano → corrige para /x (a BASE é quem CONTÉM incoming/),
     # como o settings já faz — evita criar uma raiz .../incoming/incoming.
@@ -262,12 +264,13 @@ def move_root():
         rewritten = sum(hub.rewrite_absolute_paths(cfg2, ob, new_root) for ob in old_bases)
         current_app.store.save(cfg2)
         if adjusted:
-            flash(f"O caminho informado terminava em incoming/ — usei '{new_root}' "
-                  "(a raiz do hub é a que CONTÉM incoming/).", "ok")
+            flash(_("O caminho informado terminava em incoming/ — usei '%(root)s' "
+                    "(a raiz do hub é a que CONTÉM incoming/).", root=new_root), "ok")
         if rewritten:
-            flash(f"{rewritten} caminho(s) absoluto(s) de cadastros do dashboard "
-                  "(watchdog/arquivos monitorados/log) foram reapontados para a nova raiz.", "ok")
-    flash(out or ("Raiz migrada." if ok else "Falha na migração."),
+            flash(_("%(n)s caminho(s) absoluto(s) de cadastros do dashboard "
+                    "(watchdog/arquivos monitorados/log) foram reapontados para a nova raiz.",
+                    n=rewritten), "ok")
+    flash(out or (_("Raiz migrada.") if ok else _("Falha na migração.")),
           "ok" if ok else "error")
     return redirect(url_for("pages.settings"))
 
@@ -284,7 +287,7 @@ def files(area, subpath):
         # a raiz com aviso em vez de 404 seco.
         if hub.area_root(cfg, area) is None:
             abort(404)
-        flash("Pasta não encontrada (ou fora da área permitida).", "error")
+        flash(_("Pasta não encontrada (ou fora da área permitida)."), "error")
         listing = hub.list_dir(cfg, area, "") or {
             "area": area, "label": hub.AREAS[area][1], "root": str(hub.area_root(cfg, area)),
             "rel": "", "crumbs": [], "dirs": [], "files": [], "truncated": False,

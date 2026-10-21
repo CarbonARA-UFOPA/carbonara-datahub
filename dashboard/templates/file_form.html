@@ -1,222 +1,222 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>{{ 'Editar arquivo — ' ~ fcfg.id if fcfg else 'Novo arquivo em monitoramento' }}
-    <small>estação {{ station.id }}</small></h1>
+<h1>{{ _('Editar arquivo — %(id)s', id=fcfg.id) if fcfg else _('Novo arquivo em monitoramento') }}
+    <small>{{ _('estação %(id)s', id=station.id) }}</small></h1>
 
-<p class="meta">O dashboard lê as <strong>últimas linhas</strong> do arquivo, separa em
+<p class="meta">{{ _('O dashboard lê as <strong>últimas linhas</strong> do arquivo, separa em
   colunas, acha o horário e plota <strong>um gráfico por variável</strong>. Confira com
-  <em>Pré-visualizar parse</em> antes de salvar.</p>
+  <em>Pré-visualizar parse</em> antes de salvar.') }}</p>
 
 <form method="post" class="card form" id="file-form"
       action="{{ url_for('pages.file_update', station_id=station.id, file_id=fcfg.id) if fcfg else url_for('pages.file_create', station_id=station.id) }}">
 
-  <label>Caminho do arquivo
+  <label>{{ _('Caminho do arquivo') }}
     <input name="path" required value="{{ fcfg.path if fcfg else '' }}"
-           placeholder="ex.: incoming/{{ station.id }}/{{ station.id }}.dat (relativo à raiz) ou /caminho/absoluto">
+           placeholder="{{ _('ex.: incoming/%(id)s/%(id)s.dat (relativo à raiz) ou /caminho/absoluto', id=station.id) }}">
   </label>
 
   <label class="check-row">
     <input type="checkbox" name="dynamic_path" value="1" id="dyn-path"
            {{ 'checked' if fcfg and fcfg.get('dynamic_path') else '' }}>
-    <span><strong>O nome do arquivo muda com a data/hora</strong> — o caminho vira um
+    <span>{{ _('<strong>O nome do arquivo muda com a data/hora</strong> — o caminho vira um
       padrão resolvido a cada leitura: <code>%Y</code> ano · <code>%m</code> mês ·
       <code>%d</code> dia · <code>%H</code> hora · <code>*</code> = parte livre.
-      Sem o arquivo do momento, vale o mais recente que casa.
+      Sem o arquivo do momento, vale o mais recente que casa.') }}
       <span id="dyn-preview"></span></span>
   </label>
 
   <details class="adv" id="path-adv" {{ '' if fcfg and (fcfg.get('truncate_chars') or fcfg.get('hour_offset')) else 'hidden' }}
            {{ 'open' if fcfg and (fcfg.get('truncate_chars') or fcfg.get('hour_offset')) }}>
-    <summary>Ajustes do caminho dinâmico — truncar nome / deslocar horas (opcional)</summary>
+    <summary>{{ _('Ajustes do caminho dinâmico — truncar nome / deslocar horas (opcional)') }}</summary>
     <div class="form-row">
-      <label>Truncar o fim do nome
+      <label>{{ _('Truncar o fim do nome') }}
         <input name="truncate_chars" type="number" min="1" max="200" id="trunc-chars"
                class="num-short"
                value="{{ fcfg.truncate_chars if fcfg and fcfg.get('truncate_chars') else '' }}"
                placeholder="—">
-        <small>Ignora os N últimos caracteres do nome e busca com <code>*</code> no
+        <small>{{ _('Ignora os N últimos caracteres do nome e busca com <code>*</code> no
           lugar; o padrão gravado fica intacto. Vários casando → vale o mais
-          recente.</small>
+          recente.') }}</small>
       </label>
-      <label>Deslocar horas (±)
+      <label>{{ _('Deslocar horas (±)') }}
         <input name="hour_offset" type="number" min="-168" max="168" step="1" id="off-hours"
                class="num-short"
                value="{{ fcfg.hour_offset if fcfg and fcfg.get('hour_offset') else '' }}"
                placeholder="—">
-        <small>Soma ±N h ao relógio antes de expandir; a virada é automática
+        <small>{{ _('Soma ±N h ao relógio antes de expandir; a virada é automática
           (23h <code>+2</code> → 01h do dia seguinte). Alvo inexistente → o mais
-          recente que casa.</small>
+          recente que casa.') }}</small>
       </label>
     </div>
   </details>
 
   <div class="form-row">
-    <label>Formato do arquivo
+    <label>{{ _('Formato do arquivo') }}
       {# Sem `name`: não é campo do cadastro, só preenche os de baixo. O que vale para o
          servidor continua sendo separador/aspas/cabeçalho/timestamp. #}
       <select id="fmt-preset">
-        <option value="toa5">TOA5 — Campbell/LoggerNet (padrão)</option>
-        <option value="csv">CSV com cabeçalho (1 linha)</option>
-        <option value="tsv">TSV — separado por tabulação</option>
-        <option value="espaco_epoch">Separado por espaço + Unix epoch (.sfo)</option>
-        <option value="espaco">Separado por espaço, data em texto</option>
-        <option value="csv_sem_cab">CSV sem cabeçalho</option>
-        <option value="livre">Personalizado</option>
+        <option value="toa5">{{ _('TOA5 — Campbell/LoggerNet (padrão)') }}</option>
+        <option value="csv">{{ _('CSV com cabeçalho (1 linha)') }}</option>
+        <option value="tsv">{{ _('TSV — separado por tabulação') }}</option>
+        <option value="espaco_epoch">{{ _('Separado por espaço + Unix epoch (.sfo)') }}</option>
+        <option value="espaco">{{ _('Separado por espaço, data em texto') }}</option>
+        <option value="csv_sem_cab">{{ _('CSV sem cabeçalho') }}</option>
+        <option value="livre">{{ _('Personalizado') }}</option>
       </select>
       <small id="fmt-resumo" class="meta"></small>
     </label>
 
-    <label>Linhas do final a plotar
+    <label>{{ _('Linhas do final a plotar') }}
       <input name="tail_lines" type="number" min="1" max="10000"
              value="{{ fcfg.tail_lines if fcfg else 100 }}">
     </label>
   </div>
 
   <div class="form-row">
-  <label>Apelido (opcional)
+  <label>{{ _('Apelido (opcional)') }}
     <input name="alias" value="{{ fcfg.alias if fcfg and fcfg.get('alias') else '' }}"
-           placeholder="ex.: Torre Norte — nome de exibição nos gráficos">
+           placeholder="{{ _('ex.: Torre Norte — nome de exibição nos gráficos') }}">
   </label>
-  <label>Tipo de dado
+  <label>{{ _('Tipo de dado') }}
     <input name="data_type" list="data-type-list" value="{{ fcfg.data_type if fcfg and fcfg.get('data_type') else '' }}"
-           placeholder="ex.: datalogger, fluxo, radiacao, perfil">
+           placeholder="{{ _('ex.: datalogger, fluxo, radiacao, perfil') }}">
     <datalist id="data-type-list">{% for t in data_types %}<option value="{{ t }}">{% endfor %}</datalist>
-    <small>O nível entre a estação e o arquivo: que equipamento/conjunto gera este arquivo. No banco vira
-      <code>{{ station.id }}__&lt;tipo&gt;</code>, com uma tabela por arquivo. Vazio = <code>datalogger</code> para TOA5, <code>dados</code> para o resto.</small>
+    <small>{{ _('O nível entre a estação e o arquivo: que equipamento/conjunto gera este arquivo. No banco vira
+      <code>%(id)s__&lt;tipo&gt;</code>, com uma tabela por arquivo. Vazio = <code>datalogger</code> para TOA5, <code>dados</code> para o resto.', id=station.id) }}</small>
   </label>
-  <label>Nome da tabela no banco (opcional)
+  <label>{{ _('Nome da tabela no banco (opcional)') }}
     <input name="table_name" value="{{ fcfg.table_name if fcfg and fcfg.get('table_name') else '' }}"
-           placeholder="{{ fcfg.id if fcfg else 'vazio = identificador do registro' }}" pattern="[A-Za-z][A-Za-z0-9_ ]{0,62}">
-    <small>Como a tabela deste arquivo aparece no banco da estação (ex.: <code>sondagens_rs41</code>). Útil quando o
-      registro nasceu de um arquivo concreto e herdou a data no nome. Só letras, números e <code>_</code>.</small>
+           placeholder="{{ fcfg.id if fcfg else _('vazio = identificador do registro') }}" pattern="[A-Za-z][A-Za-z0-9_ ]{0,62}">
+    <small>{{ _('Como a tabela deste arquivo aparece no banco da estação (ex.: <code>sondagens_rs41</code>). Útil quando o
+      registro nasceu de um arquivo concreto e herdou a data no nome. Só letras, números e <code>_</code>.') }}</small>
   </label>
   </div>
 
-  <h2>Banco de dados</h2>
-  <p class="meta">Só entra no banco o que for marcado aqui — e só as variáveis da tabela
+  <h2>{{ _('Banco de dados') }}</h2>
+  <p class="meta">{{ _('Só entra no banco o que for marcado aqui — e só as variáveis da tabela
     abaixo (as de tipo <em>Texto</em> ficam de fora). O arquivo em disco nunca é
-    movido nem alterado; a ingestão lê só o que cresceu desde a última leitura.</p>
+    movido nem alterado; a ingestão lê só o que cresceu desde a última leitura.') }}</p>
   <label class="check-row">
     <input type="checkbox" name="ingest" value="1" id="ingest-chk"
            {{ 'checked' if fcfg and fcfg.get('ingest') else '' }}>
-    <span><strong>Ingerir este arquivo no banco de dados</strong> — as variáveis
+    <span>{{ _('<strong>Ingerir este arquivo no banco de dados</strong> — as variáveis
       selecionadas passam a ser gravadas em <code>measurements</code> e servidas pela
       API. Os limites Mín/Máx físicos viram a regra de qualidade (fora deles, o valor
-      entra com <code>quality=2</code>).</span>
+      entra com <code>quality=2</code>).') }}</span>
   </label>
   <div class="form-row" id="ingest-opts">
-    <label>Fuso horário dos carimbos do arquivo
+    <label>{{ _('Fuso horário dos carimbos do arquivo') }}
       <input name="timezone" list="tz-list"
              value="{{ fcfg.timezone if fcfg and fcfg.get('timezone') else '' }}"
-             placeholder="vazio = UTC">
+             placeholder="{{ _('vazio = UTC') }}">
       <datalist id="tz-list">
         <option value="UTC"><option value="America/Santarem"><option value="America/Belem">
         <option value="America/Manaus"><option value="America/Sao_Paulo">
         <option value="America/Cuiaba"><option value="America/Rio_Branco">
       </datalist>
-      <small>Cada equipamento grava no seu fuso (UTC ou local); o banco guarda sempre
-        UTC. Carimbo em <em>Unix epoch</em> já é UTC e ignora este campo.</small>
+      <small>{{ _('Cada equipamento grava no seu fuso (UTC ou local); o banco guarda sempre
+        UTC. Carimbo em <em>Unix epoch</em> já é UTC e ignora este campo.') }}</small>
     </label>
-    <label>Reamostrar antes de gravar
+    <label>{{ _('Reamostrar antes de gravar') }}
       {% set rs = (fcfg.resample if fcfg and fcfg.get('resample') else 'raw') %}
       <select name="resample">
-        <option value="raw" {{ 'selected' if rs == 'raw' }}>Não — cada registro</option>
-        <option value="1min" {{ 'selected' if rs == '1min' }}>Média por 1 minuto</option>
-        <option value="30min" {{ 'selected' if rs == '30min' }}>Média por 30 minutos</option>
+        <option value="raw" {{ 'selected' if rs == 'raw' }}>{{ _('Não — cada registro') }}</option>
+        <option value="1min" {{ 'selected' if rs == '1min' }}>{{ _('Média por 1 minuto') }}</option>
+        <option value="30min" {{ 'selected' if rs == '30min' }}>{{ _('Média por 30 minutos') }}</option>
       </select>
-      <small>Para arquivos de alta frequência (10–20 Hz, 1 s): grava a média de cada
-        intervalo em vez de cada leitura. Arquivos de 30 min ficam em "cada registro".</small>
+      <small>{{ _('Para arquivos de alta frequência (10–20 Hz, 1 s): grava a média de cada
+        intervalo em vez de cada leitura. Arquivos de 30 min ficam em "cada registro".') }}</small>
     </label>
   </div>
 
   <details class="adv" id="adv-parse">
-    <summary>Ajuste fino do parse e do período</summary>
+    <summary>{{ _('Ajuste fino do parse e do período') }}</summary>
 
     <div class="grid-3">
-      <label>Separador de colunas
+      <label>{{ _('Separador de colunas') }}
         {% set sep_vis = '\\t' if fcfg and fcfg.separator == '\t'
                     else ('\\s' if fcfg and fcfg.separator == ' '
                     else (fcfg.separator if fcfg else ',')) %}
         <input name="separator" value="{{ sep_vis }}">
-        <small><code>\t</code> = tabulação · <code>\s</code> = espaço (aceita
-          espaços repetidos).</small>
+        <small>{{ _('<code>\\t</code> = tabulação · <code>\\s</code> = espaço (aceita
+          espaços repetidos).') }}</small>
       </label>
-      <label>Caractere de aspas
+      <label>{{ _('Caractere de aspas') }}
         <input name="quotechar" value="{{ fcfg.quotechar if fcfg else '"' }}">
       </label>
-      <label>Separador decimal
+      <label>{{ _('Separador decimal') }}
         <input name="decimal" value="{{ fcfg.decimal if fcfg else '.' }}">
       </label>
-      <label>Linhas de cabeçalho a pular
+      <label>{{ _('Linhas de cabeçalho a pular') }}
         <input name="skip_header_lines" type="number" min="0" max="100"
                value="{{ fcfg.skip_header_lines if fcfg else 0 }}">
       </label>
-      <label>Linha com os nomes das colunas
+      <label>{{ _('Linha com os nomes das colunas') }}
         <input name="header_line" type="number" min="1" max="100"
                value="{{ fcfg.header_line if fcfg and fcfg.header_line else '' }}"
-               placeholder="vazio = sem nomes">
+               placeholder="{{ _('vazio = sem nomes') }}">
       </label>
-      <label>Período a plotar (horas)
+      <label>{{ _('Período a plotar (horas)') }}
         <input name="window_hours" type="number" min="1" max="8760"
                value="{{ fcfg.window_hours if fcfg and fcfg.get('window_hours') else '' }}"
-               placeholder="vazio = tudo que foi lido">
+               placeholder="{{ _('vazio = tudo que foi lido') }}">
       </label>
-      <label>Coluna do timestamp
+      <label>{{ _('Coluna do timestamp') }}
         <input name="ts_column" value="{{ fcfg.timestamp.column if fcfg else 0 }}">
-        <small>Índice (0 = primeira) ou nome — qualquer coluna serve.</small>
+        <small>{{ _('Índice (0 = primeira) ou nome — qualquer coluna serve.') }}</small>
       </label>
-      <label>Tipo do carimbo
+      <label>{{ _('Tipo do carimbo') }}
         {# Sem `name`: quem vai para o servidor é o ts_format ("epoch" ou o strftime). #}
         <select id="ts-kind">
-          <option value="texto">Data/hora em texto</option>
-          <option value="epoch">Unix epoch (segundos desde 1970)</option>
+          <option value="texto">{{ _('Data/hora em texto') }}</option>
+          <option value="epoch">{{ _('Unix epoch (segundos desde 1970)') }}</option>
         </select>
-        <small>Epoch aceita fração — <code>1787542188.433029</code> tem precisão de
-          microssegundo — e também valores em ms/µs/ns.</small>
+        <small>{{ _('Epoch aceita fração — <code>1787542188.433029</code> tem precisão de
+          microssegundo — e também valores em ms/µs/ns.') }}</small>
       </label>
-      <label id="ts-format-label">Formato do timestamp
+      <label id="ts-format-label">{{ _('Formato do timestamp') }}
         <input name="ts_format" value="{{ fcfg.timestamp.format if fcfg else '%Y-%m-%d %H:%M:%S' }}">
       </label>
-      <label>Remover dos valores (regex)
+      <label>{{ _('Remover dos valores (regex)') }}
         <input name="strip_regex" value="{{ fcfg.strip_regex if fcfg and fcfg.strip_regex else '' }}"
-               placeholder="ex.: [A-Za-z]">
-        <small>Limpa cada valor; não mexe no timestamp.</small>
+               placeholder="{{ _('ex.: [A-Za-z]') }}">
+        <small>{{ _('Limpa cada valor; não mexe no timestamp.') }}</small>
       </label>
     </div>
 
     <label class="check-row">
       <input type="checkbox" name="no_quotes" value="1"
              {{ 'checked' if fcfg and fcfg.quotechar == '' else '' }}>
-      <span><strong>Ignorar aspas</strong> — quebra também os campos entre aspas pelas
+      <span>{{ _('<strong>Ignorar aspas</strong> — quebra também os campos entre aspas pelas
         vírgulas de dentro (ex.: <code>"m -125,1,-1247"</code>). Depois da coluna
-        quebrada os nomes do cabeçalho deixam de alinhar: mapeie por índice.</span>
+        quebrada os nomes do cabeçalho deixam de alinhar: mapeie por índice.') }}</span>
     </label>
   </details>
 
-  <h2>Variáveis a plotar</h2>
-  <p class="meta">Uma linha = uma variável = um gráfico. Use
-    <em>⇊ Todas as colunas do arquivo</em> para trazer as colunas detectadas de uma vez.</p>
+  <h2>{{ _('Variáveis a plotar') }}</h2>
+  <p class="meta">{{ _('Uma linha = uma variável = um gráfico. Use
+    <em>⇊ Todas as colunas do arquivo</em> para trazer as colunas detectadas de uma vez.') }}</p>
 
   <table class="table" id="vars-table">
-    <thead><tr><th>Índice</th><th>Rótulo</th><th>ID no banco</th><th>Tipo</th><th>Unidade</th>
-      <th>Mín físico</th><th>Máx físico</th><th></th></tr></thead>
+    <thead><tr><th>{{ _('Índice') }}</th><th>{{ _('Rótulo') }}</th><th>{{ _('ID no banco') }}</th><th>{{ _('Tipo') }}</th><th>{{ _('Unidade') }}</th>
+      <th>{{ _('Mín físico') }}</th><th>{{ _('Máx físico') }}</th><th></th></tr></thead>
     <tbody>
     {% for v in (fcfg.variables if fcfg and fcfg.variables else [{'column': 1, 'label': '', 'unit': ''}]) %}
       <tr>
         <td><input name="var_column" value="{{ v.column }}" class="num-input"
-                   title="Índice da coluna (0 = primeira, -1 = última) ou o nome dela"></td>
+                   title="{{ _('Índice da coluna (0 = primeira, -1 = última) ou o nome dela') }}"></td>
         <td><input name="var_label" value="{{ v.label }}"></td>
         <td><input name="var_id" value="{{ v.variable_id or '' }}" class="num-input"
-                   placeholder="auto" title="Identificador da série no banco (gerado do rótulo se vazio; não mude depois de ingerir)"></td>
+                   placeholder="auto" title="{{ _('Identificador da série no banco (gerado do rótulo se vazio; não mude depois de ingerir)') }}"></td>
         <td>
           {% set vt = v.type or 'numero' %}
           <select name="var_type">
-            <option value="numero" {{ 'selected' if vt == 'numero' }}>Número</option>
-            <option value="inteiro" {{ 'selected' if vt == 'inteiro' }}>Inteiro</option>
-            <option value="booleano" {{ 'selected' if vt == 'booleano' }}>Booleano</option>
-            <option value="epoch" {{ 'selected' if vt == 'epoch' }}>Data/hora (epoch)</option>
-            <option value="timestamp" {{ 'selected' if vt == 'timestamp' }}>Data/hora (texto)</option>
-            <option value="texto" {{ 'selected' if vt == 'texto' }}>Texto</option>
+            <option value="numero" {{ 'selected' if vt == 'numero' }}>{{ _('Número') }}</option>
+            <option value="inteiro" {{ 'selected' if vt == 'inteiro' }}>{{ _('Inteiro') }}</option>
+            <option value="booleano" {{ 'selected' if vt == 'booleano' }}>{{ _('Booleano') }}</option>
+            <option value="epoch" {{ 'selected' if vt == 'epoch' }}>{{ _('Data/hora (epoch)') }}</option>
+            <option value="timestamp" {{ 'selected' if vt == 'timestamp' }}>{{ _('Data/hora (texto)') }}</option>
+            <option value="texto" {{ 'selected' if vt == 'texto' }}>{{ _('Texto') }}</option>
           </select>
         </td>
         <td><input name="var_unit" value="{{ v.unit or '' }}"></td>
@@ -227,24 +227,24 @@
     {% endfor %}
     </tbody>
   </table>
-  <button type="button" class="btn" id="btn-add-var">+ Variável</button>
-  <button type="button" class="btn" id="btn-fill-cols">⇊ Todas as colunas do arquivo</button>
+  <button type="button" class="btn" id="btn-add-var">{{ _('+ Variável') }}</button>
+  <button type="button" class="btn" id="btn-fill-cols">{{ _('⇊ Todas as colunas do arquivo') }}</button>
 
   <details class="adv">
-    <summary>O que significa cada coluna</summary>
+    <summary>{{ _('O que significa cada coluna') }}</summary>
     <ul class="help-list">
-      <li><em>Índice</em> — posição da coluna no arquivo (<code>0</code> = primeira),
+      <li>{{ _('<em>Índice</em> — posição da coluna no arquivo (<code>0</code> = primeira),
         <strong>editável</strong>: digite direto o índice que quiser. Vale
         <code>-1</code> para a última coluna (e <code>-2</code> para a penúltima), ou o
         <em>nome</em> da coluna quando o arquivo tem linha de cabeçalho. Linha nova já
         vem com o próximo índice livre. Não pode repetir índice nem usar a coluna do
-        timestamp — o servidor recusa e diz qual é.</li>
-      <li><em>Rótulo</em> — título do gráfico. <em>Unidade</em> — só exibição na legenda.</li>
-      <li><em>ID no banco</em> — chave da série em <code>measurements</code>
+        timestamp — o servidor recusa e diz qual é.') }}</li>
+      <li>{{ _('<em>Rótulo</em> — título do gráfico. <em>Unidade</em> — só exibição na legenda.') }}</li>
+      <li>{{ _('<em>ID no banco</em> — chave da série em <code>measurements</code>
         (<code>[a-z0-9_]</code>). Vazio = gerado do rótulo (<code>Rad1_A(1)</code> →
         <code>rad1_a_1</code>). Único dentro do arquivo e entre os arquivos ingeridos
-        da mesma estação. Trocar o ID depois de ingerir inicia OUTRA série.</li>
-      <li><em>Tipo</em> — como o valor da coluna é lido:
+        da mesma estação. Trocar o ID depois de ingerir inicia OUTRA série.') }}</li>
+      <li>{{ _('<em>Tipo</em> — como o valor da coluna é lido:
         <strong>Número</strong> (padrão) · <strong>Inteiro</strong> (sem casas
         decimais) · <strong>Booleano</strong> (0/1, também aceita
         <code>sim/não</code>, <code>true/false</code>, <code>on/off</code>) ·
@@ -255,18 +255,18 @@
         <code>24/08/2026 00:30</code>): o formato é descoberto entre os usuais ·
         <strong>Texto</strong> — não vira gráfico; a tela mostra o último valor lido.
         <br>Os tipos valem também na <em>pré-visualização</em>: cada coluna mapeada
-        mostra o valor convertido embaixo do valor cru.</li>
-      <li><em>Mín / Máx físicos</em> — limites plausíveis: viram linhas tracejadas no
+        mostra o valor convertido embaixo do valor cru.') }}</li>
+      <li>{{ _('<em>Mín / Máx físicos</em> — limites plausíveis: viram linhas tracejadas no
         gráfico e os trechos fora deles ficam
-        <strong style="color:#d64545">vermelhos</strong>.</li>
+        <strong style="color:#d64545">vermelhos</strong>.') }}</li>
     </ul>
-    <small>Valores não numéricos (<code>NAN</code>, <code>±7999</code>) viram lacunas.</small>
+    <small>{{ _('Valores não numéricos (<code>NAN</code>, <code>±7999</code>) viram lacunas.') }}</small>
   </details>
 
   <div class="form-actions">
-    <button type="button" class="btn" id="btn-preview">Pré-visualizar parse</button>
-    <button class="btn btn-primary" type="submit">Salvar</button>
-    <a class="btn" href="{{ url_for('pages.station_detail', station_id=station.id) }}">Cancelar</a>
+    <button type="button" class="btn" id="btn-preview">{{ _('Pré-visualizar parse') }}</button>
+    <button class="btn btn-primary" type="submit">{{ _('Salvar') }}</button>
+    <a class="btn" href="{{ url_for('pages.station_detail', station_id=station.id) }}">{{ _('Cancelar') }}</a>
   </div>
 
   <div id="preview-area"></div>
@@ -308,13 +308,13 @@
                                       depois de qualquer ajuste manual */
       var nomes = val("header_line");
       var epoch = EPOCH.indexOf(val("ts_format").toLowerCase()) >= 0;
-      resumo.textContent =
-        "separador " + (val("separator") || "—") +
-        " · aspas " + (val("quotechar") || "nenhuma") +
-        " · pula " + (val("skip_header_lines") || "0") + " linha(s)" +
-        (nomes ? " · nomes na linha " + nomes : " · sem nomes de coluna") +
-        " · timestamp na coluna " + (val("ts_column") || "0") +
-        (epoch ? " (Unix epoch)" : "");
+      resumo.textContent = [
+        t("separador %(s)s", {s: val("separator") || "—"}),
+        t("aspas %(q)s", {q: val("quotechar") || t("nenhuma")}),
+        t("pula %(n)s linha(s)", {n: val("skip_header_lines") || "0"}),
+        nomes ? t("nomes na linha %(n)s", {n: nomes}) : t("sem nomes de coluna"),
+        t("timestamp na coluna %(c)s", {c: val("ts_column") || "0"})
+      ].join(" · ") + (epoch ? " (Unix epoch)" : "");
     }
 
     sel.addEventListener("change", function () {
@@ -414,10 +414,10 @@
       var off = offInp ? parseInt(offInp.value, 10) : NaN;
       if (!Number.isFinite(off)) off = 0;
       var alvo = expande(p, off);
-      out.innerHTML = "<br>Agora isto aponta para: <code>" + alvo + "</code>" +
-        (off ? " <em>(relógio deslocado " + (off > 0 ? "+" : "") + off + "h)</em>" : "") +
+      out.innerHTML = "<br>" + t("Agora isto aponta para:") + " <code>" + alvo + "</code>" +
+        (off ? " <em>(" + t("relógio deslocado %(h)sh", {h: (off > 0 ? "+" : "") + off}) + ")</em>" : "") +
         (alvo.indexOf("*") >= 0 || alvo.indexOf("?") >= 0
-          ? " <em>(curinga: o mais recente que casar)</em>" : "");
+          ? " <em>" + t("(curinga: o mais recente que casar)") + "</em>" : "");
     }
     chk.addEventListener("change", render);
     pathInp.addEventListener("input", render);

@@ -1,9 +1,9 @@
 {# Barra lateral da aba Banco: os "bancos" (schemas) agrupados por tipo. #}
 <aside class="card db-side">
-  <a href="{{ url_for('pages.banco') }}" class="{{ 'active' if not current }}"><strong>Visão geral e SQL</strong></a>
-  <a href="{{ url_for('pages.banco_diagnostico') }}" class="{{ 'active' if current == 'diagnostico' }}">Diagnóstico e manutenção</a>
-  <a href="{{ url_for('pages.banco_conexao') }}" class="{{ 'active' if current == 'conexao' }}">Conexão (onde está o banco)</a>
-  {% for kind, titulo in (('sistema', 'Sistema'), ('estacao', 'Estações'), ('geral', 'Gerais')) %}
+  <a href="{{ url_for('pages.banco') }}" class="{{ 'active' if not current }}"><strong>{{ _('Visão geral e SQL') }}</strong></a>
+  <a href="{{ url_for('pages.banco_diagnostico') }}" class="{{ 'active' if current == 'diagnostico' }}">{{ _('Diagnóstico e manutenção') }}</a>
+  <a href="{{ url_for('pages.banco_conexao') }}" class="{{ 'active' if current == 'conexao' }}">{{ _('Conexão (onde está o banco)') }}</a>
+  {% for kind, titulo in (('sistema', _('Sistema')), ('estacao', _('Estações')), ('geral', _('Gerais'))) %}
     {% set grupo = schemas | selectattr('kind', 'equalto', kind) | list %}
     {% if grupo or kind == 'geral' %}
       <div class="db-kind">{{ titulo }}</div>
@@ -12,18 +12,18 @@
         {% for s in grupo | sort(attribute='schema') %}
           {% if loop.changed(s.station) %}<span class="db-station" title="{{ s.station_name or '' }}">📡 {{ s.station }}</span>{% endif %}
           <a href="{{ url_for('pages.banco_schema', schema=s.schema) }}" class="db-sub {{ 'active' if current == s.schema }}">
-            📁 {{ s.data_type }} <small>{{ s.views }} tab{{ ' · ' ~ s.tables ~ ' própria(s)' if s.tables }}</small></a>
+            📁 {{ s.data_type }} <small>{{ s.views }} {{ _('tab') }}{{ ' · ' ~ _('%(n)s própria(s)', n=s.tables) if s.tables }}</small></a>
         {% endfor %}
       {% else %}
       {% for s in grupo %}
         <a href="{{ url_for('pages.banco_schema', schema=s.schema) }}" class="{{ 'active' if current == s.schema }}">
-          {{ s.schema }} <small>{{ s.tables }} tab · {{ s.views }} view</small></a>
+          {{ s.schema }} <small>{{ s.tables }} {{ _('tab') }} · {{ s.views }} view</small></a>
       {% endfor %}
       {% endif %}
       {% if kind == 'geral' %}
         <form method="post" action="{{ url_for('pages.banco_new_schema') }}" class="form" style="margin:.3rem .5rem">
-          <input name="name" placeholder="novo banco geral" pattern="[a-z][a-z0-9_-]{0,62}" required style="width:100%">
-          <button class="btn" type="submit" style="margin-top:.3rem">+ Criar</button>
+          <input name="name" placeholder="{{ _('novo banco geral') }}" pattern="[a-z][a-z0-9_-]{0,62}" required style="width:100%">
+          <button class="btn" type="submit" style="margin-top:.3rem">{{ _('+ Criar') }}</button>
         </form>
       {% endif %}
     {% endif %}

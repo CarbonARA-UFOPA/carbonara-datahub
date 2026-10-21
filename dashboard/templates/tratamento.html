@@ -1,50 +1,50 @@
 {% extends "base.html" %}
-{% block title %}Tratamento · CARBONARA{% endblock %}
+{% block title %}{{ _('Tratamento') }} · CARBONARA{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<h1>Tratamento</h1>
+<h1>{{ _('Tratamento') }}</h1>
 <section class="card help-card">
-  Cada arquivo monitorado tem sua própria página de tratamento: se é ingerido no banco,
+  {{ _('Cada arquivo monitorado tem sua própria página de tratamento: se é ingerido no banco,
   o fuso dos carimbos, a reamostragem e, variável a variável, se entra no banco e as
   regras de qualidade (faixa física → <code>2</code>, salto → <code>3</code>, valor
-  travado → <code>4</code>). Abra <em>Tratar</em> no arquivo desejado.
+  travado → <code>4</code>). Abra <em>Tratar</em> no arquivo desejado.') }}
 </section>
 {% if ledger.get('_error') %}
-<div class="flash flash-error">Estado da ingestão indisponível: {{ ledger['_error'] }}</div>
+<div class="flash flash-error">{{ _('Estado da ingestão indisponível: %(erro)s', erro=ledger['_error']) }}</div>
 {% elif not api_ok %}
-<div class="flash flash-error">API não configurada (<a href="{{ url_for('pages.settings') }}">Configurações</a>) — o estado "no banco" não aparece.</div>
+<div class="flash flash-error">{{ _('API não configurada (<a href="%(url)s">Configurações</a>) — o estado "no banco" não aparece.', url=url_for('pages.settings')) }}</div>
 {% endif %}
 
 {% for station in cfg.stations %}
 <section class="card">
   <div class="page-head">
     <h2>{{ station.name or station.id }} <small>({{ station.id }})</small></h2>
-    <a class="btn" href="{{ url_for('pages.station_detail', station_id=station.id) }}">Ver estação</a>
+    <a class="btn" href="{{ url_for('pages.station_detail', station_id=station.id) }}">{{ _('Ver estação') }}</a>
   </div>
   {% if not station.files %}
-    <p class="empty">Nenhum arquivo monitorado — cadastre em <em>Estações → Editar</em>.</p>
+    <p class="empty">{{ _('Nenhum arquivo monitorado — cadastre em <em>Estações → Editar</em>.') }}</p>
   {% else %}
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>Arquivo</th><th>No banco?</th><th>Variáveis</th><th>Regras</th><th>Fuso</th><th>Reamostragem</th><th>Ingerido</th><th></th></tr></thead>
+    <thead><tr><th>{{ _('Arquivo') }}</th><th>{{ _('No banco?') }}</th><th>{{ _('Variáveis') }}</th><th>{{ _('Regras') }}</th><th>{{ _('Fuso') }}</th><th>{{ _('Reamostragem') }}</th><th>{{ _('Ingerido') }}</th><th></th></tr></thead>
     <tbody>
     {% for f in station.files | sort(attribute='_tipo') %}
       {% if loop.changed(f._tipo) %}
-      <tr class="group-row"><td colspan="8">📁 <strong>{{ f._tipo }}</strong> <small class="meta">banco <code>{{ station.id }}__{{ f._tipo }}</code></small></td></tr>
+      <tr class="group-row"><td colspan="8">📁 <strong>{{ f._tipo }}</strong> <small class="meta">{{ _('banco') }} <code>{{ station.id }}__{{ f._tipo }}</code></small></td></tr>
       {% endif %}
       {% set r = resumo[(station.id, f.id)] %}
       {% set lg = ledger.get((station.id, f.id)) %}
       <tr>
         <td><strong>{{ f.alias or f.id }}</strong><br><small class="meta"><code>{{ f.path }}</code></small></td>
-        <td>{% if f.get('ingest') %}<span class="badge on">sim</span>{% else %}<span class="badge">não</span>{% endif %}</td>
-        <td>{{ r.no_banco }} / {{ r.total }} <small class="meta">no banco</small></td>
-        <td class="nowrap"><small>faixa {{ r.faixa }} · salto {{ r.salto }} · travado {{ r.travado }}</small></td>
+        <td>{% if f.get('ingest') %}<span class="badge on">{{ _('sim') }}</span>{% else %}<span class="badge">{{ _('não') }}</span>{% endif %}</td>
+        <td>{{ r.no_banco }} / {{ r.total }} <small class="meta">{{ _('no banco') }}</small></td>
+        <td class="nowrap"><small>{{ _('faixa %(faixa)s · salto %(salto)s · travado %(travado)s', faixa=r.faixa, salto=r.salto, travado=r.travado) }}</small></td>
         <td>{{ f.timezone or 'UTC' }}</td>
-        <td>{{ {'raw': 'cada registro', '1min': 'média 1 min', '30min': 'média 30 min'}.get(f.resample or 'raw') }}</td>
-        <td><small>{% if f.get('ingest') and lg %}{{ '{:,}'.format(lg.n_values).replace(',', '.') }} valores
-            {%- if lg.last_time %} · até {{ lg.last_time[:16] | replace('T', ' ') }}{% endif %}
-            {%- if lg.errors %} · <span class="warn">erro</span>{% endif %}
-          {% elif f.get('ingest') %}<span class="warn" title="{{ f._pendente }}">⏳ sem leitura ainda</span><br><span class="meta">{{ (f._pendente or '')[:70] }}{{ '…' if (f._pendente or '') | length > 70 }}</span>{% else %}—{% endif %}</small></td>
-        <td><a class="btn btn-primary" href="{{ url_for('pages.treatment_file', station_id=station.id, file_id=f.id) }}">Tratar</a></td>
+        <td>{{ _({'raw': 'cada registro', '1min': 'média 1 min', '30min': 'média 30 min'}.get(f.resample or 'raw')) }}</td>
+        <td><small>{% if f.get('ingest') and lg %}{{ _('%(n)s valores', n='{:,}'.format(lg.n_values).replace(',', '.')) }}
+            {%- if lg.last_time %} · {{ _('até %(quando)s', quando=lg.last_time[:16] | replace('T', ' ')) }}{% endif %}
+            {%- if lg.errors %} · <span class="warn">{{ _('erro') }}</span>{% endif %}
+          {% elif f.get('ingest') %}<span class="warn" title="{{ f._pendente }}">{{ _('⏳ sem leitura ainda') }}</span><br><span class="meta">{{ (f._pendente or '')[:70] }}{{ '…' if (f._pendente or '') | length > 70 }}</span>{% else %}—{% endif %}</small></td>
+        <td><a class="btn btn-primary" href="{{ url_for('pages.treatment_file', station_id=station.id, file_id=f.id) }}">{{ _('Tratar') }}</a></td>
       </tr>
     {% endfor %}
     </tbody>

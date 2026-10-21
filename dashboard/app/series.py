@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import api_client, config_store, tailer
+from .i18n import gettext as _
 
 MAX_POINTS = 500  # decimação: acima disso o gráfico fica pesado sem ganho visual
 
@@ -46,7 +47,7 @@ def column_display(cells: list[str], vtype: str, ts_format: str | None,
         fmt = ts_display_format(dts)
         return [fmt_ts(d, fmt) if d else None for d in dts]
     if vtype == "booleano":
-        return [None if (b := tailer.to_bool(c)) is None else ("sim" if b else "não")
+        return [None if (b := tailer.to_bool(c)) is None else (_("sim") if b else _("não"))
                 for c in cells]
     if vtype == "inteiro":
         return [None if (v := tailer.to_int(c, decimal, strip_re)) is None
@@ -63,12 +64,13 @@ def build_series(cfg: dict, station: dict, fcfg: dict) -> dict:
             return series_from_api(cfg, station, fcfg)
         except _SemDadosNoBanco as exc:
             out = build_series_from_file(cfg, station, fcfg)
-            out.setdefault("problems", []).insert(0, f"{exc} — lendo o arquivo diretamente")
+            out.setdefault("problems", []).insert(
+                0, _("%(erro)s — lendo o arquivo diretamente", erro=_(str(exc))))
             return out
         except Exception as exc:  # noqa: BLE001 — a API nunca derruba o gráfico
             out = build_series_from_file(cfg, station, fcfg)
             out.setdefault("problems", []).insert(
-                0, f"banco indisponível ({exc}) — lendo o arquivo diretamente")
+                0, _("banco indisponível (%(erro)s) — lendo o arquivo diretamente", erro=exc))
             return out
     return build_series_from_file(cfg, station, fcfg)
 
@@ -147,8 +149,10 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
             sem_valores.append(f"{v['label']} ({vid})")
         variables.append(entry)
     if sem_valores:
-        mostra = ", ".join(sem_valores[:4]) + (f" e mais {len(sem_valores) - 4}" if len(sem_valores) > 4 else "")
-        problems.append(f"{len(sem_valores)} variável(is) ainda sem valores no banco: {mostra}")
+        mostra = ", ".join(sem_valores[:4]) + (
+            _(" e mais %(n)s", n=len(sem_valores) - 4) if len(sem_valores) > 4 else "")
+        problems.append(_("%(n)s variável(is) ainda sem valores no banco: %(lista)s",
+                          n=len(sem_valores), lista=mostra))
     # Colunas de texto não vão para o banco: último valor lido do próprio arquivo.
     textos = [v for v in variables_cfg if (v.get("type") or "numero") == "texto"]
     if textos:
@@ -166,8 +170,9 @@ def series_from_api(cfg: dict, station: dict, fcfg: dict) -> dict:
     variables.sort(key=lambda e: ordem.get(e["label"], 999))
 
     if data.get("truncated"):
-        problems.append(f"o banco devolveu só os últimos {len(ordenados)} instantes (limite da API de "
-                        f"{data.get('limit_applied')} pontos no total das variáveis) — reduza 'Linhas do final'")
+        problems.append(_("o banco devolveu só os últimos %(n)s instantes (limite da API de "
+                          "%(lim)s pontos no total das variáveis) — reduza 'Linhas do final'",
+                          n=len(ordenados), lim=data.get("limit_applied")))
     keep = _decimate(len(ordenados))
     return {
         "file": fcfg["id"],
@@ -199,17 +204,17 @@ def build_series_from_file(cfg: dict, station: dict, fcfg: dict) -> dict:
             # hoje, primeira execução). Não é falha de configuração — a UI mostra em
             # tom neutro e esconde os gráficos, em vez de um erro vermelho.
             return {"pending": True,
-                    "error": "Aguardando o arquivo do período: "
-                             f"{Path(pinfo['expanded']).name} ainda não chegou "
-                             "(nenhum arquivo casa com o padrão)."}
-        return {"error": f"Arquivo não encontrado: {path}"}
+                    "error": _("Aguardando o arquivo do período: %(nome)s ainda não chegou "
+                               "(nenhum arquivo casa com o padrão).",
+                               nome=Path(pinfo['expanded']).name)}
+        return {"error": _("Arquivo não encontrado: %(caminho)s", caminho=path)}
 
     # .get com defaults: entradas escritas à mão no YAML podem omitir chaves
     tail_lines = fcfg.get("tail_lines", 100)
     lines = tailer.tail_data_lines(path, tail_lines, fcfg.get("skip_header_lines", 0))
     rows = tailer.parse_rows(lines, fcfg.get("separator", ","), fcfg.get("quotechar", '"'))
     if not rows:
-        return {"error": "Nenhuma linha de dados encontrada no final do arquivo."}
+        return {"error": _("Nenhuma linha de dados encontrada no final do arquivo.")}
 
     header = _read_header(path, fcfg)
     row_len = max(len(r) for r in rows)
@@ -244,10 +249,9 @@ def build_series_from_file(cfg: dict, station: dict, fcfg: dict) -> dict:
                 (i for i, d in enumerate(dts) if d is not None and d >= cutoff), 0
             )
             if start == 0 and len(rows) >= tail_lines:
-                problems.append(
-                    f"as {tail_lines} linhas lidas podem não cobrir o período de "
-                    f"{window_hours} h — aumente 'Linhas do final a plotar'"
-                )
+                problems.append(_(
+                    "as %(n)s linhas lidas podem não cobrir o período de "
+                    "%(h)s h — aumente 'Linhas do final a plotar'", n=tail_lines, h=window_hours))
             rows = rows[start:]
             timestamps = timestamps[start:]
             dts = dts[start:]  # mantém dts alinhado com rows (epochs abaixo indexam por linha)
@@ -258,7 +262,8 @@ def build_series_from_file(cfg: dict, station: dict, fcfg: dict) -> dict:
     for var in fcfg.get("variables", []):
         idx = _column_index(var["column"], header, row_len)
         if idx is None:
-            problems.append(f"coluna '{var['column']}' não encontrada (variável '{var['label']}')")
+            problems.append(_("coluna '%(col)s' não encontrada (variável '%(var)s')",
+                              col=var["column"], var=var["label"]))
             continue
         vtype = var.get("type") or "numero"
         cells = [row[idx] if idx < len(row) else "" for row in rows]
@@ -298,14 +303,15 @@ def build_series_from_file(cfg: dict, station: dict, fcfg: dict) -> dict:
     last_dt = next((d for d in reversed(dts) if d is not None), None)
     keep = _decimate(len(rows))
     if pinfo.get("fallback"):
-        problems.append(
-            f"o arquivo do momento ({Path(pinfo['expanded']).name}) ainda não existe — "
-            f"lendo o mais recente que casa com o padrão ({path.name})")
+        problems.append(_(
+            "o arquivo do momento (%(atual)s) ainda não existe — "
+            "lendo o mais recente que casa com o padrão (%(lido)s)",
+            atual=Path(pinfo['expanded']).name, lido=path.name))
     if pinfo.get("matches", 0) > 1:
-        problems.append(
-            f"{pinfo['matches']} arquivos casam com o padrão do período — lendo só o "
-            f"mais recente ({path.name}); se não é o esperado, o truncamento/curinga "
-            "está frouxo demais")
+        problems.append(_(
+            "%(n)s arquivos casam com o padrão do período — lendo só o "
+            "mais recente (%(lido)s); se não é o esperado, o truncamento/curinga "
+            "está frouxo demais", n=pinfo['matches'], lido=path.name))
     return {
         "file": fcfg["id"],
         "path": str(path),
@@ -418,7 +424,7 @@ def file_freshness(cfg: dict, station: dict) -> dict:
     agora = time.time()
     hit = _fresh_cache.get(station.get("id"))
     if hit and hit["sig"] == sig and agora - hit["t"] < _FRESH_TTL:
-        return hit["data"]
+        return _with_tooltip(hit["data"])
 
     out = []
     for fcfg in files:
@@ -455,15 +461,22 @@ def file_freshness(cfg: dict, station: dict) -> dict:
         # Carimbo mais recente entre todos os arquivos: o "último dado" da estação.
         "newest": recente["display"] if recente else None,
         "newest_age": recente["age_display"] if recente else None,
-        # Uma linha por arquivo, para o title= da célula (o detalhe completo sem
-        # ocupar a tabela).
-        "tooltip": "\n".join(
-            f"{f['label']}: " + (f"{f['display']} (há {f['age_display']})"
-                                 if f["display"] else (f["note"] or "sem leitura"))
-            for f in out) or "nenhum arquivo monitorado",
     }
     _fresh_cache[station.get("id")] = {"t": agora, "sig": sig, "data": data}
-    return data
+    return _with_tooltip(data)
+
+
+def _with_tooltip(data: dict) -> dict:
+    """Uma linha por arquivo, para o title= da célula (o detalhe completo sem ocupar a
+    tabela). Montada FORA do cache: o cache é compartilhado entre requisições e cada
+    uma pode estar num idioma — as notas ficam em português no cache e são traduzidas
+    aqui, na saída."""
+    tooltip = "\n".join(
+        f"{f['label']}: " + (_("%(quando)s (há %(idade)s)", quando=f["display"],
+                               idade=f["age_display"])
+                             if f["display"] else _(f["note"] or "sem leitura"))
+        for f in data["files"]) or _("nenhum arquivo monitorado")
+    return {**data, "tooltip": tooltip}
 
 
 def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
@@ -474,9 +487,9 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
         return {"error": str(exc)}
     if not path.is_file():
         if pinfo.get("dynamic"):
-            return {"error": "Arquivo do momento ainda não existe e nenhum arquivo "
-                             f"casa com o padrão: {pinfo['expanded']}"}
-        return {"error": f"Arquivo não encontrado: {path}"}
+            return {"error": _("Arquivo do momento ainda não existe e nenhum arquivo "
+                               "casa com o padrão: %(padrao)s", padrao=pinfo['expanded'])}
+        return {"error": _("Arquivo não encontrado: %(caminho)s", caminho=path)}
 
     lines = tailer.tail_data_lines(path, max_rows, entry.get("skip_header_lines", 0))
     rows = tailer.parse_rows(lines, entry["separator"], entry["quotechar"])
@@ -489,12 +502,12 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
         ncols = [len(r) for r in rows]
         if min(ncols) == 1 and max(ncols) == 1:
             diagnostics.append(
-                "Cada linha virou UMA coluna só — o separador provavelmente está errado."
+                _("Cada linha virou UMA coluna só — o separador provavelmente está errado.")
             )
         if len(set(ncols)) > 1:
             diagnostics.append(
-                f"Linhas com número variável de colunas ({min(ncols)}–{max(ncols)}) — "
-                "confira separador e linhas de cabeçalho."
+                _("Linhas com número variável de colunas (%(min)s–%(max)s) — "
+                  "confira separador e linhas de cabeçalho.", min=min(ncols), max=max(ncols))
             )
         ts_cfg = entry.get("timestamp") or {}
         ts_idx = _column_index(ts_cfg.get("column", 0), header, max(ncols))
@@ -502,11 +515,11 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
             raw = rows[-1][ts_idx].strip().strip('"') if ts_idx < len(rows[-1]) else ""
             if parse_timestamp(raw, ts_cfg.get("format")) is None:
                 diagnostics.append(
-                    f"Timestamp não casa com o formato: valor '{raw}' × formato "
-                    f"'{ts_cfg.get('format')}'."
+                    _("Timestamp não casa com o formato: valor '%(valor)s' × formato "
+                      "'%(formato)s'.", valor=raw, formato=ts_cfg.get("format"))
                 )
     else:
-        diagnostics.append("Nenhuma linha de dados lida — arquivo vazio ou só cabeçalho.")
+        diagnostics.append(_("Nenhuma linha de dados lida — arquivo vazio ou só cabeçalho."))
 
     # Mostra no preview o MESMO que os gráficos vão usar: aplica a limpeza por regex em
     # cada célula (menos a do timestamp, que tem parse próprio). Assim você vê o 'm' etc.
@@ -521,19 +534,22 @@ def build_preview(cfg: dict, entry: dict, max_rows: int = 15) -> dict:
     if pinfo.get("dynamic"):
         # No preview o usuário PRECISA ver o padrão virando arquivo — é como ele
         # confere se os campos %Y/%m/%d/%H estão certos antes de salvar.
-        note = f"Caminho com data/hora: {pinfo['pattern']} → {pinfo['expanded']}"
+        note = _("Caminho com data/hora: %(padrao)s → %(arquivo)s",
+                 padrao=pinfo['pattern'], arquivo=pinfo['expanded'])
         if pinfo.get("truncate_chars"):
-            note += f" (truncado: {pinfo['truncate_chars']} caractere(s) do fim do nome)"
+            note += " " + _("(truncado: %(n)s caractere(s) do fim do nome)",
+                            n=pinfo['truncate_chars'])
         if pinfo.get("hour_offset"):
-            note += f" (relógio deslocado {pinfo['hour_offset']:+d}h)"
+            note += " " + _("(relógio deslocado %(h)sh)", h=f"{pinfo['hour_offset']:+d}")
         if pinfo.get("matched"):
-            note += f" (arquivo lido: {Path(pinfo['matched']).name})"
+            note += " " + _("(arquivo lido: %(nome)s)", nome=Path(pinfo['matched']).name)
         if pinfo.get("fallback"):
-            note += (" (ainda não existe — lendo o mais recente que casa com o padrão: "
-                     f"{pinfo['fallback']})")
+            note += " " + _("(ainda não existe — lendo o mais recente que casa com o "
+                            "padrão: %(nome)s)", nome=pinfo['fallback'])
         if pinfo.get("matches", 0) > 1:
-            note += (f" — ATENÇÃO: {pinfo['matches']} arquivos casam com o padrão; "
-                     "só o mais recente é lido. Truncamento/curinga frouxo demais?")
+            note += " " + _("— ATENÇÃO: %(n)s arquivos casam com o padrão; só o mais "
+                            "recente é lido. Truncamento/curinga frouxo demais?",
+                            n=pinfo['matches'])
         diagnostics.insert(0, note)
 
     # Carimbo convertido por linha: o preview mostra o valor CRU (é a conferência do

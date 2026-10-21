@@ -93,6 +93,44 @@ def create_app(config_path: str) -> Flask:
             except OSError:
                 pass
 
+    # Bilinguismo (pt-BR ⇄ en) — ver app/i18n.py.
+    from . import i18n
+
+    app.jinja_env.globals["_"] = i18n.template_gettext
+
+    @app.get("/lang/<code>")
+    def set_lang(code):
+        """Botão de idioma do topo: grava o cookie e volta para a mesma página
+        (`next` é sempre um caminho LOCAL — nunca redireciona para fora)."""
+        from flask import redirect, request
+
+        resp = redirect(i18n.safe_next(request.args.get("next")))
+        if code in i18n.LANGS:
+            resp.set_cookie(i18n.COOKIE, code, max_age=365 * 86400, samesite="Lax")
+        return resp
+
+    @app.get("/i18n.js")
+    def i18n_js():
+        """Catálogo para o JavaScript: `t(texto, vars)` traduz como o `_` do Python.
+        Em português o catálogo vai vazio (t devolve o próprio texto)."""
+        import json
+
+        from flask import Response
+
+        lang = i18n.get_lang()
+        cat = i18n.catalog_en() if lang == "en" else {}
+        body = (
+            f"window.LANG={json.dumps(lang)};window.I18N={json.dumps(cat, ensure_ascii=False)};\n"
+            "window.t=function(s,v){var k=String(s).replace(/\\s+/g,' ').trim();"
+            "var o=Object.prototype.hasOwnProperty.call(window.I18N,k)?window.I18N[k]:s;"
+            "if(v)o=o.replace(/%\\((\\w+)\\)s/g,function(m,n){return n in v?String(v[n]):m;});"
+            "return o;};\n"
+        )
+        resp = Response(body, mimetype="application/javascript")
+        # Varia com o cookie: nunca cachear (é pequeno e a troca de idioma é imediata).
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     @app.context_processor
     def _globals():
         from flask import session
@@ -111,6 +149,8 @@ def create_app(config_path: str) -> Flask:
             "auth_enabled": bool(cfg.get("auth")),
             "is_admin": bool(session.get("admin")) or not cfg.get("auth"),
             "pause_state": pause,
+            "lang": i18n.get_lang(),
+            "lang_labels": i18n.LANG_LABELS,
         }
 
     return app

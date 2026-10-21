@@ -1,111 +1,111 @@
 {% extends "base.html" %}
 {% block title %}FTP · CARBONARA{% endblock %}
 {% block content %}
-<h1>FTP — distribuição de dados</h1>
+<h1>{{ _('FTP — distribuição de dados') }}</h1>
 
 <section class="card help-card">
-  Esta tela administra o <strong>FTP de distribuição</strong> do hub (vsftpd nativo no
+  {{ _('Esta tela administra o <strong>FTP de distribuição</strong> do hub (vsftpd nativo no
   servidor): as <strong>contas</strong> que acessam o FTP (usuário, senha, perfil e pasta)
   e as <strong>publicações</strong> — regras que copiam pastas da coleta (e, no futuro,
   do tratamento de dados) para dentro do FTP, com rsync, no intervalo que você definir.
-  A origem nunca é alterada; o FTP só recebe cópias.
+  A origem nunca é alterada; o FTP só recebe cópias.') }}
 </section>
 
 {% if reveal %}
 <div class="flash flash-ok">
-  <strong>Senha gerada para <code>{{ reveal.user }}</code>:</strong>
+  <strong>{{ _('Senha gerada para <code>%(user)s</code>:', user=reveal.user) }}</strong>
   <code class="reveal-pw" id="reveal-pw">{{ reveal.password }}</code>
-  <button class="btn btn-sm" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('reveal-pw').textContent)">copiar</button>
-  <br><small>Anote agora — ela <strong>não</strong> será mostrada de novo (se perder, gere outra na página da conta).</small>
+  <button class="btn btn-sm" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('reveal-pw').textContent)">{{ _('copiar') }}</button>
+  <br><small>{{ _('Anote agora — ela <strong>não</strong> será mostrada de novo (se perder, gere outra na página da conta).') }}</small>
 </div>
 {% endif %}
 
 {% if not info.can_write %}
 <div class="flash flash-error">
-  <strong>Contas em modo somente leitura.</strong>
+  <strong>{{ _('Contas em modo somente leitura.') }}</strong>
   {% if not info.bin %}
-    O <code>ftp-hub</code> não está instalado neste servidor. Rode lá, uma vez:
+    {{ _('O <code>ftp-hub</code> não está instalado neste servidor. Rode lá, uma vez:') }}
     <pre class="mono">sudo {{ info.repo_bin }} install {{ info.user }}</pre>
   {% else %}
-    A dashboard (usuário <strong>{{ info.user }}</strong>) não tem permissão para executar
-    <code>{{ info.bin }}</code> como root sem senha.
-    {% if info.sudo_error %}<br>Resposta do <code>sudo</code>: <pre class="mono">{{ info.sudo_error }}</pre>{% endif %}
-    Rode no servidor: <pre class="mono">sudo {{ info.repo_bin }} install {{ info.user }}</pre>
-    (ou libere no <code>visudo</code>: <code>{{ info.sudoers_hint }}</code>)
+    {{ _('A dashboard (usuário <strong>%(user)s</strong>) não tem permissão para executar
+    <code>%(bin)s</code> como root sem senha.', user=info.user, bin=info.bin) }}
+    {% if info.sudo_error %}<br>{{ _('Resposta do <code>sudo</code>:') }} <pre class="mono">{{ info.sudo_error }}</pre>{% endif %}
+    {{ _('Rode no servidor:') }} <pre class="mono">sudo {{ info.repo_bin }} install {{ info.user }}</pre>
+    {{ _('(ou libere no <code>visudo</code>: <code>%(hint)s</code>)', hint=info.sudoers_hint) }}
   {% endif %}
-  Listar contas e publicar dados continuam funcionando.
+  {{ _('Listar contas e publicar dados continuam funcionando.') }}
 </div>
 {% endif %}
 
 {# ---------------------------------------------------------------- servidor #}
 <section class="card status-card">
   <div class="page-head">
-    <h2>Servidor</h2>
+    <h2>{{ _('Servidor') }}</h2>
     <span>
-      {% if info.service == 'active' %}<span class="dot dot-online"></span> vsftpd ativo
+      {% if info.service == 'active' %}<span class="dot dot-online"></span> {{ _('vsftpd ativo') }}
       {% elif info.service %}<span class="dot dot-offline"></span> vsftpd {{ info.service }}
-      {% else %}<span class="dot dot-unknown"></span> estado do serviço desconhecido{% endif %}
-      {% if info.listening is true %} · porta {{ info.port }} escutando
-      {% elif info.listening is false %} · <span class="warn">porta {{ info.port }} NÃO escuta</span>{% endif %}
+      {% else %}<span class="dot dot-unknown"></span> {{ _('estado do serviço desconhecido') }}{% endif %}
+      {% if info.listening is true %} · {{ _('porta %(port)s escutando', port=info.port) }}
+      {% elif info.listening is false %} · <span class="warn">{{ _('porta %(port)s NÃO escuta', port=info.port) }}</span>{% endif %}
     </span>
   </div>
   <dl>
-    <dt>Endereço</dt>
+    <dt>{{ _('Endereço') }}</dt>
     <dd><code>ftp://{{ info.public_host }}:{{ info.port }}/</code>
-      {% if info.tls %} · FTPS explícito {{ 'OBRIGATÓRIO' if info.tls_required else 'disponível (opcional)' }}
-      {% else %} · <span class="warn">sem TLS</span>{% endif %}</dd>
-    <dt>Raiz servida</dt>
+      {% if info.tls %} · {{ _('FTPS explícito') }} {{ _('OBRIGATÓRIO') if info.tls_required else _('disponível (opcional)') }}
+      {% else %} · <span class="warn">{{ _('sem TLS') }}</span>{% endif %}</dd>
+    <dt>{{ _('Raiz servida') }}</dt>
     <dd><code>{{ info.root }}</code>
-      {% if not info.root_exists %}<span class="warn"> — não existe!</span>
-      {% elif not info.root_writable %}<span class="warn"> — a dashboard não consegue escrever aqui (publicações falhariam)</span>{% endif %}
-      {% if info.root_exists %} · <a href="{{ url_for('hub.files', area='ftp') }}">navegar</a>{% endif %}</dd>
+      {% if not info.root_exists %}<span class="warn"> — {{ _('não existe!') }}</span>
+      {% elif not info.root_writable %}<span class="warn"> — {{ _('a dashboard não consegue escrever aqui (publicações falhariam)') }}</span>{% endif %}
+      {% if info.root_exists %} · <a href="{{ url_for('hub.files', area='ftp') }}">{{ _('navegar') }}</a>{% endif %}</dd>
     {% if info.disk %}
-    <dt>Disco</dt>
-    <dd>{{ info.disk.used | fbytes }} usados de {{ info.disk.total | fbytes }} ({{ info.disk.pct }} %) · {{ info.disk.free | fbytes }} livres</dd>
+    <dt>{{ _('Disco') }}</dt>
+    <dd>{{ _('%(used)s usados de %(total)s (%(pct)s %%) · %(free)s livres', used=info.disk.used | fbytes, total=info.disk.total | fbytes, pct=info.disk.pct, free=info.disk.free | fbytes) }}</dd>
     {% endif %}
-    <dt>Modo passivo</dt>
-    <dd>{% if info.pasv_min %}portas {{ info.pasv_min }}–{{ info.pasv_max }}{% if info.pasv_address %} · pasv_address {{ info.pasv_address }}{% endif %}{% else %}—{% endif %}</dd>
-    <dt>Isolamento</dt>
-    <dd>{% if info.chroot %}cada conta fica presa (chroot) à sua pasta{% else %}<span class="warn">chroot desligado — as contas veem o sistema todo</span>{% endif %}
-      · anônimo {{ 'HABILITADO' if info.anonymous else 'desabilitado' }}</dd>
-    <dt>Config</dt>
-    <dd><code>{{ info.conf_path }}</code>{% if not info.conf_readable %} <span class="warn">(ilegível)</span>{% endif %}
-      · perfis em <code>{{ info.user_conf_dir }}</code>
+    <dt>{{ _('Modo passivo') }}</dt>
+    <dd>{% if info.pasv_min %}{{ _('portas %(a)s–%(b)s', a=info.pasv_min, b=info.pasv_max) }}{% if info.pasv_address %} · pasv_address {{ info.pasv_address }}{% endif %}{% else %}—{% endif %}</dd>
+    <dt>{{ _('Isolamento') }}</dt>
+    <dd>{% if info.chroot %}{{ _('cada conta fica presa (chroot) à sua pasta') }}{% else %}<span class="warn">{{ _('chroot desligado — as contas veem o sistema todo') }}</span>{% endif %}
+      · {{ _('anônimo HABILITADO') if info.anonymous else _('anônimo desabilitado') }}</dd>
+    <dt>{{ _('Config') }}</dt>
+    <dd><code>{{ info.conf_path }}</code>{% if not info.conf_readable %} <span class="warn">{{ _('(ilegível)') }}</span>{% endif %}
+      · {{ _('perfis em') }} <code>{{ info.user_conf_dir }}</code>
       {% if info.version %} · ftp-hub <code>{{ info.version }}</code>{% endif %}</dd>
   </dl>
 </section>
 
 {# ---------------------------------------------------------------- contas #}
 <section class="card">
-  <div class="page-head"><h2>Contas do FTP</h2></div>
+  <div class="page-head"><h2>{{ _('Contas do FTP') }}</h2></div>
   {% if not accounts %}
-    <p class="empty">Nenhuma conta FTP encontrada. Crie a primeira no formulário abaixo.</p>
+    <p class="empty">{{ _('Nenhuma conta FTP encontrada. Crie a primeira no formulário abaixo.') }}</p>
   {% else %}
     <table class="table">
       <thead><tr>
-        <th>Usuário</th><th>Perfil</th><th>Pasta</th><th>Estado</th><th>Último acesso</th><th></th>
+        <th>{{ _('Usuário') }}</th><th>{{ _('Perfil') }}</th><th>{{ _('Pasta') }}</th><th>{{ _('Estado') }}</th><th>{{ _('Último acesso') }}</th><th></th>
       </tr></thead>
       <tbody>
       {% for a in accounts %}
         <tr>
           <td><strong><a href="{{ url_for('ftp.account', user=a.user) }}">{{ a.user }}</a></strong>
-            {% if not a.managed %}<br><small class="meta" title="criada fora do ftp-hub; perfil inferido das diretivas">conta antiga</small>{% endif %}</td>
-          <td><span class="pill pill-{{ a.profile }}">{{ a.profile_label }}</span></td>
-          <td><code>{{ a.folder }}</code>{% if a.folder_outside %} <small class="warn">(fora da raiz)</small>{% endif %}</td>
-          <td>{% if a.disabled %}<span class="dot dot-offline"></span> <small>desativada</small>
-              {% else %}<span class="dot dot-online"></span> <small>ativa</small>{% endif %}</td>
+            {% if not a.managed %}<br><small class="meta" title="{{ _('criada fora do ftp-hub; perfil inferido das diretivas') }}">{{ _('conta antiga') }}</small>{% endif %}</td>
+          <td><span class="pill pill-{{ a.profile }}">{{ _(a.profile_label) }}</span></td>
+          <td><code>{{ a.folder }}</code>{% if a.folder_outside %} <small class="warn">{{ _('(fora da raiz)') }}</small>{% endif %}</td>
+          <td>{% if a.disabled %}<span class="dot dot-offline"></span> <small>{{ _('desativada') }}</small>
+              {% else %}<span class="dot dot-online"></span> <small>{{ _('ativa') }}</small>{% endif %}</td>
           <td><small>
             {% if a.activity and a.activity.last_login %}{{ a.activity.last_login }}
               {%- if a.activity.last_ip %} <span class="meta">({{ a.activity.last_ip }})</span>{% endif %}
-              {%- if a.activity.uploads or a.activity.downloads %}<br><span class="meta">↑{{ a.activity.uploads }} ↓{{ a.activity.downloads }} (log recente)</span>{% endif %}
-              {%- if a.activity.failed_logins %}<br><span class="warn">{{ a.activity.failed_logins }} login(s) falho(s)</span>{% endif %}
+              {%- if a.activity.uploads or a.activity.downloads %}<br><span class="meta">↑{{ a.activity.uploads }} ↓{{ a.activity.downloads }} {{ _('(log recente)') }}</span>{% endif %}
+              {%- if a.activity.failed_logins %}<br><span class="warn">{{ _('%(n)s login(s) falho(s)', n=a.activity.failed_logins) }}</span>{% endif %}
             {% else %}<span class="meta">—</span>{% endif %}
           </small></td>
           <td class="ta-right">
             {% if not a.folder_outside %}
-              <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=(a.folder if a.folder != '/' else '')) }}">arquivos</a>
+              <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=(a.folder if a.folder != '/' else '')) }}">{{ _('arquivos') }}</a>
             {% endif %}
-            <a class="btn btn-sm" href="{{ url_for('ftp.account', user=a.user) }}">gerenciar</a>
+            <a class="btn btn-sm" href="{{ url_for('ftp.account', user=a.user) }}">{{ _('gerenciar') }}</a>
           </td>
         </tr>
       {% endfor %}
@@ -115,113 +115,113 @@
 </section>
 
 <section class="card">
-  <div class="page-head"><h2>Nova conta</h2></div>
+  <div class="page-head"><h2>{{ _('Nova conta') }}</h2></div>
   <form method="post" class="form" action="{{ url_for('ftp.account_add') }}" autocomplete="off">
     <div class="grid-3">
-      <label>Usuário
-        <input name="user" required pattern="[a-z][a-z0-9_-]{2,31}" placeholder="ex.: ufopa_lab"
+      <label>{{ _('Usuário') }}
+        <input name="user" required pattern="[a-z][a-z0-9_-]{2,31}" placeholder="{{ _('ex.: ufopa_lab') }}"
                {% if not info.can_write %}disabled{% endif %}>
-        <small>Minúsculas, dígitos, <code>_</code> e <code>-</code>; 3–32 caracteres.</small>
+        <small>{{ _('Minúsculas, dígitos, <code>_</code> e <code>-</code>; 3–32 caracteres.') }}</small>
       </label>
-      <label>Perfil
+      <label>{{ _('Perfil') }}
         <select name="profile" {% if not info.can_write %}disabled{% endif %}>
           {% for key, p in profiles.items() %}
-            <option value="{{ key }}" {% if key == 'leitura' %}selected{% endif %}>{{ p.label }} — {{ p.desc }}</option>
+            <option value="{{ key }}" {% if key == 'leitura' %}selected{% endif %}>{{ _(p.label) }} — {{ _(p.desc) }}</option>
           {% endfor %}
         </select>
       </label>
-      <label>Pasta (dentro do FTP)
-        <input name="folder" placeholder="vazio = raiz inteira · ex.: dados/km67"
+      <label>{{ _('Pasta (dentro do FTP)') }}
+        <input name="folder" placeholder="{{ _('vazio = raiz inteira · ex.: dados/km67') }}"
                {% if not info.can_write %}disabled{% endif %}>
-        <small>A conta fica presa (chroot) a esta subpasta; é criada se não existir.</small>
+        <small>{{ _('A conta fica presa (chroot) a esta subpasta; é criada se não existir.') }}</small>
       </label>
     </div>
-    <label>Senha
+    <label>{{ _('Senha') }}
       <input name="password" type="text" autocomplete="new-password"
-             placeholder="vazio = gerar uma senha forte (mostrada uma vez)"
+             placeholder="{{ _('vazio = gerar uma senha forte (mostrada uma vez)') }}"
              {% if not info.can_write %}disabled{% endif %}>
-      <small>Mínimo 8 caracteres, sem <code>:</code>. A senha nunca passa pela linha de comando nem fica em log.</small>
+      <small>{{ _('Mínimo 8 caracteres, sem <code>:</code>. A senha nunca passa pela linha de comando nem fica em log.') }}</small>
     </label>
     <div class="form-actions">
-      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>Criar conta</button>
+      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>{{ _('Criar conta') }}</button>
     </div>
   </form>
 </section>
 
 {# ---------------------------------------------------------------- pastas #}
 <section class="card" id="pastas">
-  <div class="page-head"><h2>Pastas do FTP</h2>
-    <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=folder.rel) }}">ver arquivos desta pasta</a></div>
+  <div class="page-head"><h2>{{ _('Pastas do FTP') }}</h2>
+    <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=folder.rel) }}">{{ _('ver arquivos desta pasta') }}</a></div>
   <p class="mono">
     <a href="{{ url_for('ftp.index') }}#pastas">{{ info.root }}</a>{% for c in folder.crumbs %}
       / <a href="{{ url_for('ftp.index', pasta=c.rel) }}#pastas">{{ c.name }}</a>{% endfor %}
   </p>
   <table class="table">
-    <thead><tr><th>Pasta</th><th>Conteúdo</th><th></th></tr></thead>
+    <thead><tr><th>{{ _('Pasta') }}</th><th>{{ _('Conteúdo') }}</th><th></th></tr></thead>
     <tbody>
     {% if folder.rel %}
-      <tr><td colspan="3"><a href="{{ url_for('ftp.index', pasta=(folder.parent or none)) }}#pastas">↩ pasta acima</a></td></tr>
+      <tr><td colspan="3"><a href="{{ url_for('ftp.index', pasta=(folder.parent or none)) }}#pastas">{{ _('↩ pasta acima') }}</a></td></tr>
     {% endif %}
     {% for d in folder.dirs %}
       <tr>
         <td>📁 <a href="{{ url_for('ftp.index', pasta=d.rel) }}#pastas"><strong>{{ d.name }}/</strong></a></td>
         <td><small>
-          {% if d.mounted %}<span class="pill pill-vinculo">vínculo</span>
-          {% elif d.empty %}<span class="meta">vazia</span>
-          {% else %}<span class="meta">com conteúdo</span>{% endif %}
+          {% if d.mounted %}<span class="pill pill-vinculo">{{ _('vínculo') }}</span>
+          {% elif d.empty %}<span class="meta">{{ _('vazia') }}</span>
+          {% else %}<span class="meta">{{ _('com conteúdo') }}</span>{% endif %}
         </small></td>
         <td class="ta-right">
           {% if d.mounted %}
-            <a class="btn btn-sm" href="#vinculos">gerenciar vínculo</a>
+            <a class="btn btn-sm" href="#vinculos">{{ _('gerenciar vínculo') }}</a>
           {% elif d.empty %}
             <form method="post" class="inline-form" action="{{ url_for('ftp.folder_remove') }}"
-                  onsubmit="return confirm('Remover a pasta vazia {{ d.rel }}?');">
+                  onsubmit="return confirm({{ _('Remover a pasta vazia %(p)s?', p=d.rel).unescape() | tojson | forceescape }});">
               <input type="hidden" name="sub" value="{{ d.rel }}">
-              <button class="btn btn-sm btn-danger" type="submit">remover (vazia)</button>
+              <button class="btn btn-sm btn-danger" type="submit">{{ _('remover (vazia)') }}</button>
             </form>
           {% endif %}
         </td>
       </tr>
     {% endfor %}
     {% if not folder.dirs %}
-      <tr><td colspan="3" class="meta">(sem subpastas{% if folder.files %} · {{ folder.files | length }} arquivo(s) soltos aqui{% endif %})</td></tr>
+      <tr><td colspan="3" class="meta">({{ _('sem subpastas') }}{% if folder.files %} · {{ _('%(n)s arquivo(s) soltos aqui', n=folder.files | length) }}{% endif %})</td></tr>
     {% elif folder.files %}
-      <tr><td colspan="3" class="meta">… e {{ folder.files | length }} arquivo(s) soltos nesta pasta.</td></tr>
+      <tr><td colspan="3" class="meta">{{ _('… e %(n)s arquivo(s) soltos nesta pasta.', n=folder.files | length) }}</td></tr>
     {% endif %}
     </tbody>
   </table>
   <form method="post" class="form form-inline" action="{{ url_for('ftp.folder_create') }}">
     <input type="hidden" name="parent" value="{{ folder.rel }}">
-    <label>Nova pasta em <code>ftp:/{{ folder.rel }}</code>
-      <input name="name" required pattern="[A-Za-z0-9_][A-Za-z0-9._-]*" placeholder="ex.: parceiros"
-             {% if not folder.writable %}disabled title="a dashboard não consegue escrever nesta pasta"{% endif %}>
+    <label>{{ _('Nova pasta em <code>ftp:/%(p)s</code>', p=folder.rel) }}
+      <input name="name" required pattern="[A-Za-z0-9_][A-Za-z0-9._-]*" placeholder="{{ _('ex.: parceiros') }}"
+             {% if not folder.writable %}disabled title="{{ _('a dashboard não consegue escrever nesta pasta') }}"{% endif %}>
     </label>
-    <button class="btn btn-primary" type="submit" {% if not folder.writable %}disabled{% endif %}>Criar pasta</button>
+    <button class="btn btn-primary" type="submit" {% if not folder.writable %}disabled{% endif %}>{{ _('Criar pasta') }}</button>
   </form>
-  <p class="meta">Só pastas <strong>vazias</strong> podem ser removidas por aqui: a dashboard nunca apaga
-    dados do FTP (use uma conta de <em>escrita</em> num cliente FTP para isso).</p>
+  <p class="meta">{{ _('Só pastas <strong>vazias</strong> podem ser removidas por aqui: a dashboard nunca apaga
+    dados do FTP (use uma conta de <em>escrita</em> num cliente FTP para isso).') }}</p>
 </section>
 
 {# ---------------------------------------------------------------- vínculos #}
 <section class="card" id="vinculos">
-  <div class="page-head"><h2>Vínculos — pastas do sistema espelhadas no FTP, sem copiar</h2></div>
-  <p class="meta">Um vínculo faz uma pasta <strong>qualquer do servidor</strong> aparecer dentro do FTP
+  <div class="page-head"><h2>{{ _('Vínculos — pastas do sistema espelhadas no FTP, sem copiar') }}</h2></div>
+  <p class="meta">{{ _('Um vínculo faz uma pasta <strong>qualquer do servidor</strong> aparecer dentro do FTP
     <strong>sem ocupar espaço</strong> e com as mudanças visíveis <strong>na hora</strong>
     (<em>bind mount</em>; um link simbólico não serviria — o chroot das contas o veria quebrado).
     Só-leitura por padrão: nenhuma conta consegue alterar a origem. Sobrevive a reboot
-    (unidade <code>carbonara-ftp-links</code>). Prefira isto à cópia sempre que não precisar filtrar.</p>
+    (unidade <code>carbonara-ftp-links</code>). Prefira isto à cópia sempre que não precisar filtrar.') }}</p>
   {% if links %}
     <table class="table">
-      <thead><tr><th>No FTP</th><th>Origem</th><th>Modo</th><th>Estado</th><th></th></tr></thead>
+      <thead><tr><th>{{ _('No FTP') }}</th><th>{{ _('Origem') }}</th><th>{{ _('Modo') }}</th><th>{{ _('Estado') }}</th><th></th></tr></thead>
       <tbody>
       {% for l in links %}
         <tr>
           <td><code>ftp:/{{ l.dest }}</code>
-            <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=l.dest) }}">ver</a></td>
-          <td><code>{{ l.source }}</code>{% if not l.source_exists %} <small class="warn">(origem não existe)</small>{% endif %}</td>
-          <td><small>{% if l.manual %}fstab/manual{% elif l.mode == 'rw' %}<span class="warn">leitura e escrita</span>{% else %}só leitura{% endif %}</small></td>
-          <td>{% if l.mounted %}<span class="dot dot-online"></span> <small>montado</small>
-              {% else %}<span class="dot dot-offline"></span> <small>NÃO montado</small>{% endif %}</td>
+            <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=l.dest) }}">{{ _('ver') }}</a></td>
+          <td><code>{{ l.source }}</code>{% if not l.source_exists %} <small class="warn">{{ _('(origem não existe)') }}</small>{% endif %}</td>
+          <td><small>{% if l.manual %}fstab/manual{% elif l.mode == 'rw' %}<span class="warn">{{ _('leitura e escrita') }}</span>{% else %}{{ _('só leitura') }}{% endif %}</small></td>
+          <td>{% if l.mounted %}<span class="dot dot-online"></span> <small>{{ _('montado') }}</small>
+              {% else %}<span class="dot dot-offline"></span> <small>{{ _('NÃO montado') }}</small>{% endif %}</td>
           <td class="ta-right">
             {% if not l.manual %}
               {% if not l.mounted and l.source_exists %}
@@ -229,128 +229,128 @@
                   <input type="hidden" name="dest" value="{{ l.dest }}">
                   <input type="hidden" name="source" value="{{ l.source }}">
                   {% if l.mode == 'rw' %}<input type="hidden" name="rw" value="1">{% endif %}
-                  <button class="btn btn-sm" type="submit" {% if not info.can_write %}disabled{% endif %}>montar</button>
+                  <button class="btn btn-sm" type="submit" {% if not info.can_write %}disabled{% endif %}>{{ _('montar') }}</button>
                 </form>
               {% endif %}
               <form method="post" class="inline-form" action="{{ url_for('ftp.link_remove') }}"
-                    onsubmit="return confirm('Desfazer o vínculo ftp:/{{ l.dest }}? Nada é apagado na origem.');">
+                    onsubmit="return confirm({{ _('Desfazer o vínculo ftp:/%(p)s? Nada é apagado na origem.', p=l.dest).unescape() | tojson | forceescape }});">
                 <input type="hidden" name="dest" value="{{ l.dest }}">
-                <button class="btn btn-sm btn-danger" type="submit" {% if not info.can_write %}disabled{% endif %}>desfazer</button>
+                <button class="btn btn-sm btn-danger" type="submit" {% if not info.can_write %}disabled{% endif %}>{{ _('desfazer') }}</button>
               </form>
-            {% else %}<small class="meta">gerido fora da dashboard</small>{% endif %}
+            {% else %}<small class="meta">{{ _('gerido fora da dashboard') }}</small>{% endif %}
           </td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
   {% else %}
-    <p class="empty">Nenhum vínculo ainda.</p>
+    <p class="empty">{{ _('Nenhum vínculo ainda.') }}</p>
   {% endif %}
 
-  <h3 class="h3-sub">Novo vínculo</h3>
+  <h3 class="h3-sub">{{ _('Novo vínculo') }}</h3>
   <form method="post" class="form" action="{{ url_for('ftp.link_create') }}">
     <div class="grid-2">
       <div>
-        <label>Origem (pasta do servidor)
-          <input name="source" id="l-source" required placeholder="caminho absoluto, ex.: /mnt/data_8tb/carbonara-data-hub/incoming/km67"
+        <label>{{ _('Origem (pasta do servidor)') }}
+          <input name="source" id="l-source" required placeholder="{{ _('caminho absoluto, ex.: /mnt/data_8tb/carbonara-data-hub/incoming/km67') }}"
                  {% if not info.can_write %}disabled{% endif %}>
         </label>
         <div class="dir-picker" data-picker="l-source">
           <div class="dir-picker-head">
             <select data-role="area">
-              {% for key, label in pick_areas.items() %}<option value="{{ key }}" {% if key == 'sistema' %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              {% for key, label in pick_areas.items() %}<option value="{{ key }}" {% if key == 'sistema' %}selected{% endif %}>{{ _(label) }}</option>{% endfor %}
             </select>
             <span class="mono" data-role="crumbs"></span>
           </div>
           <ul data-role="list"></ul>
           <div class="dir-picker-foot">
             <span class="meta" data-role="info"></span>
-            <button class="btn btn-sm" type="button" data-role="use">usar esta pasta como origem</button>
+            <button class="btn btn-sm" type="button" data-role="use">{{ _('usar esta pasta como origem') }}</button>
           </div>
         </div>
-        <small class="meta">Pelas áreas do hub o valor sai relativo (<code>incoming/km67</code>) — o
-          vínculo o converte para absoluto sob <code>{{ info.hub_base }}</code>.</small>
+        <small class="meta">{{ _('Pelas áreas do hub o valor sai relativo (<code>incoming/km67</code>) — o
+          vínculo o converte para absoluto sob <code>%(base)s</code>.', base=info.hub_base) }}</small>
       </div>
       <div>
-        <label>Destino (subpasta do FTP, vazia ou nova)
-          <input name="dest" id="l-dest" required placeholder="ex.: dados/km67" {% if not info.can_write %}disabled{% endif %}>
+        <label>{{ _('Destino (subpasta do FTP, vazia ou nova)') }}
+          <input name="dest" id="l-dest" required placeholder="{{ _('ex.: dados/km67') }}" {% if not info.can_write %}disabled{% endif %}>
         </label>
         <div class="dir-picker" data-picker="l-dest" data-require-sub="1">
           <div class="dir-picker-head">
-            <select data-role="area"><option value="ftp">FTP (raiz servida)</option></select>
+            <select data-role="area"><option value="ftp">{{ _('FTP (raiz servida)') }}</option></select>
             <span class="mono" data-role="crumbs"></span>
           </div>
           <ul data-role="list"></ul>
           <div class="dir-picker-foot">
             <span class="meta" data-role="info"></span>
-            <button class="btn btn-sm" type="button" data-role="use">usar esta pasta como destino</button>
+            <button class="btn btn-sm" type="button" data-role="use">{{ _('usar esta pasta como destino') }}</button>
           </div>
         </div>
         <label class="check-row">
           <input type="checkbox" name="rw" value="1" {% if not info.can_write %}disabled{% endif %}>
-          <span><strong>Permitir escrita</strong> pelo FTP (contas de escrita/upload presas a esta pasta
-            passam a ALTERAR a origem). Padrão desmarcado = só leitura.</span>
+          <span>{{ _('<strong>Permitir escrita</strong> pelo FTP (contas de escrita/upload presas a esta pasta
+            passam a ALTERAR a origem). Padrão desmarcado = só leitura.') }}</span>
         </label>
       </div>
     </div>
     <div class="form-actions">
-      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>Criar vínculo</button>
+      <button class="btn btn-primary" type="submit" {% if not info.can_write %}disabled{% endif %}>{{ _('Criar vínculo') }}</button>
     </div>
-    {% if not info.can_write %}<small class="meta">Vínculos exigem o <code>ftp-hub</code> instalado com a regra sudo (veja o aviso no topo).</small>{% endif %}
+    {% if not info.can_write %}<small class="meta">{{ _('Vínculos exigem o <code>ftp-hub</code> instalado com a regra sudo (veja o aviso no topo).') }}</small>{% endif %}
   </form>
 </section>
 
 {# ---------------------------------------------------------------- publicações #}
 <section class="card">
   <div class="page-head">
-    <h2>Publicações (hub → FTP)</h2>
-    <a class="btn btn-primary" href="{{ url_for('ftp.publication_new') }}">+ Nova publicação</a>
+    <h2>{{ _('Publicações (hub → FTP)') }}</h2>
+    <a class="btn btn-primary" href="{{ url_for('ftp.publication_new') }}">{{ _('+ Nova publicação') }}</a>
   </div>
-  <p class="meta">Cada publicação copia (rsync) uma pasta do hub para uma subpasta do FTP, no
+  <p class="meta">{{ _('Cada publicação copia (rsync) uma pasta do hub para uma subpasta do FTP, no
     intervalo escolhido ou sob demanda. A origem <strong>nunca</strong> é modificada. Por padrão
     a cópia <em>acumula</em> (não apaga nada no destino); "espelhar" remove no destino o que
-    sumiu da origem — só entre os arquivos que a regra cobre.</p>
+    sumiu da origem — só entre os arquivos que a regra cobre.') }}</p>
   {% if not info.rsync %}
-    <div class="flash flash-error">O <code>rsync</code> não foi encontrado no servidor — as publicações não vão executar. Instale-o (<code>sudo apt install rsync</code>).</div>
+    <div class="flash flash-error">{{ _('O <code>rsync</code> não foi encontrado no servidor — as publicações não vão executar. Instale-o (<code>sudo apt install rsync</code>).') }}</div>
   {% endif %}
   {% if not pubs %}
-    <p class="empty">Nenhuma publicação cadastrada.</p>
+    <p class="empty">{{ _('Nenhuma publicação cadastrada.') }}</p>
   {% else %}
     <table class="table" id="pub-table">
       <thead><tr>
-        <th>Publicação</th><th>Origem → destino</th><th>Filtros</th><th>Agenda</th><th>Última execução</th><th></th>
+        <th>{{ _('Publicação') }}</th><th>{{ _('Origem → destino') }}</th><th>{{ _('Filtros') }}</th><th>{{ _('Agenda') }}</th><th>{{ _('Última execução') }}</th><th></th>
       </tr></thead>
       <tbody>
       {% for p in pubs %}
         <tr data-pub="{{ p.id }}">
           <td><strong>{{ p.name }}</strong><br><small class="meta"><code>{{ p.id }}</code>
-            {% if not p.enabled %} · <span class="warn">desabilitada</span>{% endif %}</small></td>
-          <td><code>{{ p.source }}</code>{% if not p.source_exists %} <small class="warn">(origem não existe)</small>{% endif %}
+            {% if not p.enabled %} · <span class="warn">{{ _('desabilitada') }}</span>{% endif %}</small></td>
+          <td><code>{{ p.source }}</code>{% if not p.source_exists %} <small class="warn">{{ _('(origem não existe)') }}</small>{% endif %}
             <br>→ <code>ftp:/{{ p.dest }}</code>
-            <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=p.dest) }}">ver</a></td>
+            <a class="btn btn-sm" href="{{ url_for('hub.files', area='ftp', subpath=p.dest) }}">{{ _('ver') }}</a></td>
           <td><small>
-            {% if p.include %}só <code>{{ p.include | join(', ') }}</code><br>{% endif %}
-            {% if p.exclude %}exceto <code>{{ p.exclude | join(', ') }}</code><br>{% endif %}
-            {{ 'espelhar (apaga o que sumiu)' if p.delete else 'acumular' }}{% if p.hidden %} · inclui ocultos{% endif %}
+            {% if p.include %}{{ _('só') }} <code>{{ p.include | join(', ') }}</code><br>{% endif %}
+            {% if p.exclude %}{{ _('exceto') }} <code>{{ p.exclude | join(', ') }}</code><br>{% endif %}
+            {{ _('espelhar (apaga o que sumiu)') if p.delete else _('acumular') }}{% if p.hidden %} · {{ _('inclui ocultos') }}{% endif %}
           </small></td>
-          <td><small>{% if p.interval_min %}a cada {{ p.interval_min }} min<br>próxima: <span data-f="next">{{ p.next_display }}</span>{% else %}só manual{% endif %}</small></td>
+          <td><small>{% if p.interval_min %}{{ _('a cada %(n)s min', n=p.interval_min) }}<br>{{ _('próxima:') }} <span data-f="next">{{ _(p.next_display) }}</span>{% else %}{{ _('só manual') }}{% endif %}</small></td>
           <td>
-            <span class="pub-state pub-state-{{ p.status }}" data-f="status">{{ p.status }}</span>
+            <span class="pub-state pub-state-{{ p.status }}" data-f="status">{{ _(p.status) }}</span>
             <br><small class="meta"><span data-f="last">{{ p.last_start_display }}</span>
-              {% if p.state.files is defined %} · <span data-f="files">{{ p.state.files }}</span> arq. · <span data-f="bytes">{{ p.state.bytes | fbytes }}</span>{% endif %}</small>
+              {% if p.state.files is defined %} · <span data-f="files">{{ p.state.files }}</span> {{ _('arq.') }} · <span data-f="bytes">{{ p.state.bytes | fbytes }}</span>{% endif %}</small>
             {% if p.state.message %}<br><small class="warn" data-f="message">{{ p.state.message }}</small>{% else %}<small class="warn" data-f="message"></small>{% endif %}
           </td>
           <td class="ta-right">
             <form method="post" class="inline-form" action="{{ url_for('ftp.publication_run', pid=p.id) }}">
-              <button class="btn btn-sm" type="submit" {% if p.running %}disabled{% endif %}>▶ publicar agora</button>
+              <button class="btn btn-sm" type="submit" {% if p.running %}disabled{% endif %}>{{ _('▶ publicar agora') }}</button>
             </form>
             <form method="post" class="inline-form" action="{{ url_for('ftp.publication_toggle', pid=p.id) }}">
-              <button class="btn btn-sm" type="submit">{{ 'desabilitar' if p.enabled else 'habilitar' }}</button>
+              <button class="btn btn-sm" type="submit">{{ _('desabilitar') if p.enabled else _('habilitar') }}</button>
             </form>
-            <a class="btn btn-sm" href="{{ url_for('ftp.publication_edit', pid=p.id) }}">editar</a>
+            <a class="btn btn-sm" href="{{ url_for('ftp.publication_edit', pid=p.id) }}">{{ _('editar') }}</a>
             <form method="post" class="inline-form" action="{{ url_for('ftp.publication_delete', pid=p.id) }}"
-                  onsubmit="return confirm('Remover a regra {{ p.name }}? Os arquivos já publicados continuam no FTP.');">
-              <button class="btn btn-sm btn-danger" type="submit">remover</button>
+                  onsubmit="return confirm({{ _('Remover a regra %(name)s? Os arquivos já publicados continuam no FTP.', name=p.name).unescape() | tojson | forceescape }});">
+              <button class="btn btn-sm btn-danger" type="submit">{{ _('remover') }}</button>
             </form>
           </td>
         </tr>
@@ -360,12 +360,12 @@
   {% endif %}
 
   <details class="adv">
-    <summary>Registro das publicações (últimas {{ log_lines | length }} linhas, mais recente primeiro)</summary>
+    <summary>{{ _('Registro das publicações (últimas %(n)s linhas, mais recente primeiro)', n=log_lines | length) }}</summary>
     {% if log_lines %}<pre class="mono">{{ log_lines | join('\n') }}</pre>
-    {% else %}<p class="empty">Nada registrado ainda.</p>{% endif %}
-    <small class="meta">Arquivo <code>ftp-publish.log</code> ao lado do <code>config.yaml</code>
+    {% else %}<p class="empty">{{ _('Nada registrado ainda.') }}</p>{% endif %}
+    <small class="meta">{{ _('Arquivo <code>ftp-publish.log</code> ao lado do <code>config.yaml</code>
       (com teto de tamanho). Pelo terminal: <code>python -m app.ftp_publish [id]</code> executa
-      uma publicação na hora.</small>
+      uma publicação na hora.') }}</small>
   </details>
 </section>
 
@@ -384,7 +384,9 @@
             var tr = table.querySelector('tr[data-pub="' + row.id + '"]');
             if (!tr) return;
             var set = function (f, v) { var el = tr.querySelector('[data-f="' + f + '"]'); if (el) el.textContent = v; };
-            set("status", row.status); set("last", row.last); set("next", row.next);
+            // status/next chegam como valores internos (executando, nunca, agora…):
+            // traduz só a exibição — a classe CSS continua usando o valor cru.
+            set("status", t(row.status)); set("last", row.last); set("next", t(row.next));
             set("files", row.files); set("bytes", row.bytes); set("message", row.message || "");
             var st = tr.querySelector('[data-f="status"]');
             if (st) st.className = "pub-state pub-state-" + row.status;

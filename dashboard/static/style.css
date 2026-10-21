@@ -23,6 +23,10 @@ main { max-width: 1080px; margin: 0 auto; padding: 1rem 1.2rem 3rem; }
             font-size: .88rem; cursor: pointer; text-decoration: none; }
 .nav-link:hover { background: rgba(255,255,255,.12); color: #fff; }
 .nav-link.active { background: rgba(0,0,0,.18); color: #fff; font-weight: 600; }
+/* Botão de idioma (pt-BR ⇄ en): mostra o idioma para o qual vai trocar. */
+.nav-link.lang-switch { margin-left: .35rem; padding: .3rem .55rem; font-size: .75rem;
+                        font-weight: 700; letter-spacing: .05em;
+                        border: 1px solid rgba(255,255,255,.45); }
 .nav-cta { margin-left: .5rem; background: #fff; border-color: #fff; color: var(--accent);
            font-weight: 600; }
 .topbar .nav-cta { color: var(--accent); }

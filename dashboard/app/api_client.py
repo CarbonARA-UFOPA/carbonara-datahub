@@ -11,6 +11,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .i18n import gettext as _
+
 DEFAULT_TIMEOUT = 8.0
 
 
@@ -38,7 +40,7 @@ def public_url(cfg: dict) -> str:
 def _request(cfg: dict, method: str, path: str, params: dict | None = None,
              body: dict | None = None, timeout: float = DEFAULT_TIMEOUT, raw_bytes: bool = False):
     if not configured(cfg):
-        raise ApiError("API não configurada (Configurações → API de dados).")
+        raise ApiError(_("API não configurada (Configurações → API de dados)."))
     url = base_url(cfg) + path
     if params:
         q = {k: v for k, v in params.items() if v is not None and v != ""}
@@ -62,11 +64,12 @@ def _request(cfg: dict, method: str, path: str, params: dict | None = None,
             detail = json.loads(exc.read()).get("detail")
         except Exception:  # noqa: BLE001
             detail = None
-        raise ApiError(f"API respondeu {exc.code}: {detail or exc.reason}", exc.code) from exc
+        raise ApiError(_("API respondeu %(codigo)s: %(detalhe)s", codigo=exc.code,
+                         detalhe=detail or exc.reason), exc.code) from exc
     except urllib.error.URLError as exc:
-        raise ApiError(f"API inacessível em {base_url(cfg)}: {exc.reason}") from exc
+        raise ApiError(_("API inacessível em %(url)s: %(motivo)s", url=base_url(cfg), motivo=exc.reason)) from exc
     except (TimeoutError, OSError, ValueError) as exc:
-        raise ApiError(f"falha ao falar com a API: {exc}") from exc
+        raise ApiError(_("falha ao falar com a API: %(erro)s", erro=exc)) from exc
 
 
 def get(cfg: dict, path: str, params: dict | None = None, timeout: float = DEFAULT_TIMEOUT):

@@ -1,64 +1,58 @@
 {% extends "base.html" %}
-{% block title %}Guia de acesso aos dados · CARBONARA{% endblock %}
+{% block title %}{{ _('Guia de acesso aos dados') }} · CARBONARA{% endblock %}
 {% block content %}
-<h1>Guia para pesquisadores — como acessar os dados</h1>
+<h1>{{ _('Guia para pesquisadores — como acessar os dados') }}</h1>
 
 {% if sem_url_publica and is_admin %}
-<div class="flash flash-error">Defina a <strong>URL pública</strong> da API em <a href="{{ url_for('pages.settings') }}">Configurações</a>
-  para este guia mostrar o endereço que os pesquisadores usam (hoje aparece o endereço interno).</div>
+<div class="flash flash-error">{{ _('Defina a <strong>URL pública</strong> da API em <a href="%(url)s">Configurações</a> para este guia mostrar o endereço que os pesquisadores usam (hoje aparece o endereço interno).', url=url_for('pages.settings')) }}</div>
 {% endif %}
 <section class="card help-card">
-  Os dados das estações chegam a este servidor, passam pelo controle de qualidade e ficam num banco
-  de séries temporais (PostgreSQL/TimescaleDB). O acesso é pela <strong>API de dados</strong>
-  (<code>{{ api_url }}</code>, documentação interativa em <a href="{{ api_url }}/docs" target="_blank" rel="noopener"><code>{{ api_url }}/docs</code></a>)
-  com uma <strong>chave</strong> pessoal — peça a um administrador da plataforma. Cada consulta leva a chave
-  no cabeçalho <code>X-API-Key</code>.
+  {{ _('Os dados das estações chegam a este servidor, passam pelo controle de qualidade e ficam num banco de séries temporais (PostgreSQL/TimescaleDB). O acesso é pela <strong>API de dados</strong> (<code>%(api)s</code>, documentação interativa em <a href="%(api)s/docs" target="_blank" rel="noopener"><code>%(api)s/docs</code></a>) com uma <strong>chave</strong> pessoal — peça a um administrador da plataforma. Cada consulta leva a chave no cabeçalho <code>X-API-Key</code>.', api=api_url) }}
 </section>
 
 <section class="card">
-  <h2>1. O que existe</h2>
-  <p>Estações e variáveis são abertas (não precisam de chave):</p>
+  <h2>{{ _('1. O que existe') }}</h2>
+  <p>{{ _('Estações e variáveis são abertas (não precisam de chave):') }}</p>
   <pre class="mono">GET {{ api_url }}/stations
 GET {{ api_url }}/variables
-GET {{ api_url }}/stations/&lt;estação&gt;          # arquivos e variáveis registrados</pre>
+GET {{ api_url }}/stations/&lt;{{ _('estação') }}&gt;          # {{ _('arquivos e variáveis registrados') }}</pre>
   {% if stations %}
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>Estação</th><th>Nome</th><th>Arquivos no banco</th><th>Último dado (UTC)</th></tr></thead>
+    <thead><tr><th>{{ _('Estação') }}</th><th>{{ _('Nome') }}</th><th>{{ _('Arquivos no banco') }}</th><th>{{ _('Último dado (UTC)') }}</th></tr></thead>
     <tbody>{% for s in stations %}<tr><td><code>{{ s.station_id }}</code></td><td>{{ s.name }}</td><td>{{ s.files_ingested }}</td><td>{{ (s.last_time or '—')[:16] | replace('T', ' ') }}</td></tr>{% endfor %}</tbody>
   </table></div>
   {% endif %}
 </section>
 
 <section class="card">
-  <h2>2. Séries temporais</h2>
+  <h2>{{ _('2. Séries temporais') }}</h2>
   <pre class="mono">GET {{ api_url }}/series?station=eddyfarm&amp;vars=air_temp,rel_humidity&amp;start=2026-08-01T00:00:00Z&amp;end=2026-09-01T00:00:00Z
-    &amp;agg=raw|1h|1d       # raw = cada registro; 1h/1d = média, mín, máx e nº de amostras APROVADAS
-    &amp;qc=good|all         # (raw) good = só valores aprovados; all = tudo, com o flag de qualidade
-    &amp;tz=America/Santarem # fuso dos carimbos na resposta (padrão UTC)
-    &amp;format=json|csv     # csv = formato longo (time, station_id, variable_id, value, quality)
-    &amp;start=now-7d        # atalhos: now, now-12h, now-7d, now-4w
-GET {{ api_url }}/latest?station=eddyfarm        # último valor de cada variável</pre>
-  <p class="meta">Limites: respostas cruas param em 20 mil pontos (100 mil com chave <code>download</code>); agregados em 100 mil intervalos.
-    Para períodos longos prefira <code>agg=1h</code> ou <code>1d</code>.</p>
+    &amp;agg=raw|1h|1d       # {{ _('raw = cada registro; 1h/1d = média, mín, máx e nº de amostras APROVADAS') }}
+    &amp;qc=good|all         # {{ _('(raw) good = só valores aprovados; all = tudo, com o flag de qualidade') }}
+    &amp;tz=America/Santarem # {{ _('fuso dos carimbos na resposta (padrão UTC)') }}
+    &amp;format=json|csv     # {{ _('csv = formato longo (time, station_id, variable_id, value, quality)') }}
+    &amp;start=now-7d        # {{ _('atalhos: now, now-12h, now-7d, now-4w') }}
+GET {{ api_url }}/latest?station=eddyfarm        # {{ _('último valor de cada variável') }}</pre>
+  <p class="meta">{{ _('Limites: respostas cruas param em 20 mil pontos (100 mil com chave <code>download</code>); agregados em 100 mil intervalos. Para períodos longos prefira <code>agg=1h</code> ou <code>1d</code>.') }}</p>
 </section>
 
 <section class="card">
-  <h2>3. Qualidade dos dados (<code>quality</code>)</h2>
+  <h2>{{ _('3. Qualidade dos dados (<code>quality</code>)') }}</h2>
   <table class="table">
-    <thead><tr><th>Flag</th><th>Significado</th><th>Como usar</th></tr></thead>
+    <thead><tr><th>{{ _('Flag') }}</th><th>{{ _('Significado') }}</th><th>{{ _('Como usar') }}</th></tr></thead>
     <tbody>
-      <tr><td><code>0</code></td><td>aprovado</td><td>use</td></tr>
-      <tr><td><code>1</code></td><td>valor não numérico no arquivo (NAN, texto)</td><td>o valor vem nulo</td></tr>
-      <tr><td><code>2</code></td><td>fora da faixa física definida para a variável</td><td>descarte ou investigue</td></tr>
-      <tr><td><code>3</code></td><td>salto maior que o aceitável entre duas leituras seguidas</td><td>provável ruído</td></tr>
-      <tr><td><code>4</code></td><td>valor travado: N leituras iguais seguidas (sensor parado)</td><td>descarte</td></tr>
+      <tr><td><code>0</code></td><td>{{ _('aprovado') }}</td><td>{{ _('use') }}</td></tr>
+      <tr><td><code>1</code></td><td>{{ _('valor não numérico no arquivo (NAN, texto)') }}</td><td>{{ _('o valor vem nulo') }}</td></tr>
+      <tr><td><code>2</code></td><td>{{ _('fora da faixa física definida para a variável') }}</td><td>{{ _('descarte ou investigue') }}</td></tr>
+      <tr><td><code>3</code></td><td>{{ _('salto maior que o aceitável entre duas leituras seguidas') }}</td><td>{{ _('provável ruído') }}</td></tr>
+      <tr><td><code>4</code></td><td>{{ _('valor travado: N leituras iguais seguidas (sensor parado)') }}</td><td>{{ _('descarte') }}</td></tr>
     </tbody>
   </table>
-  <p class="meta">Nenhum valor é alterado ou removido pelo controle de qualidade: o dado cru fica no banco com o flag. Os agregados (<code>1h</code>/<code>1d</code>) consideram só <code>quality = 0</code> e informam quantos valores ficaram de fora (<code>n_flagged</code>).</p>
+  <p class="meta">{{ _('Nenhum valor é alterado ou removido pelo controle de qualidade: o dado cru fica no banco com o flag. Os agregados (<code>1h</code>/<code>1d</code>) consideram só <code>quality = 0</code> e informam quantos valores ficaram de fora (<code>n_flagged</code>).') }}</p>
 </section>
 
 <section class="card">
-  <h2>4. Exemplos</h2>
+  <h2>{{ _('4. Exemplos') }}</h2>
   <h3 class="h3-sub">Python (pandas)</h3>
   <pre class="mono">import pandas as pd, requests
 API, KEY = "{{ api_url }}", "cbk_..."
@@ -72,19 +66,19 @@ wide = df.pivot(index="bucket", columns="variable_id", values="avg")</pre>
 r &lt;- GET("{{ api_url }}/series", add_headers(`X-API-Key` = "cbk_..."),
          query = list(station = "eddyfarm", vars = "air_temp", agg = "1d", start = "now-90d", format = "csv"))
 df &lt;- read_csv(content(r, "text"))</pre>
-  <h3 class="h3-sub">Linha de comando</h3>
+  <h3 class="h3-sub">{{ _('Linha de comando') }}</h3>
   <pre class="mono">curl -H "X-API-Key: cbk_..." "{{ api_url }}/latest?station=eddyfarm&amp;tz=America/Santarem"
 curl -H "X-API-Key: cbk_..." "{{ api_url }}/series?station=eddyfarm&amp;agg=1d&amp;start=now-365d&amp;format=csv" -o eddyfarm_diario.csv</pre>
 </section>
 
 <section class="card">
-  <h2>5. Boas práticas</h2>
+  <h2>{{ _('5. Boas práticas') }}</h2>
   <ul class="help-list">
-    <li>Guarde a chave como variável de ambiente, nunca em código versionado; ela pode ser revogada e trocada a qualquer momento.</li>
-    <li>Os carimbos estão em <strong>UTC</strong>; use <code>tz=</code> só para exibição. O fuso original de cada arquivo está registrado na dashboard.</li>
-    <li>Cite a variável pelo <code>variable_id</code> (estável); o rótulo humano e a unidade vêm em <code>/variables</code>.</li>
-    <li>Para bases grandes, baixe uma vez por período (<code>format=csv</code>) e trabalhe localmente; a API tem limite de requisições por minuto.</li>
-    <li>Dúvidas sobre sensores, alturas e calibrações: fale com a equipe da estação — a dashboard mostra, por arquivo, o que está sendo ingerido e com quais regras.</li>
+    <li>{{ _('Guarde a chave como variável de ambiente, nunca em código versionado; ela pode ser revogada e trocada a qualquer momento.') }}</li>
+    <li>{{ _('Os carimbos estão em <strong>UTC</strong>; use <code>tz=</code> só para exibição. O fuso original de cada arquivo está registrado na dashboard.') }}</li>
+    <li>{{ _('Cite a variável pelo <code>variable_id</code> (estável); o rótulo humano e a unidade vêm em <code>/variables</code>.') }}</li>
+    <li>{{ _('Para bases grandes, baixe uma vez por período (<code>format=csv</code>) e trabalhe localmente; a API tem limite de requisições por minuto.') }}</li>
+    <li>{{ _('Dúvidas sobre sensores, alturas e calibrações: fale com a equipe da estação — a dashboard mostra, por arquivo, o que está sendo ingerido e com quais regras.') }}</li>
   </ul>
 </section>
 {% endblock %}

@@ -1,28 +1,28 @@
 {% extends "base.html" %}
-{% block title %}Diagnóstico do banco · CARBONARA{% endblock %}
+{% block title %}{{ _('Diagnóstico do banco') }} · CARBONARA{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<h1>Banco de dados — diagnóstico e manutenção</h1>
+<h1>{{ _('Banco de dados — diagnóstico e manutenção') }}</h1>
 <div class="db-layout">
 {% include "_banco_side.html" %}
 <div>
   {% if diag %}
   <section class="card">
     <div class="page-head">
-      <h2>Verificações <small>{{ (diag.generated_at or '')[:19] | replace('T', ' ') }} UTC · {{ diag.elapsed_ms }} ms</small></h2>
+      <h2>{{ _('Verificações') }} <small>{{ (diag.generated_at or '')[:19] | replace('T', ' ') }} UTC · {{ diag.elapsed_ms }} ms</small></h2>
       <div class="diag-summary">
-        <span class="diag-pill diag-error">{{ diag.summary.error }} erro(s)</span>
-        <span class="diag-pill diag-warn">{{ diag.summary.warn }} aviso(s)</span>
+        <span class="diag-pill diag-error">{{ _('%(n)s erro(s)', n=diag.summary.error) }}</span>
+        <span class="diag-pill diag-warn">{{ _('%(n)s aviso(s)', n=diag.summary.warn) }}</span>
         <span class="diag-pill diag-info">{{ diag.summary.info }} info</span>
         <span class="diag-pill diag-ok">{{ diag.summary.ok }} ok</span>
-        <a class="btn" href="{{ url_for('pages.banco_diagnostico') }}">↻ Rodar de novo</a>
+        <a class="btn" href="{{ url_for('pages.banco_diagnostico') }}">{{ _('↻ Rodar de novo') }}</a>
       </div>
     </div>
-    <p class="meta">Só leitura: nada aqui altera o banco. As ações ficam na seção de manutenção abaixo, com nome e confirmação.</p>
+    <p class="meta">{{ _('Só leitura: nada aqui altera o banco. As ações ficam na seção de manutenção abaixo, com nome e confirmação.') }}</p>
     {% for c in diag.checks %}
       <details class="diag diag-{{ c.level }}" {{ 'open' if c.level in ('error', 'warn') }}>
-        <summary><span class="diag-dot"></span><strong>{{ c.title }}</strong> <span class="meta">— {{ c.summary }}</span></summary>
-        {% if c.hint %}<p class="meta">{{ c.hint }}</p>{% endif %}
+        <summary><span class="diag-dot"></span><strong>{{ _(c.title) }}</strong> <span class="meta">— {{ _(c.summary) }}</span></summary>
+        {% if c.hint %}<p class="meta">{{ _(c.hint) }}</p>{% endif %}
         {% if c.rows %}
           <div class="table-wrap db-grid"><table class="table">
             <thead><tr>{% for col in c.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
@@ -31,40 +31,40 @@
         {% endif %}
         {% if c.action %}
           <form method="post" action="{{ url_for('pages.banco_manutencao') }}" class="treat-tools"
-                onsubmit="return confirm('Executar: {{ actions[c.action][0] }}?');">
+                onsubmit="return confirm('{{ _('Executar: %(acao)s?', acao=_(actions[c.action][0])) }}');">
             <input type="hidden" name="action" value="{{ c.action }}">
-            {% if c.action.startswith('purge') %}<input name="confirm" placeholder="digite APAGAR" autocomplete="off" class="num-input" style="max-width:10em">{% endif %}
-            <button class="btn {{ 'btn-danger' if c.action.startswith('purge') else 'btn-primary' }}" type="submit">{{ actions[c.action][0] }}</button>
-            <span class="meta">{{ actions[c.action][1] }}</span>
+            {% if c.action.startswith('purge') %}<input name="confirm" placeholder="{{ _('digite APAGAR') }}" autocomplete="off" class="num-input" style="max-width:10em">{% endif %}
+            <button class="btn {{ 'btn-danger' if c.action.startswith('purge') else 'btn-primary' }}" type="submit">{{ _(actions[c.action][0]) }}</button>
+            <span class="meta">{{ _(actions[c.action][1]) }}</span>
           </form>
         {% endif %}
       </details>
     {% endfor %}
   </section>
-  {% elif api_ok %}<section class="card"><p class="warn">Não foi possível rodar o diagnóstico (API sem resposta).</p></section>{% endif %}
+  {% elif api_ok %}<section class="card"><p class="warn">{{ _('Não foi possível rodar o diagnóstico (API sem resposta).') }}</p></section>{% endif %}
 
   <section class="card">
-    <h2>Manutenção</h2>
-    <p class="meta">Rotinas explícitas. As que apagam dados exigem digitar <code>APAGAR</code> e ficam registradas em <code>pipeline_runs</code>.</p>
+    <h2>{{ _('Manutenção') }}</h2>
+    <p class="meta">{{ _('Rotinas explícitas. As que apagam dados exigem digitar <code>APAGAR</code> e ficam registradas em <code>pipeline_runs</code>.') }}</p>
     <table class="table">
-      <thead><tr><th>Ação</th><th>O que faz</th><th></th></tr></thead>
+      <thead><tr><th>{{ _('Ação') }}</th><th>{{ _('O que faz') }}</th><th></th></tr></thead>
       <tbody>
       {% for key, (titulo, desc) in actions.items() %}
         <tr>
-          <td><strong>{{ titulo }}</strong></td><td class="meta">{{ desc }}</td>
+          <td><strong>{{ _(titulo) }}</strong></td><td class="meta">{{ _(desc) }}</td>
           <td><form method="post" action="{{ url_for('pages.banco_manutencao') }}" class="treat-tools" style="margin:0"
-                    onsubmit="return confirm('Executar: {{ titulo }}?');">
+                    onsubmit="return confirm('{{ _('Executar: %(acao)s?', acao=_(titulo)) }}');">
             <input type="hidden" name="action" value="{{ key }}">
-            {% if key == 'refresh_aggregates' %}<input name="days" type="number" min="1" max="3650" value="30" class="num-short" title="dias"> dias{% endif %}
-            {% if key.startswith('purge') %}<input name="confirm" placeholder="digite APAGAR" autocomplete="off" class="num-input" style="max-width:10em">{% endif %}
-            <button class="btn {{ 'btn-danger' if key.startswith('purge') else '' }}" type="submit">Executar</button>
+            {% if key == 'refresh_aggregates' %}<input name="days" type="number" min="1" max="3650" value="30" class="num-short" title="{{ _('dias') }}"> {{ _('dias') }}{% endif %}
+            {% if key.startswith('purge') %}<input name="confirm" placeholder="{{ _('digite APAGAR') }}" autocomplete="off" class="num-input" style="max-width:10em">{% endif %}
+            <button class="btn {{ 'btn-danger' if key.startswith('purge') else '' }}" type="submit">{{ _('Executar') }}</button>
           </form></td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-    <p class="meta">Para reingerir UM arquivo do zero (após mudar fuso, IDs ou regras): abra a tabela dele no banco da
-      estação → aba <em>Zona de perigo</em> → <em>Zerar e reingerir</em>.</p>
+    <p class="meta">{{ _('Para reingerir UM arquivo do zero (após mudar fuso, IDs ou regras): abra a tabela dele no banco da
+      estação → aba <em>Zona de perigo</em> → <em>Zerar e reingerir</em>.') }}</p>
   </section>
 </div>
 </div>

@@ -20,6 +20,7 @@ from flask import (
 
 from . import ftp
 from .ftp_publish import ftp_fmt_bytes
+from .i18n import gettext as _
 from .views import admin_required
 
 ftp_pages = Blueprint("ftp", __name__)
@@ -65,7 +66,7 @@ def index():
     # Gerenciador de pastas: ?pasta=<sub> escolhe o nível exibido (server-side, sem estado JS).
     folder = ftp.folder_listing(cfg, request.args.get("pasta") or "")
     if folder is None:
-        flash("Pasta não encontrada no FTP (ou fora da raiz).", "error")
+        flash(_("Pasta não encontrada no FTP (ou fora da raiz)."), "error")
         folder = ftp.folder_listing(cfg, "")
     return render_template(
         "ftp.html",
@@ -111,7 +112,7 @@ def folder_remove():
 def link_create():
     ok, out = ftp.add_link(_load(), request.form.get("dest") or "",
                            request.form.get("source") or "", bool(request.form.get("rw")))
-    _flash_result(ok, out, "Vínculo criado.", "Falha ao criar o vínculo.")
+    _flash_result(ok, out, _("Vínculo criado."), _("Falha ao criar o vínculo."))
     return redirect(url_for("ftp.index") + "#vinculos")
 
 
@@ -119,7 +120,7 @@ def link_create():
 @admin_required
 def link_remove():
     ok, out = ftp.remove_link(_load(), request.form.get("dest") or "")
-    _flash_result(ok, out, "Vínculo desfeito.", "Falha ao desfazer o vínculo.")
+    _flash_result(ok, out, _("Vínculo desfeito."), _("Falha ao desfazer o vínculo."))
     return redirect(url_for("ftp.index") + "#vinculos")
 
 
@@ -136,7 +137,7 @@ def account_add():
     ok, out, pw = ftp.add_account(cfg, user, request.form.get("profile") or "",
                                   request.form.get("folder") or "",
                                   request.form.get("password") or None)
-    _flash_result(ok, out, "Conta criada.", "Falha ao criar a conta.")
+    _flash_result(ok, out, _("Conta criada."), _("Falha ao criar a conta."))
     if ok and pw:
         # Mostrada UMA vez, na próxima página (a sessão é assinada; não fica em log).
         session["ftp_reveal"] = {"user": user, "password": pw}
@@ -163,7 +164,7 @@ def account(user):
 def account_password(user):
     cfg = _load()
     ok, out, pw = ftp.set_password(cfg, user, request.form.get("password") or None)
-    _flash_result(ok, out, "Senha alterada.", "Falha ao alterar a senha.")
+    _flash_result(ok, out, _("Senha alterada."), _("Falha ao alterar a senha."))
     if ok and pw:
         session["ftp_reveal"] = {"user": user, "password": pw}
     return redirect(url_for("ftp.account", user=user))
@@ -173,7 +174,7 @@ def account_password(user):
 @admin_required
 def account_profile(user):
     ok, out = ftp.set_profile(_load(), user, request.form.get("profile") or "")
-    _flash_result(ok, out, "Perfil alterado.", "Falha ao alterar o perfil.")
+    _flash_result(ok, out, _("Perfil alterado."), _("Falha ao alterar o perfil."))
     return redirect(url_for("ftp.account", user=user))
 
 
@@ -181,7 +182,7 @@ def account_profile(user):
 @admin_required
 def account_folder(user):
     ok, out = ftp.set_folder(_load(), user, request.form.get("folder") or "")
-    _flash_result(ok, out, "Pasta alterada.", "Falha ao alterar a pasta.")
+    _flash_result(ok, out, _("Pasta alterada."), _("Falha ao alterar a pasta."))
     return redirect(url_for("ftp.account", user=user))
 
 
@@ -190,7 +191,7 @@ def account_folder(user):
 def account_state(user):
     enable = (request.form.get("action") or "") == "ativar"
     ok, out = ftp.set_enabled(_load(), user, enable)
-    _flash_result(ok, out, "Estado alterado.", "Falha ao alterar o estado.")
+    _flash_result(ok, out, _("Estado alterado."), _("Falha ao alterar o estado."))
     return redirect(url_for("ftp.account", user=user))
 
 
@@ -201,11 +202,11 @@ def account_remove(user):
     esta rota revalida — o JavaScript que habilita o botão é só conveniência."""
     typed = (request.form.get("confirm_name") or "").strip()
     if typed != user:
-        flash(f"Remoção NÃO executada: o nome digitado ('{typed or '—'}') não confere "
-              f"com '{user}'.", "error")
+        flash(_("Remoção NÃO executada: o nome digitado ('%(typed)s') não confere "
+                "com '%(user)s'.", typed=typed or "—", user=user), "error")
         return redirect(url_for("ftp.account", user=user))
     ok, out = ftp.remove_account(_load(), user)
-    _flash_result(ok, out, "Conta removida.", "Falha ao remover a conta.")
+    _flash_result(ok, out, _("Conta removida."), _("Falha ao remover a conta."))
     return redirect(url_for("ftp.index") if ok else url_for("ftp.account", user=user))
 
 
@@ -231,9 +232,9 @@ def publication_create():
         return render_template("ftp_publication_form.html", rule=rule, is_new=True,
                                info=ftp.server_info(cfg), pick_areas=ftp.PICK_AREAS), 400
     ftp.save_publication(current_app.store, cfg, rule)
-    flash(f"Publicação '{rule['name']}' salva."
-          + (" Ela roda no próximo ciclo do publicador." if rule["enabled"] and rule["interval_min"]
-             else " Use 'publicar agora' para executá-la."), "ok")
+    flash(_("Publicação '%(name)s' salva.", name=rule["name"]) + " "
+          + (_("Ela roda no próximo ciclo do publicador.") if rule["enabled"] and rule["interval_min"]
+             else _("Use 'publicar agora' para executá-la.")), "ok")
     return redirect(url_for("ftp.index"))
 
 
@@ -261,7 +262,7 @@ def publication_update(pid):
         return render_template("ftp_publication_form.html", rule=rule, is_new=False,
                                info=ftp.server_info(cfg), pick_areas=ftp.PICK_AREAS), 400
     ftp.save_publication(current_app.store, cfg, rule)
-    flash(f"Publicação '{rule['name']}' atualizada.", "ok")
+    flash(_("Publicação '%(name)s' atualizada.", name=rule["name"]), "ok")
     return redirect(url_for("ftp.index"))
 
 
@@ -273,10 +274,10 @@ def publication_run(pid):
     if rule is None:
         abort(404)
     if _publisher().run_async(cfg, rule, trigger="manual"):
-        flash(f"Publicação '{rule['name']}' iniciada — acompanhe o estado na tabela "
-              "(a página atualiza sozinha).", "ok")
+        flash(_("Publicação '%(name)s' iniciada — acompanhe o estado na tabela "
+                "(a página atualiza sozinha).", name=rule["name"]), "ok")
     else:
-        flash(f"'{rule['name']}' já está em execução.", "error")
+        flash(_("'%(name)s' já está em execução.", name=rule["name"]), "error")
     return redirect(url_for("ftp.index"))
 
 
@@ -289,7 +290,8 @@ def publication_toggle(pid):
         abort(404)
     rule["enabled"] = not rule["enabled"]
     ftp.save_publication(current_app.store, cfg, rule)
-    flash(f"Publicação '{rule['name']}' {'habilitada' if rule['enabled'] else 'desabilitada'}.", "ok")
+    flash((_("Publicação '%(name)s' habilitada.", name=rule["name"]) if rule["enabled"]
+           else _("Publicação '%(name)s' desabilitada.", name=rule["name"])), "ok")
     return redirect(url_for("ftp.index"))
 
 
@@ -301,9 +303,9 @@ def publication_delete(pid):
     cfg = _load()
     if ftp.delete_publication(current_app.store, cfg, pid):
         _publisher().forget(pid)
-        flash("Publicação removida. Os arquivos já publicados permanecem no FTP.", "ok")
+        flash(_("Publicação removida. Os arquivos já publicados permanecem no FTP."), "ok")
     else:
-        flash("Publicação não encontrada.", "error")
+        flash(_("Publicação não encontrada."), "error")
     return redirect(url_for("ftp.index"))
 
 
@@ -314,7 +316,7 @@ def browse_json():
     cfg = _load()
     listing = ftp.browse_dirs(cfg, request.args.get("area") or "", request.args.get("sub") or "")
     if listing is None:
-        return jsonify({"error": "área ou pasta inválida"}), 400
+        return jsonify({"error": _("área ou pasta inválida")}), 400
     return jsonify(listing)
 
 
