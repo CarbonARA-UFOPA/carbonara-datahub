@@ -973,9 +973,14 @@ privilege model as the collection layer:
   non-root subfolder that is EMPTY or new (mounting over content would hide it).
   `unlink` never deletes anything (rmdir only if empty). The picker area `sistema`
   browses the whole filesystem (admin-only, one level, forbidden roots hidden).
-- **Folders** (card *Pastas do FTP*, `ftp.create_folder`/`remove_folder`): direct
-  Python writes, no sudo (FTP root is writable by the dashboard user); `mkdir` 2775,
-  `rmdir` ONLY for empty non-mountpoint dirs — the dashboard never deletes FTP data.
+- **Folders** (card *Pastas do FTP*, `ftp.create_folder`/`remove_folder`/`delete_folder`):
+  direct Python writes, no sudo (FTP root is writable by the dashboard user); `mkdir`
+  2775; empty dirs go with `rmdir`. Deleting a folder WITH content (user request) is
+  `delete_folder`: the folder name must be TYPED (re-checked server-side) and
+  `delete_folder_blockers` refuses a folder that is/contains a link (registry +
+  `/proc/self/mounts`, plus an `st_dev` walk — `rmtree` across a bind mount would
+  destroy the SOURCE, e.g. `incoming/`), an account's chroot folder, or a publication
+  dest. Symlinks are unlinked, never followed. Never relax the mount guard.
 - **Publications** (`ftp.publications` in config.yaml, edited by the UI): rules
   `source` (relative to hub BASE or absolute — any folder, today `incoming/<id>/…`,
   tomorrow the processing output) → `dest` (subfolder of the FTP root; the root itself
