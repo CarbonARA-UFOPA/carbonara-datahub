@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" width="960" height="560" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3a4250"/>
+    </marker>
+  </defs>
+  <rect width="960" height="560" fill="#ffffff"/>
+
+  <!-- layer labels -->
+  <g font-size="11" font-weight="700" fill="#6b7280" letter-spacing="1" text-anchor="middle">
+    <text x="84" y="52">FIELD</text>
+    <text x="282" y="52">TRANSPORT</text>
+    <text x="480" y="52">LANDING AREA</text>
+    <text x="678" y="52">INGESTION + QA/QC</text>
+    <text x="876" y="52">STORAGE</text>
+  </g>
+  <line x1="10" y1="64" x2="950" y2="64" stroke="#e5e7eb"/>
+
+  <!-- top row boxes -->
+  <g stroke-width="1.5">
+    <rect x="10"  y="90" width="148" height="150" rx="8" fill="#ecfdf5" stroke="#059669"/>
+    <rect x="208" y="90" width="148" height="150" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <rect x="406" y="90" width="148" height="150" rx="8" fill="#f9fafb" stroke="#4b5563"/>
+    <rect x="604" y="90" width="148" height="150" rx="8" fill="#fff7ed" stroke="#ea580c"/>
+    <rect x="802" y="90" width="148" height="150" rx="8" fill="#f5f3ff" stroke="#7c3aed"/>
+  </g>
+  <g font-size="13" font-weight="700" fill="#111827" text-anchor="middle">
+    <text x="84"  y="114">Field stations</text>
+    <text x="282" y="114">rsync-hub</text>
+    <text x="480" y="114">incoming/&lt;station&gt;/</text>
+    <text x="678" y="114">Ingestion service</text>
+    <text x="876" y="114">TimescaleDB</text>
+  </g>
+  <g font-size="11" fill="#374151" text-anchor="middle">
+    <text x="84" y="138">Dataloggers write</text>
+    <text x="84" y="153">raw files (TOA5, CSV…)</text>
+    <text x="84" y="175">Station client</text>
+    <text x="84" y="190">(Linux / Windows):</text>
+    <text x="84" y="205">one-way, scheduled</text>
+    <text x="84" y="220">incremental sync</text>
+
+    <text x="282" y="138">SSH forced command</text>
+    <text x="282" y="153">+ rrsync, write-only,</text>
+    <text x="282" y="168">one folder per station</text>
+    <text x="282" y="190">Connection log,</text>
+    <text x="282" y="205">heartbeat, speed,</text>
+    <text x="282" y="220">latency, pause</text>
+
+    <text x="480" y="138">Raw files exactly as</text>
+    <text x="480" y="153">sent by the station</text>
+    <text x="480" y="175">Append-only;</text>
+    <text x="480" y="190">never moved or</text>
+    <text x="480" y="205">modified by the hub</text>
+
+    <text x="678" y="138">① incremental parse</text>
+    <text x="678" y="153">(byte-offset ledger)</text>
+    <text x="678" y="175">② QA/QC flags</text>
+    <text x="678" y="190">(range, spike, stuck)</text>
+    <text x="678" y="212">③ idempotent insert</text>
+    <text x="678" y="227">in UTC</text>
+
+    <text x="876" y="138">measurements</text>
+    <text x="876" y="153">hypertable</text>
+    <text x="876" y="175">long (EAV) model,</text>
+    <text x="876" y="190">quality flag per value</text>
+    <text x="876" y="212">hourly / daily</text>
+    <text x="876" y="227">continuous aggregates</text>
+  </g>
+
+  <!-- top row arrows -->
+  <g stroke="#3a4250" stroke-width="1.6" fill="none" marker-end="url(#arr)">
+    <line x1="158" y1="165" x2="206" y2="165"/>
+    <line x1="356" y1="165" x2="404" y2="165"/>
+    <line x1="554" y1="165" x2="602" y2="165"/>
+    <line x1="752" y1="165" x2="800" y2="165"/>
+  </g>
+  <g font-size="10" fill="#4b5563" text-anchor="middle">
+    <text x="183" y="152">rsync</text>
+    <text x="183" y="184">SSH</text>
+    <text x="578" y="152">read</text>
+    <text x="578" y="184">only</text>
+  </g>
+
+  <!-- bottom row -->
+  <g stroke-width="1.5">
+    <rect x="208" y="320" width="346" height="110" rx="8" fill="#fefce8" stroke="#ca8a04"/>
+    <rect x="604" y="320" width="148" height="110" rx="8" fill="#f0f9ff" stroke="#0284c7"/>
+    <rect x="802" y="320" width="148" height="110" rx="8" fill="#f0f9ff" stroke="#0284c7"/>
+  </g>
+  <g font-size="13" font-weight="700" fill="#111827" text-anchor="middle">
+    <text x="381" y="344">Acquisition-monitoring dashboard</text>
+    <text x="678" y="344">FTP distribution</text>
+    <text x="876" y="344">Data API</text>
+  </g>
+  <g font-size="11" fill="#374151" text-anchor="middle">
+    <text x="381" y="366">Live station status, file previews and charts</text>
+    <text x="381" y="383">Registration of files, variables and QC rules:</text>
+    <text x="381" y="398">the single place that decides what enters the DB</text>
+    <text x="381" y="415">Database browser, diagnostics, API keys</text>
+
+    <text x="678" y="366">Read-only accounts</text>
+    <text x="678" y="383">Scheduled publications</text>
+    <text x="678" y="398">of hub folders</text>
+
+    <text x="876" y="366">REST (FastAPI)</text>
+    <text x="876" y="383">API keys, rate limit</text>
+    <text x="876" y="398">raw · 1 h · 1 d · JSON/CSV</text>
+  </g>
+
+  <!-- vertical / cross arrows -->
+  <g stroke="#3a4250" stroke-width="1.6" fill="none" marker-end="url(#arr)">
+    <line x1="876" y1="240" x2="876" y2="318"/>
+    <line x1="430" y1="240" x2="430" y2="318"/>
+    <line x1="554" y1="375" x2="602" y2="375"/>
+  </g>
+  <g stroke="#ca8a04" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#arr)">
+    <path d="M500,320 L500,280 L650,280 L650,242"/>
+  </g>
+  <g font-size="10" fill="#4b5563">
+    <text x="436" y="285">tails files</text>
+    <text x="520" y="273" fill="#a16207">registration drives ingestion</text>
+    <text x="882" y="285">queries</text>
+  </g>
+
+  <!-- users -->
+  <rect x="604" y="480" width="346" height="56" rx="8" fill="#f3f4f6" stroke="#6b7280" stroke-width="1.5"/>
+  <text x="777" y="504" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">Researchers and downstream users</text>
+  <text x="777" y="522" font-size="11" fill="#374151" text-anchor="middle">Python · R · spreadsheets · FTP clients</text>
+  <g stroke="#3a4250" stroke-width="1.6" fill="none" marker-end="url(#arr)">
+    <line x1="678" y1="430" x2="678" y2="478"/>
+    <line x1="876" y1="430" x2="876" y2="478"/>
+  </g>
+
+  <!-- operators -->
+  <rect x="208" y="480" width="346" height="56" rx="8" fill="#f3f4f6" stroke="#6b7280" stroke-width="1.5"/>
+  <text x="381" y="504" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">Hub operators</text>
+  <text x="381" y="522" font-size="11" fill="#374151" text-anchor="middle">web interface · rsync-hub terminal monitor</text>
+  <line x1="381" y1="478" x2="381" y2="432" stroke="#3a4250" stroke-width="1.6" marker-end="url(#arr)" marker-start="url(#arr)"/>
+</svg>
